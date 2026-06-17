@@ -66,6 +66,8 @@ export default function DashboardPage() {
   const [affiliationError, setAffiliationError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
   const [affiliateClicked, setAffiliateClicked] = useState(false);
+  const [connectAttempted, setConnectAttempted] = useState(false);
+  const [showConnectHint, setShowConnectHint] = useState(false);
 
   useEffect(() => {
     // Clear error every time this runs
@@ -104,6 +106,13 @@ export default function DashboardPage() {
     checkStatus();
   }, [address, isConnected]);
 
+  // Show hint 2 seconds after a connect attempt if still on connect screen
+  useEffect(() => {
+    if (!connectAttempted) return;
+    const t = setTimeout(() => setShowConnectHint(true), 2000);
+    return () => clearTimeout(t);
+  }, [connectAttempted]);
+
   const handleAffiliateClick = () => {
     setAffiliateClicked(true);
   };
@@ -135,7 +144,7 @@ export default function DashboardPage() {
               {({ openConnectModal }) => (
                 <div style={{ width: '100%' }}>
                   <button
-                    onClick={openConnectModal}
+                    onClick={() => { setConnectAttempted(true); openConnectModal(); }}
                     style={{
                       background: '#00d4aa',
                       color: '#0a0a0f',
@@ -158,6 +167,11 @@ export default function DashboardPage() {
                   }}>
                     Use your affiliated Hyperliquid wallet
                   </p>
+                  {showConnectHint && (
+                    <p style={{ color: '#f59e0b', fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
+                      Having trouble? Try disabling browser extensions or use incognito mode.
+                    </p>
+                  )}
                   {isConnected && affiliationError && (
                     <div style={{
                       background: 'rgba(239,68,68,0.1)',
