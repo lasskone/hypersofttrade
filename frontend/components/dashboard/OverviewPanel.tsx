@@ -4,75 +4,40 @@ import { useEffect, useState } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface Position {
-  dex: string;
-  symbol: string;
-  size: number;
-  entry_price: number;
-  position_value: number;
-  unrealized_pnl: number;
-  leverage: number;
-  leverage_type: string;
-  liquidation_price: number;
-}
+// ─── Safe formatters ──────────────────────────────────────────────────────────
+const fmt = (val: unknown, decimals = 2): string => {
+  const n = parseFloat(String(val ?? 0));
+  if (isNaN(n)) return '0.00';
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+};
 
-interface SpotBalance {
-  coin: string;
-  total: number;
-  hold: number;
-}
+const fmtPnl = (val: unknown): string => {
+  const n = parseFloat(String(val ?? 0));
+  if (isNaN(n)) return '+$0.00';
+  return (n >= 0 ? '+' : '') + '$' + Math.abs(n).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
 
-interface Fill {
-  coin: string;
-  side: string;
-  price: number;
-  size: number;
-  closed_pnl: number;
-  fee: number;
-  time: number;
-  order_type: string;
-}
-
-interface OpenOrder {
-  coin: string;
-  side: string;
-  price: number;
-  size: number;
-  order_id: string;
-}
-
-interface Portfolio {
-  wallet_address: string;
-  account_value: number;
-  unrealized_pnl: number;
-  open_positions: Position[];
-  open_positions_count: number;
-  spot_balances: SpotBalance[];
-  recent_fills: Fill[];
-  open_orders: OpenOrder[];
-  dexes_queried: string[];
-}
-
-type Status = 'loading' | 'loaded' | 'no_api_key' | 'error';
-
-interface Props {
-  walletAddress: string;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function fmt(n: number) {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtTime(ms: number) {
+const fmtTime = (val: unknown): string => {
+  const ms = parseInt(String(val ?? 0));
+  if (!ms || isNaN(ms)) return '—';
   return new Date(ms).toLocaleString('en-US', {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
-}
+};
 
-// ─── Skeleton ─────────────────────────────────────────────────────────────────
+const isBuySide = (side: unknown): boolean => {
+  const s = String(side ?? '').toUpperCase();
+  return s === 'B' || s === 'BUY';
+};
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 function SkeletonCard() {
   return (
     <div className="rounded-xl p-5 border animate-pulse"
@@ -83,7 +48,6 @@ function SkeletonCard() {
   );
 }
 
-// ─── Section wrapper ──────────────────────────────────────────────────────────
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border overflow-hidden mb-4"
@@ -96,29 +60,35 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// ─── Table helpers ────────────────────────────────────────────────────────────
 function TH({ children }: { children: React.ReactNode }) {
   return <th className="px-5 py-3 text-left font-medium text-xs text-gray-500">{children}</th>;
 }
+
 function TD({ children, color }: { children: React.ReactNode; color?: string }) {
-  return <td className="px-5 py-3 text-sm text-gray-300" style={color ? { color } : undefined}>{children}</td>;
+  return (
+    <td className="px-5 py-3 text-sm text-gray-300" style={color ? { color } : undefined}>
+      {children}
+    </td>
+  );
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export function OverviewPanel({ walletAddress }: Props) {
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [status, setStatus] = useState<Status>('loading');
+export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [data, setData] = useState<any>(null);
+  const [status, setStatus] = useState<'loading' | 'no_api_key' | 'error' | 'loaded'>('loading');
 
   useEffect(() => {
     if (!walletAddress) return;
     setStatus('loading');
+    setData(null);
     (async () => {
       try {
         const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (data.error === 'no_api_key') { setStatus('no_api_key'); return; }
-        setPortfolio(data);
+        const json = await res.json();
+        if (json?.error === 'no_api_key') { setStatus('no_api_key'); return; }
+        setData(json);
         setStatus('loaded');
       } catch {
         setStatus('error');
@@ -126,8 +96,8 @@ export function OverviewPanel({ walletAddress }: Props) {
     })();
   }, [walletAddress]);
 
-  // ── Loading ────────────────────────────────────────────────────────────────
-  if (status === 'loading') {
+  // ── Loading ──────────────────────────────────────────────────────────────────
+  if (status === 'loading' || data === null) {
     return (
       <div className="p-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -139,7 +109,7 @@ export function OverviewPanel({ walletAddress }: Props) {
     );
   }
 
-  // ── No API key ─────────────────────────────────────────────────────────────
+  // ── No API key ───────────────────────────────────────────────────────────────
   if (status === 'no_api_key') {
     return (
       <div className="p-6">
@@ -154,8 +124,8 @@ export function OverviewPanel({ walletAddress }: Props) {
     );
   }
 
-  // ── Error ──────────────────────────────────────────────────────────────────
-  if (status === 'error' || !portfolio) {
+  // ── Error ────────────────────────────────────────────────────────────────────
+  if (status === 'error') {
     return (
       <div className="p-6">
         <div className="rounded-xl border px-6 py-5 text-sm text-red-400"
@@ -166,21 +136,28 @@ export function OverviewPanel({ walletAddress }: Props) {
     );
   }
 
-  const { account_value, unrealized_pnl, open_positions, open_positions_count,
-          spot_balances, recent_fills, open_orders } = portfolio;
-  const pnlPos = unrealized_pnl >= 0;
+  // ── Loaded — safely destructure with defaults ─────────────────────────────────
+  const accountValue     = data?.account_value ?? 0;
+  const unrealizedPnl    = data?.unrealized_pnl ?? 0;
+  const openPositions    = data?.open_positions ?? [];
+  const openPositionsCnt = data?.open_positions_count ?? openPositions.length;
+  const spotBalances     = data?.spot_balances ?? [];
+  const recentFills      = data?.recent_fills ?? [];
+  const openOrders       = data?.open_orders ?? [];
+
+  const pnlPos = parseFloat(String(unrealizedPnl)) >= 0;
 
   const stats = [
-    { label: 'Account Value',   value: `$${fmt(account_value)}`,                             color: '#ffffff' },
-    { label: 'Unrealized PnL',  value: `${pnlPos ? '+' : ''}$${fmt(unrealized_pnl)}`,        color: pnlPos ? '#10b981' : '#ef4444' },
-    { label: 'Open Positions',  value: String(open_positions_count),                          color: '#ffffff' },
-    { label: 'Open Orders',     value: String(open_orders.length),                            color: '#ffffff' },
+    { label: 'Account Value',  value: `$${fmt(accountValue)}`,    color: '#ffffff' },
+    { label: 'Unrealized PnL', value: fmtPnl(unrealizedPnl),      color: pnlPos ? '#10b981' : '#ef4444' },
+    { label: 'Open Positions', value: String(openPositionsCnt),   color: '#ffffff' },
+    { label: 'Open Orders',    value: String(openOrders.length),  color: '#ffffff' },
   ];
 
   return (
     <div className="p-6">
 
-      {/* ── Stat cards ─────────────────────────────────────────────────────── */}
+      {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         {stats.map(({ label, value, color }) => (
           <div key={label} className="rounded-xl p-5 border transition-colors"
@@ -193,9 +170,9 @@ export function OverviewPanel({ walletAddress }: Props) {
         ))}
       </div>
 
-      {/* ── Open Positions ─────────────────────────────────────────────────── */}
+      {/* Open Positions */}
       <Section title="Open Positions">
-        {open_positions.length === 0 ? (
+        {openPositions.length === 0 ? (
           <p className="px-5 py-6 text-sm text-gray-600">No open positions</p>
         ) : (
           <div className="overflow-x-auto">
@@ -207,26 +184,26 @@ export function OverviewPanel({ walletAddress }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {open_positions.map((pos, i) => {
-                  const pos_pos = pos.unrealized_pnl >= 0;
+                {openPositions.map((pos: any, i: number) => {
+                  const upnl    = parseFloat(String(pos?.unrealized_pnl ?? 0));
+                  const posPos  = upnl >= 0;
+                  const liqPx   = parseFloat(String(pos?.liquidation_price ?? 0));
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
                           style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>
-                          {pos.dex}
+                          {pos?.dex ?? '—'}
                         </span>
                       </td>
-                      <TD><span className="font-semibold text-white">{pos.symbol}</span></TD>
-                      <TD>{pos.size}</TD>
-                      <TD>${fmt(pos.entry_price)}</TD>
-                      <TD>${fmt(pos.position_value)}</TD>
-                      <TD color={pos_pos ? '#10b981' : '#ef4444'}>
-                        {pos_pos ? '+' : ''}${fmt(pos.unrealized_pnl)}
-                      </TD>
-                      <TD>{pos.leverage}x {pos.leverage_type}</TD>
-                      <TD>{pos.liquidation_price > 0 ? `$${fmt(pos.liquidation_price)}` : '—'}</TD>
+                      <TD><span className="font-semibold text-white">{pos?.symbol ?? '—'}</span></TD>
+                      <TD>{fmt(pos?.size, 4)}</TD>
+                      <TD>${fmt(pos?.entry_price)}</TD>
+                      <TD>${fmt(pos?.position_value)}</TD>
+                      <TD color={posPos ? '#10b981' : '#ef4444'}>{fmtPnl(upnl)}</TD>
+                      <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
+                      <TD>{liqPx > 0 ? `$${fmt(liqPx)}` : '—'}</TD>
                     </tr>
                   );
                 })}
@@ -236,8 +213,8 @@ export function OverviewPanel({ walletAddress }: Props) {
         )}
       </Section>
 
-      {/* ── Spot Balances ──────────────────────────────────────────────────── */}
-      {spot_balances.length > 0 && (
+      {/* Spot Balances */}
+      {spotBalances.length > 0 && (
         <Section title="Spot Balances">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -247,12 +224,12 @@ export function OverviewPanel({ walletAddress }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {spot_balances.map((b, i) => (
+                {spotBalances.map((b: any, i: number) => (
                   <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                     style={{ borderColor: '#1a1a2e' }}>
-                    <td className="px-5 py-3 font-semibold text-white text-sm">{b.coin}</td>
-                    <TD>{b.total.toLocaleString('en-US', { maximumFractionDigits: 6 })}</TD>
-                    <TD>{b.hold > 0 ? b.hold.toLocaleString('en-US', { maximumFractionDigits: 6 }) : '—'}</TD>
+                    <td className="px-5 py-3 font-semibold text-white text-sm">{b?.coin ?? '—'}</td>
+                    <TD>{fmt(b?.total, 6)}</TD>
+                    <TD>{parseFloat(String(b?.hold ?? 0)) > 0 ? fmt(b?.hold, 6) : '—'}</TD>
                   </tr>
                 ))}
               </tbody>
@@ -261,8 +238,8 @@ export function OverviewPanel({ walletAddress }: Props) {
         </Section>
       )}
 
-      {/* ── Open Orders ────────────────────────────────────────────────────── */}
-      {open_orders.length > 0 && (
+      {/* Open Orders */}
+      {openOrders.length > 0 && (
         <Section title="Open Orders">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -272,15 +249,15 @@ export function OverviewPanel({ walletAddress }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {open_orders.map((o, i) => {
-                  const isBuy = o.side.toUpperCase() === 'B' || o.side.toLowerCase() === 'buy';
+                {openOrders.map((o: any, i: number) => {
+                  const buy = isBuySide(o?.side);
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
-                      <td className="px-5 py-3 font-semibold text-white text-sm">{o.coin}</td>
-                      <TD color={isBuy ? '#10b981' : '#ef4444'}>{isBuy ? 'Buy' : 'Sell'}</TD>
-                      <TD>${fmt(o.price)}</TD>
-                      <TD>{o.size}</TD>
+                      <td className="px-5 py-3 font-semibold text-white text-sm">{o?.coin ?? '—'}</td>
+                      <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
+                      <TD>${fmt(o?.price)}</TD>
+                      <TD>{fmt(o?.size, 4)}</TD>
                     </tr>
                   );
                 })}
@@ -290,8 +267,8 @@ export function OverviewPanel({ walletAddress }: Props) {
         </Section>
       )}
 
-      {/* ── Recent Trades ──────────────────────────────────────────────────── */}
-      {recent_fills.length > 0 && (
+      {/* Recent Trades */}
+      {recentFills.length > 0 && (
         <Section title="Recent Trades">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -302,21 +279,22 @@ export function OverviewPanel({ walletAddress }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {recent_fills.slice(0, 10).map((f, i) => {
-                  const isBuy   = f.side.toUpperCase() === 'B' || f.side.toLowerCase() === 'buy';
-                  const pnlPos2 = f.closed_pnl >= 0;
+                {recentFills.slice(0, 10).map((f: any, i: number) => {
+                  const buy       = isBuySide(f?.side);
+                  const cpnl      = parseFloat(String(f?.closed_pnl ?? 0));
+                  const cpnlPos   = cpnl >= 0;
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
-                      <td className="px-5 py-3 font-semibold text-white text-sm">{f.coin}</td>
-                      <TD color={isBuy ? '#10b981' : '#ef4444'}>{isBuy ? 'Buy' : 'Sell'}</TD>
-                      <TD>${fmt(f.price)}</TD>
-                      <TD>{f.size}</TD>
-                      <TD color={f.closed_pnl !== 0 ? (pnlPos2 ? '#10b981' : '#ef4444') : undefined}>
-                        {f.closed_pnl !== 0 ? `${pnlPos2 ? '+' : ''}$${fmt(f.closed_pnl)}` : '—'}
+                      <td className="px-5 py-3 font-semibold text-white text-sm">{f?.coin ?? '—'}</td>
+                      <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
+                      <TD>${fmt(f?.price)}</TD>
+                      <TD>{fmt(f?.size, 4)}</TD>
+                      <TD color={cpnl !== 0 ? (cpnlPos ? '#10b981' : '#ef4444') : undefined}>
+                        {cpnl !== 0 ? fmtPnl(cpnl) : '—'}
                       </TD>
-                      <TD color="#6b7280">${fmt(f.fee)}</TD>
-                      <TD color="#6b7280">{fmtTime(f.time)}</TD>
+                      <TD color="#6b7280">${fmt(f?.fee)}</TD>
+                      <TD color="#6b7280">{fmtTime(f?.time)}</TD>
                     </tr>
                   );
                 })}
