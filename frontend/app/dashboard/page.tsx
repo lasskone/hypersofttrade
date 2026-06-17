@@ -54,15 +54,41 @@ function ConnectWalletScreen() {
         <h1 className="text-2xl font-bold text-white mb-2">HyperSoftTrade</h1>
         <p className="text-sm text-gray-400 mb-8">Professional crypto trading terminal</p>
 
+        <p className="text-xs mb-6 leading-relaxed" style={{ color: '#6b7280', fontSize: 13 }}>
+          Already have a Hyperliquid account? Connect your wallet.<br />
+          New here? Create your free account first.
+        </p>
+
         <ConnectButton.Custom>
           {({ openConnectModal }) => (
-            <button
-              onClick={openConnectModal}
-              className="w-full py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80"
-              style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
-            >
-              Connect Wallet
-            </button>
+            <div className="flex flex-col gap-3">
+              {/* Button 1 — existing users */}
+              <button
+                onClick={openConnectModal}
+                className="w-full py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80"
+                style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
+              >
+                Connect your Account
+              </button>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
+                <span className="text-xs" style={{ color: '#6b7280' }}>or</span>
+                <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
+              </div>
+
+              {/* Button 2 — new users */}
+              <a
+                href="https://app.hyperliquid.xyz/join/KNS"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3 rounded-xl text-sm font-semibold text-center transition-opacity hover:opacity-80"
+                style={{ border: '1px solid #00d4aa', color: '#00d4aa' }}
+              >
+                Create your Account
+              </a>
+            </div>
           )}
         </ConnectButton.Custom>
 
