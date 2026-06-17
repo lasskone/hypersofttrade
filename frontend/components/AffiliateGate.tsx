@@ -114,7 +114,7 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
         onVerified();
       } else {
         setMessage({
-          text: 'Account not linked to HyperSoftTrade. Make sure you used our link.',
+          text: 'Account not linked. Make sure you used our link.',
           type: 'error',
         });
       }
@@ -159,13 +159,9 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
 
         <StepDots current={1} total={3} />
 
-        <h2 className="text-xl font-bold text-white mb-3">Create your Hyperliquid account</h2>
-        <p className="text-sm leading-relaxed text-gray-400 mb-2">
-          HyperSoftTrade is 100% free. To get started, create your Hyperliquid account via our
-          link — it takes 2 minutes.
-        </p>
-        <p className="text-xs font-medium mb-6" style={{ color: '#00d4aa' }}>
-          This is required to access HyperSoftTrade.
+        <h2 className="text-xl font-bold text-white mb-3">One last step</h2>
+        <p className="text-sm leading-relaxed text-gray-400 mb-6">
+          To access HyperSoftTrade, create your Hyperliquid account through our link. It&apos;s free.
         </p>
 
         {/* Message banner */}
@@ -191,7 +187,7 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
             className="flex items-center justify-center rounded-xl py-3 text-sm font-semibold transition-opacity hover:opacity-80"
             style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
           >
-            {ctaClicked ? 'Waiting… Click below when done' : 'Create Account (Free) →'}
+            {ctaClicked ? 'Waiting… Click below when done' : 'Get Started on Hyperliquid →'}
           </a>
 
           {/* Divider */}
@@ -210,7 +206,7 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
             onMouseEnter={e => !verifying && ((e.currentTarget as HTMLElement).style.borderColor = '#374151')}
             onMouseLeave={e => ((e.currentTarget as HTMLElement).style.borderColor = '#1a1a2e')}
           >
-            {verifying ? 'Verifying…' : 'I already have an account → Verify'}
+            {verifying ? 'Verifying…' : 'I already signed up → Verify now'}
           </button>
         </div>
       </div>
