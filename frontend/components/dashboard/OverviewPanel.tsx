@@ -20,7 +20,7 @@ interface Portfolio {
   open_positions: Position[];
 }
 
-type Status = 'loading' | 'loaded' | 'no_account' | 'error';
+type Status = 'loading' | 'loaded' | 'no_api_key' | 'no_account' | 'error';
 
 interface Props {
   walletAddress: string;
@@ -37,7 +37,7 @@ function SkeletonCard() {
       style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
     >
       <div className="h-3 w-24 rounded mb-3" style={{ backgroundColor: '#1a1a2e' }} />
-      <div className="h-7 w-32 rounded" style={{ backgroundColor: '#1a1a2e' }} />
+      <div className="h-7 w-32 rounded" style={{ backgroundColor: '#222236' }} />
     </div>
   );
 }
@@ -47,27 +47,44 @@ export function OverviewPanel({ walletAddress }: Props) {
   const [status, setStatus] = useState<Status>('loading');
 
   useEffect(() => {
-    const load = async () => {
+    if (!walletAddress) return;
+    (async () => {
       setStatus('loading');
       try {
         const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`);
         if (res.status === 404) { setStatus('no_account'); return; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        if (data.error === 'no_api_key') { setStatus('no_api_key'); return; }
         setPortfolio(data);
         setStatus('loaded');
       } catch {
         setStatus('error');
       }
-    };
-    if (walletAddress) load();
+    })();
   }, [walletAddress]);
 
   if (status === 'loading') {
     return (
       <div className="p-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {[0, 1, 2, 3].map(i => <SkeletonCard key={i} />)}
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'no_api_key') {
+    return (
+      <div className="p-6">
+        <div
+          className="rounded-xl border px-6 py-5 text-sm"
+          style={{ borderColor: '#1a1a2e', backgroundColor: '#0d0d14' }}
+        >
+          <p className="text-gray-400 mb-1 font-medium">No API key connected</p>
+          <p className="text-gray-600 text-xs">
+            Add your API key in <span style={{ color: '#00d4aa' }}>Settings</span> to see your live portfolio data.
+          </p>
         </div>
       </div>
     );
@@ -103,13 +120,13 @@ export function OverviewPanel({ walletAddress }: Props) {
   const pnlPositive = total_pnl >= 0;
 
   const stats = [
-    { label: 'Account Value',    value: `$${fmt(account_value)}`,   color: 'text-white' },
-    { label: 'Available Margin', value: `$${fmt(available_margin)}`, color: 'text-white' },
-    { label: 'Open Positions',   value: String(open_positions.length), color: 'text-white' },
+    { label: 'Account Value',    value: `$${fmt(account_value)}`,    color: '#ffffff' },
+    { label: 'Available Margin', value: `$${fmt(available_margin)}`, color: '#ffffff' },
+    { label: 'Open Positions',   value: String(open_positions.length), color: '#ffffff' },
     {
       label: 'Unrealized PnL',
       value: `${pnlPositive ? '+' : ''}$${fmt(total_pnl)}`,
-      color: pnlPositive ? 'text-emerald-400' : 'text-red-400',
+      color: pnlPositive ? '#10b981' : '#ef4444',
     },
   ];
 
@@ -126,7 +143,7 @@ export function OverviewPanel({ walletAddress }: Props) {
             onMouseLeave={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
           >
             <p className="text-xs text-gray-500 mb-2">{label}</p>
-            <p className={`text-2xl font-black ${color}`}>{value}</p>
+            <p className="text-2xl font-black" style={{ color }}>{value}</p>
           </div>
         ))}
       </div>
@@ -165,7 +182,7 @@ export function OverviewPanel({ walletAddress }: Props) {
                       <td className="px-5 py-3 text-gray-300">{pos.size}</td>
                       <td className="px-5 py-3 text-gray-300">${fmt(pos.entry_price)}</td>
                       <td className="px-5 py-3 text-gray-300">${fmt(pos.mark_price)}</td>
-                      <td className={`px-5 py-3 font-semibold ${pos_positive ? 'text-emerald-400' : 'text-red-400'}`}>
+                      <td className="px-5 py-3 font-semibold" style={{ color: pos_positive ? '#10b981' : '#ef4444' }}>
                         {pos_positive ? '+' : ''}${fmt(pos.unrealized_pnl)}
                       </td>
                       <td className="px-5 py-3 text-gray-300">{pos.leverage}x</td>

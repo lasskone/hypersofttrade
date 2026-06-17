@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
@@ -10,11 +10,31 @@ interface Props {
   onVerified: () => void;
 }
 
-// Gate state — drives which screen is shown
-type GateState = 'idle' | 'checking' | 'affiliated' | 'not_affiliated' | 'error';
+type GateState = 'checking' | 'not_affiliated' | 'error';
 
+// ─── Progress indicator ───────────────────────────────────────────────────────
+function StepDots({ current, total }: { current: number; total: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-8">
+      {Array.from({ length: total }, (_, i) => (
+        <div
+          key={i}
+          className="rounded-full transition-all"
+          style={{
+            width: i === current - 1 ? 20 : 8,
+            height: 8,
+            backgroundColor: i === current - 1 ? '#00d4aa' : '#1a1a2e',
+          }}
+        />
+      ))}
+      <span className="ml-2 text-xs text-gray-600">Step {current} of {total}</span>
+    </div>
+  );
+}
+
+// ─── API call ────────────────────────────────────────────────────────────────
 async function callVerify(walletAddress: string): Promise<{ is_affiliated: boolean }> {
-  console.log('[AffiliateGate] calling verify-affiliation for', walletAddress);
+  console.log('[AffiliateGate] verify call for', walletAddress);
   const res = await fetch(`${API_URL}/account/verify-affiliation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -27,107 +47,135 @@ async function callVerify(walletAddress: string): Promise<{ is_affiliated: boole
   return res.json();
 }
 
+// ─── Component ───────────────────────────────────────────────────────────────
 export function AffiliateGate({ walletAddress, onVerified }: Props) {
-  const [gateState, setGateState] = useState<GateState>('idle');
-  // Separate loading flag for the "Verify now" button — keeps gate screen visible
+  const [gateState, setGateState] = useState<GateState>('checking');
   const [verifying, setVerifying] = useState(false);
-  // Distinct messages for not_affiliated vs error on button retry
-  const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
+  const [ctaClicked, setCtaClicked] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: 'error' | 'info' } | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Initial check on mount ─────────────────────────────────────────────────
+  const stopPoll = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  // Initial silent check on mount
   useEffect(() => {
     if (!walletAddress) return;
     (async () => {
-      setGateState('checking');
       try {
         const data = await callVerify(walletAddress);
-        console.log('[AffiliateGate] initial check result:', data);
+        console.log('[AffiliateGate] initial check:', data);
         if (data.is_affiliated) {
-          setGateState('affiliated');
           onVerified();
         } else {
           setGateState('not_affiliated');
         }
       } catch (err) {
         console.error('[AffiliateGate] initial check failed:', err);
-        setGateState('error');
+        setGateState('not_affiliated'); // show gate, don't block on network error
       }
     })();
+    return stopPoll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
 
-  // ── Button-triggered re-verify (stays on gate screen) ────────────────────
-  const handleVerifyClick = async () => {
+  // Start auto-poll after CTA is clicked
+  const handleCtaClick = () => {
+    setCtaClicked(true);
+    setMessage({ text: 'Waiting for your account to be created…', type: 'info' });
+    if (pollRef.current) return; // already polling
+    pollRef.current = setInterval(async () => {
+      try {
+        const data = await callVerify(walletAddress);
+        if (data.is_affiliated) {
+          stopPoll();
+          onVerified();
+        }
+      } catch {
+        // ignore poll errors silently
+      }
+    }, 8000);
+  };
+
+  // Manual verify button
+  const handleVerify = async () => {
     if (verifying) return;
     setVerifying(true);
-    setVerifyMessage(null);
-    console.log('[AffiliateGate] manual verify triggered');
+    setMessage(null);
     try {
       const data = await callVerify(walletAddress);
-      console.log('[AffiliateGate] manual verify result:', data);
+      console.log('[AffiliateGate] manual verify:', data);
       if (data.is_affiliated) {
-        setGateState('affiliated');
+        stopPoll();
         onVerified();
       } else {
-        setGateState('not_affiliated');
-        setVerifyMessage(
-          "Account not found with our referral link. Make sure you signed up via our link, then try again."
-        );
+        setMessage({
+          text: 'Account not linked to HyperSoftTrade. Make sure you used our link.',
+          type: 'error',
+        });
       }
     } catch (err) {
       console.error('[AffiliateGate] manual verify failed:', err);
-      setVerifyMessage('Could not reach server. Please try again.');
+      setMessage({ text: 'Server error. Please try again.', type: 'error' });
     } finally {
       setVerifying(false);
     }
   };
 
-  // ── Full-screen spinner — initial load only ───────────────────────────────
-  if (gateState === 'checking' || gateState === 'idle') {
+  // Full-screen spinner while doing the initial silent check
+  if (gateState === 'checking') {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950">
-        <div className="flex flex-col items-center gap-4 text-gray-400">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-emerald-500" />
-          <p className="text-sm">Verifying affiliation…</p>
+      <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
+        <div className="flex flex-col items-center gap-4">
+          <div
+            className="h-7 w-7 animate-spin rounded-full border-2 border-gray-800"
+            style={{ borderTopColor: '#00d4aa' }}
+          />
+          <p className="text-sm text-gray-600">Verifying affiliation…</p>
         </div>
       </div>
     );
   }
 
-  // ── Passes through — parent renders dashboard ─────────────────────────────
-  if (gateState === 'affiliated') {
-    return null;
-  }
-
-  // ── Gate screen (not_affiliated or error on initial check) ────────────────
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/95 backdrop-blur-sm">
-      <div className="mx-4 w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
+      <div
+        className="mx-4 w-full max-w-[460px] rounded-2xl border p-8 shadow-2xl"
+        style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
+      >
         {/* Logo */}
-        <div className="mb-6 flex justify-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-500/10">
-            <span className="text-3xl font-black text-emerald-400">H</span>
+        <div className="flex justify-center mb-6">
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl"
+            style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
+          >
+            H
           </div>
         </div>
 
-        <h2 className="mb-3 text-2xl font-bold text-gray-100">One last step</h2>
-        <p className="mb-8 text-sm leading-relaxed text-gray-400">
-          To access HyperSoftTrade, create your Hyperliquid account through our
-          link. It&apos;s free.
+        <StepDots current={1} total={3} />
+
+        <h2 className="text-xl font-bold text-white mb-3">Create your Hyperliquid account</h2>
+        <p className="text-sm leading-relaxed text-gray-400 mb-6">
+          HyperSoftTrade is 100% free. To get started, create your Hyperliquid account via our
+          link — it takes 2 minutes.
         </p>
 
-        {/* Initial network error banner */}
-        {gateState === 'error' && !verifyMessage && (
-          <p className="mb-4 rounded-lg bg-red-500/10 px-4 py-2 text-xs text-red-400">
-            Could not reach the verification server. Please try again.
-          </p>
-        )}
-
-        {/* Result message from button-triggered verify */}
-        {verifyMessage && (
-          <p className="mb-4 rounded-lg bg-red-500/10 px-4 py-2 text-xs text-red-400">
-            {verifyMessage}
-          </p>
+        {/* Message banner */}
+        {message && (
+          <div
+            className="mb-5 rounded-lg px-4 py-2.5 text-xs leading-relaxed"
+            style={{
+              backgroundColor: message.type === 'error' ? '#ef44440f' : '#00d4aa0f',
+              color: message.type === 'error' ? '#f87171' : '#00d4aa',
+            }}
+          >
+            {message.text}
+          </div>
         )}
 
         <div className="flex flex-col gap-3">
@@ -136,22 +184,30 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
             href={REFERRAL_LINK}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-gray-950 transition hover:bg-emerald-400"
+            onClick={handleCtaClick}
+            className="flex items-center justify-center rounded-xl py-3 text-sm font-semibold transition-opacity hover:opacity-80"
+            style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
           >
-            Create Account on Hyperliquid (Free) →
+            {ctaClicked ? 'Waiting… Click below when done' : 'Create Account (Free) →'}
           </a>
 
-          <p className="text-xs text-gray-600">
-            Already have an account? Use the button below to verify.
-          </p>
+          {/* Divider */}
+          <div className="flex items-center gap-3 my-1">
+            <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
+            <span className="text-xs text-gray-600">already have an account?</span>
+            <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
+          </div>
 
-          {/* Verify button — stays on gate screen while loading */}
+          {/* Verify button */}
           <button
-            onClick={handleVerifyClick}
+            onClick={handleVerify}
             disabled={verifying}
-            className="rounded-xl border border-gray-700 px-6 py-3 text-sm font-medium text-gray-300 transition hover:border-gray-500 hover:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded-xl border py-3 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ borderColor: '#1a1a2e', color: '#9ca3af' }}
+            onMouseEnter={e => !verifying && ((e.currentTarget as HTMLElement).style.borderColor = '#374151')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.borderColor = '#1a1a2e')}
           >
-            {verifying ? 'Verifying…' : 'I already signed up → Verify now'}
+            {verifying ? 'Verifying…' : 'I already have an account → Verify'}
           </button>
         </div>
       </div>
