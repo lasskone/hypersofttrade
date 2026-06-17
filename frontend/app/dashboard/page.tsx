@@ -89,20 +89,23 @@ export default function DashboardPage() {
       try {
         const res = await fetch(`${API_URL}/account/${address}/status`);
         if (!res.ok) {
-          // Non-200 means we can't determine status → fall back to affiliation check
           setStep('affiliation');
           return;
         }
         const data = await res.json();
-        if (!data.is_affiliated) {
+        // Affiliation must be explicitly true — anything else falls back to the gate
+        if (data.is_affiliated !== true) {
           setStep('affiliation');
-        } else if (!data.has_api_key) {
-          setStep('onboarding');
-        } else {
-          setStep('dashboard');
+          return;
         }
+        // Affiliated: check API key
+        if (data.has_api_key !== true) {
+          setStep('onboarding');
+          return;
+        }
+        setStep('dashboard');
       } catch {
-        // Network error → show affiliation gate (least disruptive fallback)
+        // Network error → safest fallback is always the affiliation gate
         setStep('affiliation');
       }
     })();
