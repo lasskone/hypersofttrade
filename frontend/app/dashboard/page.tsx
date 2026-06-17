@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ApiKeyModal } from '@/components/onboarding/ApiKeyModal';
@@ -61,84 +61,51 @@ function DashboardLayout({
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
 
-  // Start on 'connect' — no loading flash, no spinner, no API call on mount
   const [step, setStep] = useState<FlowStep>('connect');
   const [section, setSection] = useState<Section>('overview');
   const [affiliationError, setAffiliationError] = useState('');
+  const [isChecking, setIsChecking] = useState(false);
   const [affiliateClicked, setAffiliateClicked] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const stopPoll = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  };
-
-  // Single effect — runs only when wallet state changes
   useEffect(() => {
+    // Clear error every time this runs
+    setAffiliationError('');
+
+    // No wallet — stay on connect screen, do nothing else
     if (!isConnected || !address) {
-      // No wallet connected — show connect screen, clear any previous error
       setStep('connect');
-      setAffiliationError('');
-      stopPoll();
       return;
     }
 
-    // Wallet just connected — check status
-    let cancelled = false;
-
-    (async () => {
-      setAffiliationError('');
+    // Wallet connected — now check status
+    const checkStatus = async () => {
+      setIsChecking(true);
       try {
-        const data = await fetchStatus(address);
-        if (cancelled) return;
-
-        if (data.is_affiliated !== true) {
-          setStep('connect');
+        const res = await fetch(`${API_URL}/account/${address}/status`);
+        const data = await res.json();
+        if (!data.is_affiliated) {
           setAffiliationError(
-            'This wallet is not linked to HyperSoftTrade. Please create an account via our link first.'
+            'This wallet is not linked to HyperSoftTrade. ' +
+            'Please create an account via our link first.'
           );
-          // If user had already clicked the affiliate link, start polling
-          if (affiliateClicked && !pollRef.current) {
-            pollRef.current = setInterval(async () => {
-              try {
-                const d = await fetchStatus(address);
-                if (d.is_affiliated === true) { stopPoll(); setStep('api_setup'); }
-              } catch { /* ignore */ }
-            }, 8000);
-          }
-          return;
-        }
-
-        if (data.has_api_key !== true) {
-          stopPoll();
-          setStep('api_setup');
-          return;
-        }
-
-        stopPoll();
-        setStep('dashboard');
-      } catch {
-        if (!cancelled) {
           setStep('connect');
-          setAffiliationError('Could not verify affiliation. Please try again.');
+        } else if (!data.has_api_key) {
+          setStep('api_setup');
+        } else {
+          setStep('dashboard');
         }
+      } catch {
+        // Network error — stay on connect, no error shown
+        setStep('connect');
+      } finally {
+        setIsChecking(false);
       }
-    })();
-
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    };
+    checkStatus();
   }, [address, isConnected]);
 
   const handleAffiliateClick = () => {
     setAffiliateClicked(true);
-    // If wallet already connected, start polling immediately
-    if (address && isConnected && !pollRef.current) {
-      pollRef.current = setInterval(async () => {
-        try {
-          const data = await fetchStatus(address);
-          if (data.is_affiliated === true) { stopPoll(); setStep('api_setup'); }
-        } catch { /* ignore */ }
-      }, 8000);
-    }
   };
 
   // ── Step: connect ────────────────────────────────────────────────────────────
@@ -192,7 +159,7 @@ export default function DashboardPage() {
             </ConnectButton.Custom>
 
             {/* Affiliation error — only shown after wallet connects and check returns false */}
-            {affiliationError && (
+            {affiliationError !== '' && isConnected && (
               <div
                 className="rounded-lg px-4 py-2.5 text-xs leading-relaxed"
                 style={{ backgroundColor: '#ef44440f', color: '#f87171' }}
