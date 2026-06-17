@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'https://hypersofttrade-backend-production.up.railway.app';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
 
 interface Props {
@@ -18,7 +18,7 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
   const checkAffiliation = async () => {
     setState('checking');
     try {
-      const res = await fetch(`${BACKEND_URL}/account/verify-affiliation`, {
+      const res = await fetch(`${API_URL}/account/verify-affiliation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet_address: walletAddress }),
@@ -31,7 +31,8 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
       } else {
         setState('not_affiliated');
       }
-    } catch {
+    } catch (err) {
+      console.error('[AffiliateGate] verify-affiliation failed:', err);
       setState('error');
     }
   };
