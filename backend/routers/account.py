@@ -146,8 +146,9 @@ async def get_account_status(wallet_address: str):
 async def get_portfolio(wallet_address: str):
     """Return account value, margin, PnL and open positions.
 
-    Requires the user to have saved an API key (used as a gate).
-    Portfolio data is fetched from the Hyperliquid public clearinghouse endpoint.
+    Requires the user to have saved an API key. The portfolio is queried
+    using the API wallet address derived from the stored private key —
+    NOT the MetaMask wallet address, which has no trading history.
     """
     db = _supabase()
     user = _get_user(db, wallet_address)
@@ -155,8 +156,17 @@ async def get_portfolio(wallet_address: str):
     if not user or not user.get("hyperliquid_api_key_encrypted"):
         return {"error": "no_api_key"}
 
+    # Decrypt the stored private key and derive the API wallet address
     try:
-        state = await hyperliquid_service.get_user_state(wallet_address)
+        decrypted_key = decrypt(user["hyperliquid_api_key_encrypted"])
+        api_wallet_address = await hyperliquid_service.get_api_wallet_address(decrypted_key)
+        print(f"[portfolio] metamask={wallet_address} api_wallet={api_wallet_address}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Key decryption failed: {exc}") from exc
+
+    # Query Hyperliquid using the API wallet address, not the MetaMask address
+    try:
+        state = await hyperliquid_service.get_user_state(api_wallet_address)
     except HTTPException:
         raise
     except Exception as exc:
@@ -172,8 +182,8 @@ async def get_portfolio(wallet_address: str):
 
     for item in raw_positions:
         pos = item.get("position", {})
-        size = float(pos.get("szi", 0))
-        if size == 0:
+        size = float(pos.get("szi", "0") or "0")
+        if size == 0.0:
             continue
         upnl = float(pos.get("unrealizedPnl", 0))
         total_pnl += upnl
