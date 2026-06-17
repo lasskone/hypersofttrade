@@ -160,9 +160,12 @@ export function AffiliateGate({ walletAddress, onVerified }: Props) {
         <StepDots current={1} total={3} />
 
         <h2 className="text-xl font-bold text-white mb-3">Create your Hyperliquid account</h2>
-        <p className="text-sm leading-relaxed text-gray-400 mb-6">
+        <p className="text-sm leading-relaxed text-gray-400 mb-2">
           HyperSoftTrade is 100% free. To get started, create your Hyperliquid account via our
           link — it takes 2 minutes.
+        </p>
+        <p className="text-xs font-medium mb-6" style={{ color: '#00d4aa' }}>
+          This is required to access HyperSoftTrade.
         </p>
 
         {/* Message banner */}

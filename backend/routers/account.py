@@ -103,6 +103,11 @@ async def get_account_status(wallet_address: str):
     is_affiliated = bool(user.get("is_affiliated"))
     has_api_key = bool(user.get("hyperliquid_api_key_encrypted"))
 
+    # Consistency guard: if DB somehow shows has_api_key without affiliation, treat as
+    # unaffiliated. This prevents bypassing the gate due to DB inconsistency.
+    if not is_affiliated:
+        has_api_key = False
+
     return {
         "wallet_address": wallet_address,
         "is_affiliated": is_affiliated,

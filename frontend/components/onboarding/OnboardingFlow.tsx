@@ -186,6 +186,20 @@ function KeyInputStep({
             Linking to: <span className="font-mono text-gray-400">{truncate(walletAddress)}</span>
           </p>
 
+          {/* Affiliate reminder */}
+          <p className="text-xs text-gray-600">
+            Don&apos;t have a Hyperliquid account yet?{' '}
+            <a
+              href="https://app.hyperliquid.xyz/join/KNS"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#00d4aa' }}
+              className="hover:opacity-80 transition-opacity"
+            >
+              Create one here first → app.hyperliquid.xyz/join/KNS
+            </a>
+          </p>
+
           {/* Error */}
           {saveStatus === 'error' && (
             <p className="text-xs text-red-400">{errorMsg}</p>
