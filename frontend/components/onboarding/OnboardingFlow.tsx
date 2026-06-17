@@ -39,7 +39,7 @@ function StepDots({ current, total }: { current: number; total: number }) {
 // ─── Sub-step A: Instructions ─────────────────────────────────────────────────
 function InstructionsStep({ onNext }: { onNext: () => void }) {
   const steps = [
-    'Go to app.hyperliquid.xyz and log in',
+    'Create your free account via our link below',
     'Click "More" in the top navigation',
     'Select "API" from the dropdown',
     'Click "Generate API Wallet"',
@@ -78,7 +78,7 @@ function InstructionsStep({ onNext }: { onNext: () => void }) {
           I have my API key →
         </button>
         <a
-          href="https://app.hyperliquid.xyz"
+          href="https://app.hyperliquid.xyz/join/KNS"
           target="_blank"
           rel="noopener noreferrer"
           className="text-center text-xs transition-colors"
@@ -86,7 +86,7 @@ function InstructionsStep({ onNext }: { onNext: () => void }) {
           onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#9ca3af')}
           onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#6b7280')}
         >
-          Open Hyperliquid ↗
+          Open Hyperliquid with referral link ↗
         </a>
       </div>
     </>
