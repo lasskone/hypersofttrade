@@ -144,57 +144,19 @@ async def get_account_status(wallet_address: str):
 
 @router.get("/{wallet_address}/portfolio")
 async def get_portfolio(wallet_address: str):
-    """Return account value, margin, PnL and open positions.
-
-    Portfolio data is read from the master MetaMask wallet address (from the URL).
-    The stored API private key is for signing orders only — not for reading data.
-    """
+    """Return complete portfolio across all DEXes, spot, fills, and open orders."""
     db = _supabase()
     user = _get_user(db, wallet_address)
 
     if not user or not user.get("hyperliquid_api_key_encrypted"):
         return {"error": "no_api_key"}
 
-    # Read portfolio using the master MetaMask wallet address.
-    # The API private key is for signing orders only — never for reading data.
     try:
-        state = await hyperliquid_service.get_user_state(wallet_address)
-    except HTTPException:
-        raise
+        data = await hyperliquid_service.get_complete_portfolio(wallet_address)
+        return data
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    margin = state.get("marginSummary", {})
-    account_value = float(margin.get("accountValue", 0))
-    available_margin = float(margin.get("withdrawable", 0))
-
-    raw_positions = state.get("assetPositions", [])
-    positions = []
-    total_pnl = 0.0
-
-    for item in raw_positions:
-        pos = item.get("position", {})
-        size = float(pos.get("szi", "0") or "0")
-        if size == 0.0:
-            continue
-        upnl = float(pos.get("unrealizedPnl", 0))
-        total_pnl += upnl
-        positions.append({
-            "symbol": pos.get("coin", ""),
-            "size": size,
-            "entry_price": float(pos.get("entryPx") or 0),
-            "mark_price": float(pos.get("positionValue", 0) / size) if size else 0,
-            "unrealized_pnl": upnl,
-            "leverage": (pos.get("leverage") or {}).get("value", 1),
-        })
-
-    return {
-        "wallet_address": wallet_address,
-        "account_value": account_value,
-        "total_pnl": total_pnl,
-        "open_positions": positions,
-        "available_margin": available_margin,
-    }
+        print(f"[portfolio] ERROR: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/save-api-key")
