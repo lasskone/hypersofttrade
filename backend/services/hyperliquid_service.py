@@ -66,27 +66,23 @@ class HyperliquidService:
 
     async def check_affiliation(self, wallet_address: str, referral_code: str) -> bool:
         """Return True if *wallet_address* is referred by *referral_code*."""
-        wallet = wallet_address.lower()
-        payload = {"type": "referral", "user": wallet}
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(INFO_ENDPOINT, json=payload)
-            resp.raise_for_status()
-
-        data = resp.json()
-        print(f"[affiliation] wallet={wallet} response={data}")
-
         try:
-            # Primary structure: data["referredBy"]["code"]
-            code = (data.get("referredBy") or {}).get("code", "")
-            if not code:
-                # Fallback structure: data["referrer"]["code"]
-                code = (data.get("referrer") or {}).get("code", "")
-            is_affiliated = code.upper() == referral_code.upper()
-        except (KeyError, TypeError, AttributeError):
-            is_affiliated = False
-
-        print(f"[affiliation] result={is_affiliated}")
-        return is_affiliated
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.hyperliquid.xyz/info",
+                    json={"type": "referral", "user": wallet_address.lower()},
+                    headers={"Content-Type": "application/json"},
+                    timeout=10.0,
+                )
+                data = response.json()
+                referred_by = data.get("referredBy") or {}
+                code = referred_by.get("code", "")
+                result = code.strip().upper() == referral_code.strip().upper()
+                print(f"[affiliation] referredBy={referred_by} code='{code}' expected='{referral_code}' result={result}")
+                return result
+        except Exception as e:
+            print(f"[affiliation] ERROR type={type(e)} msg={e}")
+            return False
 
     # ------------------------------------------------------------------
     # Legacy stubs
