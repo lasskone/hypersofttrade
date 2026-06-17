@@ -49,25 +49,28 @@ function ConnectPage({ onAffiliated }: { onAffiliated: () => void }) {
   const { address, isConnected } = useAccount();
   const [affiliateClicked, setAffiliateClicked] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPoll = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   };
 
-  // When wallet connects (or is already connected), silently check affiliation
+  // Affiliation check — fires ONLY when a wallet is connected.
+  // On disconnect or no wallet: clear error and stop any poll.
   useEffect(() => {
-    if (!isConnected || !address) {
+    if (!address || !isConnected) {
       setConnectError(null);
       stopPoll();
       return;
     }
+
+    let cancelled = false;
+
     (async () => {
-      setChecking(true);
       setConnectError(null);
       try {
         const data = await fetchStatus(address);
+        if (cancelled) return;
         if (data.is_affiliated === true) {
           stopPoll();
           onAffiliated();
@@ -75,52 +78,38 @@ function ConnectPage({ onAffiliated }: { onAffiliated: () => void }) {
           setConnectError(
             'This wallet is not linked to HyperSoftTrade. Please create an account via our link first.'
           );
+          // If user had already clicked the affiliate link, start polling now
+          if (affiliateClicked && !pollRef.current) {
+            pollRef.current = setInterval(async () => {
+              try {
+                const d = await fetchStatus(address);
+                if (d.is_affiliated === true) { stopPoll(); onAffiliated(); }
+              } catch { /* ignore */ }
+            }, 8000);
+          }
         }
       } catch {
-        setConnectError('Could not verify affiliation. Please try again.');
-      } finally {
-        setChecking(false);
+        if (!cancelled) setConnectError('Could not verify affiliation. Please try again.');
       }
     })();
-    return stopPoll;
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, isConnected]);
 
-  // After "Create your Account" clicked + wallet connected: auto-poll
   const handleAffiliateClick = () => {
     setAffiliateClicked(true);
-    if (!address || !isConnected) return; // no wallet yet — poll starts when wallet connects via effect
-    if (pollRef.current) return;
-    pollRef.current = setInterval(async () => {
-      try {
-        const data = await fetchStatus(address);
-        if (data.is_affiliated === true) {
-          stopPoll();
-          onAffiliated();
-        }
-      } catch {
-        // ignore silently
-      }
-    }, 8000);
+    // If wallet is already connected, start polling immediately
+    if (address && isConnected && !pollRef.current) {
+      pollRef.current = setInterval(async () => {
+        try {
+          const data = await fetchStatus(address);
+          if (data.is_affiliated === true) { stopPoll(); onAffiliated(); }
+        } catch { /* ignore */ }
+      }, 8000);
+    }
+    // If no wallet yet, polling will start in the useEffect above once wallet connects
   };
-
-  // Also start polling when wallet becomes available after affiliate click
-  useEffect(() => {
-    if (!affiliateClicked || !isConnected || !address || pollRef.current) return;
-    pollRef.current = setInterval(async () => {
-      try {
-        const data = await fetchStatus(address);
-        if (data.is_affiliated === true) {
-          stopPoll();
-          onAffiliated();
-        }
-      } catch {
-        // ignore silently
-      }
-    }, 8000);
-    return stopPoll;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [affiliateClicked, isConnected, address]);
 
   return (
     <main className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
@@ -143,17 +132,16 @@ function ConnectPage({ onAffiliated }: { onAffiliated: () => void }) {
         </div>
 
         <div className="flex flex-col gap-3">
-          {/* Button 1 — Connect existing account */}
+          {/* Button 1 — opens RainbowKit modal only */}
           <ConnectButton.Custom>
             {({ openConnectModal }) => (
               <div className="flex flex-col gap-1.5">
                 <button
                   onClick={openConnectModal}
-                  disabled={checking}
-                  className="w-full py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
+                  className="w-full py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80"
                   style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
                 >
-                  {checking ? 'Checking affiliation…' : 'Connect your Account'}
+                  Connect your Account
                 </button>
                 <p className="text-xs text-center" style={{ color: '#6b7280' }}>
                   Use your affiliated Hyperliquid wallet
@@ -162,7 +150,7 @@ function ConnectPage({ onAffiliated }: { onAffiliated: () => void }) {
             )}
           </ConnectButton.Custom>
 
-          {/* Affiliation error */}
+          {/* Affiliation error — only shown after wallet connects and check fails */}
           {connectError && (
             <div
               className="rounded-lg px-4 py-2.5 text-xs leading-relaxed"
@@ -179,7 +167,7 @@ function ConnectPage({ onAffiliated }: { onAffiliated: () => void }) {
             <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
           </div>
 
-          {/* Button 2 — Create new account */}
+          {/* Button 2 — opens affiliate link in new tab */}
           <div className="flex flex-col gap-1.5">
             <a
               href={REFERRAL_LINK}
