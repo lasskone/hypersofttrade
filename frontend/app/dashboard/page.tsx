@@ -38,7 +38,7 @@ function DashboardLayout({
       <div className="flex flex-col flex-1" style={{ marginLeft: 240 }}>
         <TopBar section={section} />
         <main className="flex-1">
-          {section === 'overview' && <OverviewPanel walletAddress={address} />}
+          {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} />}
           {section === 'trade' && <TradePanel />}
           {section === 'bots' && (
             <div className="flex items-center justify-center h-64">

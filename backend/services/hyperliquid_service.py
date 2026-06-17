@@ -168,7 +168,7 @@ class HyperliquidService:
                     "margin_used":      float(pos.get("marginUsed", "0") or "0"),
                 })
 
-        # Step 4: spot balances
+        # Step 4: spot balances (also add USDC spot to account value)
         spot_balances: list[dict] = []
         if not isinstance(spot_state, Exception):
             for balance in spot_state.get("balances", []):
@@ -179,6 +179,9 @@ class HyperliquidService:
                         "total": amount,
                         "hold":  float(balance.get("hold", "0") or "0"),
                     })
+                    if balance.get("coin") == "USDC":
+                        total_account_value += amount
+                        print(f"[portfolio] USDC spot balance added: {amount}")
 
         # Step 5: recent fills (last 50)
         recent_fills: list[dict] = []
@@ -208,10 +211,15 @@ class HyperliquidService:
                     "time":     order.get("timestamp", 0),
                 })
 
+        usdc_spot = next(
+            (b["total"] for b in spot_balances if b["coin"] == "USDC"), 0.0
+        )
+
         return {
             "wallet_address":       wallet_address,
             "account_value":        round(total_account_value, 4),
             "unrealized_pnl":       round(total_unrealized_pnl, 4),
+            "usdc_spot_balance":    round(usdc_spot, 4),
             "open_positions":       all_positions,
             "open_positions_count": len(all_positions),
             "spot_balances":        spot_balances,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 
@@ -72,12 +72,35 @@ function TD({ children, color }: { children: React.ReactNode; color?: string }) 
   );
 }
 
+function LiveDot() {
+  return (
+    <span style={{
+      display: 'inline-block',
+      width: '6px',
+      height: '6px',
+      borderRadius: '50%',
+      background: '#00d4aa',
+      marginLeft: '6px',
+      animation: 'pulse 2s infinite',
+      verticalAlign: 'middle',
+    }} />
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
-export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
+export function OverviewPanel({
+  walletAddress,
+  onNavigate,
+}: {
+  walletAddress: string;
+  onNavigate?: (section: string) => void;
+}) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [data, setData] = useState<any>(null);
   const [status, setStatus] = useState<'loading' | 'no_api_key' | 'error' | 'loaded'>('loading');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Initial load ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!walletAddress) return;
     setStatus('loading');
@@ -96,10 +119,44 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
     })();
   }, [walletAddress]);
 
+  // ── Live PnL polling (every 10s) ─────────────────────────────────────────────
+  useEffect(() => {
+    if (status !== 'loaded' || !walletAddress) return;
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json?.error) return;
+        setData((prev: any) => ({
+          ...prev,
+          unrealized_pnl:  json.unrealized_pnl,
+          open_positions:  json.open_positions,
+          open_positions_count: json.open_positions_count,
+          account_value:   json.account_value,
+          usdc_spot_balance: json.usdc_spot_balance,
+        }));
+      } catch {
+        // silently ignore poll errors
+      }
+    }, 10_000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [status, walletAddress]);
+
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (status === 'loading' || data === null) {
     return (
       <div className="p-6">
+        <style>{`
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+          }
+        `}</style>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
           {[0, 1, 2, 3].map(i => <SkeletonCard key={i} />)}
         </div>
@@ -139,6 +196,7 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
   // ── Loaded — safely destructure with defaults ─────────────────────────────────
   const accountValue     = data?.account_value ?? 0;
   const unrealizedPnl    = data?.unrealized_pnl ?? 0;
+  const usdcSpot         = data?.usdc_spot_balance ?? 0;
   const openPositions    = data?.open_positions ?? [];
   const openPositionsCnt = data?.open_positions_count ?? openPositions.length;
   const spotBalances     = data?.spot_balances ?? [];
@@ -148,23 +206,57 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
   const pnlPos = parseFloat(String(unrealizedPnl)) >= 0;
 
   const stats = [
-    { label: 'Account Value',  value: `$${fmt(accountValue)}`,    color: '#ffffff' },
-    { label: 'Unrealized PnL', value: fmtPnl(unrealizedPnl),      color: pnlPos ? '#10b981' : '#ef4444' },
-    { label: 'Open Positions', value: String(openPositionsCnt),   color: '#ffffff' },
-    { label: 'Open Orders',    value: String(openOrders.length),  color: '#ffffff' },
+    {
+      label: 'Account Value',
+      subtitle: 'Perp margin + USDC spot',
+      value: `$${fmt(accountValue)}`,
+      color: '#ffffff',
+      live: false,
+    },
+    {
+      label: 'Available USDC',
+      subtitle: 'Spot wallet balance',
+      value: `$${fmt(usdcSpot)}`,
+      color: '#ffffff',
+      live: false,
+    },
+    {
+      label: 'Open Positions',
+      subtitle: 'Active trades currently running',
+      value: String(openPositionsCnt),
+      color: '#ffffff',
+      live: false,
+    },
+    {
+      label: 'Unrealized PnL',
+      subtitle: 'Updates every 10s',
+      value: fmtPnl(unrealizedPnl),
+      color: pnlPos ? '#10b981' : '#ef4444',
+      live: true,
+    },
   ];
 
   return (
     <div className="p-6">
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        {stats.map(({ label, value, color }) => (
+        {stats.map(({ label, subtitle, value, color, live }) => (
           <div key={label} className="rounded-xl p-5 border transition-colors"
             style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
             onMouseEnter={e => (e.currentTarget.style.borderColor = '#00d4aa44')}
             onMouseLeave={e => (e.currentTarget.style.borderColor = '#1a1a2e')}>
-            <p className="text-xs text-gray-500 mb-2">{label}</p>
+            <div className="flex items-center mb-1">
+              <p className="text-xs text-gray-500">{label}</p>
+              {live && <LiveDot />}
+            </div>
+            <p style={{ fontSize: 11, color: '#6b7280', marginTop: 2, marginBottom: 8 }}>{subtitle}</p>
             <p className="text-2xl font-black" style={{ color }}>{value}</p>
           </div>
         ))}
@@ -173,7 +265,17 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
       {/* Open Positions */}
       <Section title="Open Positions">
         {openPositions.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-gray-600">No open positions</p>
+          <div className="px-5 py-8 flex flex-col items-center gap-3">
+            <p className="text-sm text-gray-600">No open positions — Start trading in the Trade tab</p>
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate('trade')}
+                className="text-sm font-semibold px-4 py-2 rounded-lg transition-opacity hover:opacity-80"
+                style={{ backgroundColor: '#00d4aa18', color: '#00d4aa', border: '1px solid #00d4aa44' }}>
+                Go to Trade →
+              </button>
+            )}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -185,9 +287,9 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
               </thead>
               <tbody>
                 {openPositions.map((pos: any, i: number) => {
-                  const upnl    = parseFloat(String(pos?.unrealized_pnl ?? 0));
-                  const posPos  = upnl >= 0;
-                  const liqPx   = parseFloat(String(pos?.liquidation_price ?? 0));
+                  const upnl   = parseFloat(String(pos?.unrealized_pnl ?? 0));
+                  const posPos = upnl >= 0;
+                  const liqPx  = parseFloat(String(pos?.liquidation_price ?? 0));
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
@@ -212,31 +314,6 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
           </div>
         )}
       </Section>
-
-      {/* Spot Balances */}
-      {spotBalances.length > 0 && (
-        <Section title="Spot Balances">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                  <TH>Coin</TH><TH>Total</TH><TH>Hold</TH>
-                </tr>
-              </thead>
-              <tbody>
-                {spotBalances.map((b: any, i: number) => (
-                  <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                    style={{ borderColor: '#1a1a2e' }}>
-                    <td className="px-5 py-3 font-semibold text-white text-sm">{b?.coin ?? '—'}</td>
-                    <TD>{fmt(b?.total, 6)}</TD>
-                    <TD>{parseFloat(String(b?.hold ?? 0)) > 0 ? fmt(b?.hold, 6) : '—'}</TD>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Section>
-      )}
 
       {/* Open Orders */}
       {openOrders.length > 0 && (
@@ -267,6 +344,31 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
         </Section>
       )}
 
+      {/* Spot Balances */}
+      {spotBalances.length > 0 && (
+        <Section title="Spot Balances">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
+                  <TH>Coin</TH><TH>Total</TH><TH>Hold</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {spotBalances.map((b: any, i: number) => (
+                  <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                    style={{ borderColor: '#1a1a2e' }}>
+                    <td className="px-5 py-3 font-semibold text-white text-sm">{b?.coin ?? '—'}</td>
+                    <TD>{fmt(b?.total, 6)}</TD>
+                    <TD>{parseFloat(String(b?.hold ?? 0)) > 0 ? fmt(b?.hold, 6) : '—'}</TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {/* Recent Trades */}
       {recentFills.length > 0 && (
         <Section title="Recent Trades">
@@ -280,9 +382,9 @@ export function OverviewPanel({ walletAddress }: { walletAddress: string }) {
               </thead>
               <tbody>
                 {recentFills.slice(0, 10).map((f: any, i: number) => {
-                  const buy       = isBuySide(f?.side);
-                  const cpnl      = parseFloat(String(f?.closed_pnl ?? 0));
-                  const cpnlPos   = cpnl >= 0;
+                  const buy     = isBuySide(f?.side);
+                  const cpnl    = parseFloat(String(f?.closed_pnl ?? 0));
+                  const cpnlPos = cpnl >= 0;
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
