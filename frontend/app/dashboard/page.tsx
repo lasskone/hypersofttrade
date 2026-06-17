@@ -7,6 +7,8 @@ import { AffiliateGate } from '@/components/AffiliateGate';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { TopBar } from '@/components/dashboard/TopBar';
 import { OverviewPanel } from '@/components/dashboard/OverviewPanel';
+import { TradePanel } from '@/components/dashboard/TradePanel';
+import { SettingsPanel } from '@/components/dashboard/SettingsPanel';
 
 type Section = 'overview' | 'trade' | 'bots' | 'history' | 'settings';
 
@@ -73,16 +75,28 @@ export default function DashboardPage() {
         walletAddress={address!}
       />
 
-      {/* Main content offset by sidebar width */}
       <div className="flex flex-col flex-1" style={{ marginLeft: 240 }}>
         <TopBar section={section} />
 
         <main className="flex-1">
-          {section === 'overview' && <OverviewPanel />}
-          {section !== 'overview' && (
+          {section === 'overview' && (
+            <OverviewPanel walletAddress={address!} />
+          )}
+          {section === 'trade' && (
+            <TradePanel />
+          )}
+          {section === 'bots' && (
             <div className="flex items-center justify-center h-64">
-              <p className="text-gray-600 text-sm">Coming soon</p>
+              <p className="text-gray-600 text-sm">Bot Library — Coming in next update</p>
             </div>
+          )}
+          {section === 'history' && (
+            <div className="flex items-center justify-center h-64">
+              <p className="text-gray-600 text-sm">Trade History — Coming in next update</p>
+            </div>
+          )}
+          {section === 'settings' && (
+            <SettingsPanel walletAddress={address!} isAffiliated={true} />
           )}
         </main>
       </div>

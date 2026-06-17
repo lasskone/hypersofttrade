@@ -17,7 +17,36 @@ class HyperliquidService:
         self.referral_code = referral_code
 
     # ------------------------------------------------------------------
-    # Public helpers
+    # Market data
+    # ------------------------------------------------------------------
+
+    async def get_all_mids(self) -> dict:
+        """Return a dict of symbol -> mid price for all assets."""
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"})
+            resp.raise_for_status()
+        return resp.json()
+
+    async def get_orderbook(self, symbol: str) -> dict:
+        """Return top-of-book bids and asks for *symbol*."""
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                INFO_ENDPOINT, json={"type": "l2Book", "coin": symbol}
+            )
+            resp.raise_for_status()
+        data = resp.json()
+        # l2Book returns {"levels": [[bids], [asks]]}
+        levels = data.get("levels", [[], []])
+        bids = levels[0] if len(levels) > 0 else []
+        asks = levels[1] if len(levels) > 1 else []
+        return {"bids": bids, "asks": asks}
+
+    async def get_user_positions(self, wallet_address: str) -> dict:
+        """Return full clearinghouse state for *wallet_address*."""
+        return await self.get_user_state(wallet_address)
+
+    # ------------------------------------------------------------------
+    # Account
     # ------------------------------------------------------------------
 
     async def get_user_state(self, wallet_address: str) -> dict:
@@ -36,21 +65,19 @@ class HyperliquidService:
         return data
 
     async def check_affiliation(self, wallet_address: str, referral_code: str) -> bool:
-        """Return True if *wallet_address* is referred by *referral_code* on Hyperliquid."""
+        """Return True if *wallet_address* is referred by *referral_code*."""
         payload = {"type": "referral", "user": wallet_address}
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(INFO_ENDPOINT, json=payload)
             resp.raise_for_status()
 
         data = resp.json()
-        # The referral endpoint returns {"referredBy": {"code": "KNS", ...}, ...}
-        # when the user signed up through a referral link.
         referred_by = data.get("referredBy") or {}
         code = referred_by.get("code", "")
         return code.upper() == referral_code.upper()
 
     # ------------------------------------------------------------------
-    # Legacy stubs (kept for existing routers)
+    # Legacy stubs
     # ------------------------------------------------------------------
 
     async def get_account_info(self, address: str) -> dict:
