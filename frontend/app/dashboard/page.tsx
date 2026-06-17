@@ -13,190 +13,16 @@ import { SettingsPanel } from '@/components/dashboard/SettingsPanel';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
 
-type FlowStep = 'loading' | 'connect' | 'api_setup' | 'dashboard';
+type FlowStep = 'connect' | 'api_setup' | 'dashboard';
 type Section = 'overview' | 'trade' | 'bots' | 'history' | 'settings';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 async function fetchStatus(address: string): Promise<{ is_affiliated: boolean; has_api_key: boolean }> {
   const res = await fetch(`${API_URL}/account/${address}/status`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-// ─── Loading screen ───────────────────────────────────────────────────────────
-function LoadingScreen() {
-  return (
-    <main className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
-      <div className="flex flex-col items-center gap-4">
-        <div
-          className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-xl"
-          style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
-        >
-          H
-        </div>
-        <div
-          className="h-5 w-5 animate-spin rounded-full border-2 border-gray-800"
-          style={{ borderTopColor: '#00d4aa' }}
-        />
-        <p className="text-sm text-gray-600">Loading…</p>
-      </div>
-    </main>
-  );
-}
-
-// ─── Step 1: Connection page ──────────────────────────────────────────────────
-function ConnectPage({ onAffiliated }: { onAffiliated: () => void }) {
-  const { address, isConnected } = useAccount();
-  const [affiliateClicked, setAffiliateClicked] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stopPoll = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  };
-
-  // Affiliation check — fires ONLY when a wallet is connected.
-  // On disconnect or no wallet: clear error and stop any poll.
-  useEffect(() => {
-    if (!address || !isConnected) {
-      setConnectError(null);
-      stopPoll();
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      setConnectError(null);
-      try {
-        const data = await fetchStatus(address);
-        if (cancelled) return;
-        if (data.is_affiliated === true) {
-          stopPoll();
-          onAffiliated();
-        } else {
-          setConnectError(
-            'This wallet is not linked to HyperSoftTrade. Please create an account via our link first.'
-          );
-          // If user had already clicked the affiliate link, start polling now
-          if (affiliateClicked && !pollRef.current) {
-            pollRef.current = setInterval(async () => {
-              try {
-                const d = await fetchStatus(address);
-                if (d.is_affiliated === true) { stopPoll(); onAffiliated(); }
-              } catch { /* ignore */ }
-            }, 8000);
-          }
-        }
-      } catch {
-        if (!cancelled) setConnectError('Could not verify affiliation. Please try again.');
-      }
-    })();
-
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, isConnected]);
-
-  const handleAffiliateClick = () => {
-    setAffiliateClicked(true);
-    // If wallet is already connected, start polling immediately
-    if (address && isConnected && !pollRef.current) {
-      pollRef.current = setInterval(async () => {
-        try {
-          const data = await fetchStatus(address);
-          if (data.is_affiliated === true) { stopPoll(); onAffiliated(); }
-        } catch { /* ignore */ }
-      }, 8000);
-    }
-    // If no wallet yet, polling will start in the useEffect above once wallet connects
-  };
-
-  return (
-    <main className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
-      <div
-        className="mx-4 w-full max-w-[420px] rounded-2xl border p-8 shadow-2xl"
-        style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
-      >
-        {/* Logo + header */}
-        <div className="flex flex-col items-center mb-8">
-          <div
-            className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4"
-            style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
-          >
-            H
-          </div>
-          <h1 className="text-2xl font-bold text-white">HyperSoftTrade</h1>
-          <p className="text-xs mt-1.5" style={{ color: '#6b7280' }}>
-            Professional crypto trading terminal · Free forever
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          {/* Button 1 — opens RainbowKit modal only */}
-          <ConnectButton.Custom>
-            {({ openConnectModal }) => (
-              <div className="flex flex-col gap-1.5">
-                <button
-                  onClick={openConnectModal}
-                  className="w-full py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80"
-                  style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
-                >
-                  Connect your Account
-                </button>
-                <p className="text-xs text-center" style={{ color: '#6b7280' }}>
-                  Use your affiliated Hyperliquid wallet
-                </p>
-              </div>
-            )}
-          </ConnectButton.Custom>
-
-          {/* Affiliation error — only shown after wallet connects and check fails */}
-          {connectError && (
-            <div
-              className="rounded-lg px-4 py-2.5 text-xs leading-relaxed"
-              style={{ backgroundColor: '#ef44440f', color: '#f87171' }}
-            >
-              {connectError}
-            </div>
-          )}
-
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-1">
-            <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
-            <span className="text-xs" style={{ color: '#6b7280' }}>— or —</span>
-            <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
-          </div>
-
-          {/* Button 2 — opens affiliate link in new tab */}
-          <div className="flex flex-col gap-1.5">
-            <a
-              href={REFERRAL_LINK}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={handleAffiliateClick}
-              className="w-full py-3 rounded-xl text-sm font-semibold text-center transition-opacity hover:opacity-80"
-              style={{ border: '1px solid #00d4aa', color: '#00d4aa' }}
-            >
-              {affiliateClicked
-                ? "Waiting for your account… Click 'Connect' when done"
-                : 'Create your Account'}
-            </a>
-            <p className="text-xs text-center" style={{ color: '#6b7280' }}>
-              Use our affiliate link · It&apos;s free
-            </p>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <p className="mt-8 text-center text-xs leading-relaxed" style={{ color: '#4b5563' }}>
-          By connecting, you agree to trade on Hyperliquid DEX through HyperSoftTrade.
-        </p>
-      </div>
-    </main>
-  );
-}
-
-// ─── Dashboard layout (shared between api_setup and dashboard) ────────────────
+// ─── Dashboard layout (reused as background in api_setup) ─────────────────────
 function DashboardLayout({
   address,
   section,
@@ -234,39 +60,184 @@ function DashboardLayout({
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
-  const [step, setStep] = useState<FlowStep>('loading');
-  const [section, setSection] = useState<Section>('overview');
 
+  // Start on 'connect' — no loading flash, no spinner, no API call on mount
+  const [step, setStep] = useState<FlowStep>('connect');
+  const [section, setSection] = useState<Section>('overview');
+  const [affiliationError, setAffiliationError] = useState('');
+  const [affiliateClicked, setAffiliateClicked] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPoll = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
+  // Single effect — runs only when wallet state changes
   useEffect(() => {
     if (!isConnected || !address) {
+      // No wallet connected — show connect screen, clear any previous error
       setStep('connect');
+      setAffiliationError('');
+      stopPoll();
       return;
     }
+
+    // Wallet just connected — check status
+    let cancelled = false;
+
     (async () => {
-      setStep('loading');
+      setAffiliationError('');
       try {
         const data = await fetchStatus(address);
+        if (cancelled) return;
+
         if (data.is_affiliated !== true) {
           setStep('connect');
+          setAffiliationError(
+            'This wallet is not linked to HyperSoftTrade. Please create an account via our link first.'
+          );
+          // If user had already clicked the affiliate link, start polling
+          if (affiliateClicked && !pollRef.current) {
+            pollRef.current = setInterval(async () => {
+              try {
+                const d = await fetchStatus(address);
+                if (d.is_affiliated === true) { stopPoll(); setStep('api_setup'); }
+              } catch { /* ignore */ }
+            }, 8000);
+          }
           return;
         }
+
         if (data.has_api_key !== true) {
+          stopPoll();
           setStep('api_setup');
           return;
         }
+
+        stopPoll();
         setStep('dashboard');
       } catch {
-        setStep('connect');
+        if (!cancelled) {
+          setStep('connect');
+          setAffiliationError('Could not verify affiliation. Please try again.');
+        }
       }
     })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, isConnected]);
 
-  if (step === 'loading') return <LoadingScreen />;
+  const handleAffiliateClick = () => {
+    setAffiliateClicked(true);
+    // If wallet already connected, start polling immediately
+    if (address && isConnected && !pollRef.current) {
+      pollRef.current = setInterval(async () => {
+        try {
+          const data = await fetchStatus(address);
+          if (data.is_affiliated === true) { stopPoll(); setStep('api_setup'); }
+        } catch { /* ignore */ }
+      }, 8000);
+    }
+  };
 
+  // ── Step: connect ────────────────────────────────────────────────────────────
   if (step === 'connect') {
-    return <ConnectPage onAffiliated={() => setStep('api_setup')} />;
+    return (
+      <main className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
+        <div
+          className="mx-4 w-full max-w-[420px] rounded-2xl border p-8 shadow-2xl"
+          style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
+        >
+          {/* Logo + header */}
+          <div className="flex flex-col items-center mb-8">
+            <div
+              className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4"
+              style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
+            >
+              H
+            </div>
+            <h1 className="text-2xl font-bold text-white">HyperSoftTrade</h1>
+            <p className="text-xs mt-1.5" style={{ color: '#6b7280' }}>
+              Professional crypto trading terminal · Free forever
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {/* Button 1 — opens RainbowKit modal only, no affiliation logic */}
+            <ConnectButton.Custom>
+              {({ openConnectModal }) => (
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={openConnectModal}
+                    style={{
+                      background: '#00d4aa',
+                      color: '#0a0a0f',
+                      border: 'none',
+                      padding: '14px',
+                      borderRadius: '8px',
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      width: '100%',
+                    }}
+                  >
+                    Connect your Account
+                  </button>
+                  <p className="text-xs text-center" style={{ color: '#6b7280' }}>
+                    Use your affiliated Hyperliquid wallet
+                  </p>
+                </div>
+              )}
+            </ConnectButton.Custom>
+
+            {/* Affiliation error — only shown after wallet connects and check returns false */}
+            {affiliationError && (
+              <div
+                className="rounded-lg px-4 py-2.5 text-xs leading-relaxed"
+                style={{ backgroundColor: '#ef44440f', color: '#f87171' }}
+              >
+                {affiliationError}
+              </div>
+            )}
+
+            {/* Divider */}
+            <div className="flex items-center gap-3 my-1">
+              <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
+              <span className="text-xs" style={{ color: '#6b7280' }}>— or —</span>
+              <div className="flex-1 h-px" style={{ backgroundColor: '#1a1a2e' }} />
+            </div>
+
+            {/* Button 2 — opens affiliate link in new tab */}
+            <div className="flex flex-col gap-1.5">
+              <a
+                href={REFERRAL_LINK}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleAffiliateClick}
+                className="w-full py-3 rounded-xl text-sm font-semibold text-center transition-opacity hover:opacity-80"
+                style={{ border: '1px solid #00d4aa', color: '#00d4aa', display: 'block' }}
+              >
+                {affiliateClicked
+                  ? "Waiting for your account… Click 'Connect' when done"
+                  : 'Create your Account'}
+              </a>
+              <p className="text-xs text-center" style={{ color: '#6b7280' }}>
+                Use our affiliate link · It&apos;s free
+              </p>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <p className="mt-8 text-center text-xs leading-relaxed" style={{ color: '#4b5563' }}>
+            By connecting, you agree to trade on Hyperliquid DEX through HyperSoftTrade.
+          </p>
+        </div>
+      </main>
+    );
   }
 
+  // ── Step: api_setup ──────────────────────────────────────────────────────────
   if (step === 'api_setup') {
     return (
       <>
@@ -293,7 +264,7 @@ export default function DashboardPage() {
     );
   }
 
-  // step === 'dashboard'
+  // ── Step: dashboard ──────────────────────────────────────────────────────────
   return (
     <DashboardLayout address={address!} section={section} onNavigate={setSection} />
   );
