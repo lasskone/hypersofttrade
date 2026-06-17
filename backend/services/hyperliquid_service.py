@@ -70,7 +70,7 @@ class HyperliquidService:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://api.hyperliquid.xyz/info",
-                    json={"type": "referral", "user": wallet_address.lower()},
+                    json={"type": "referral", "user": wallet_address},
                     headers={"Content-Type": "application/json"},
                     timeout=10.0,
                 )

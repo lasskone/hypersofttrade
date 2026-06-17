@@ -43,8 +43,8 @@ class SaveApiKeyRequest(BaseModel):
 
 @router.post("/verify-affiliation")
 async def verify_affiliation(body: VerifyAffiliationRequest):
-    wallet = body.wallet_address.lower()
-    print(f"[verify] wallet={body.wallet_address} -> normalized={wallet}")
+    wallet = body.wallet_address
+    print(f"[verify] wallet={wallet}")
     is_affiliated = await hyperliquid_service.check_affiliation(
         wallet, settings.hyperliquid_referral
     )
