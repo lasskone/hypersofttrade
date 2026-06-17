@@ -32,7 +32,25 @@ export default function DashboardPage() {
             <h1 className="mb-2 text-2xl font-bold text-white">HyperSoftTrade</h1>
             <p className="text-sm text-gray-400">Connect your wallet to continue</p>
           </div>
-          <ConnectButton />
+          <ConnectButton.Custom>
+            {({ openConnectModal }) => (
+              <button
+                onClick={openConnectModal}
+                style={{
+                  background: '#00d4aa',
+                  color: '#0a0a0f',
+                  border: 'none',
+                  padding: '12px 32px',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                }}
+              >
+                Connect Wallet
+              </button>
+            )}
+          </ConnectButton.Custom>
         </div>
       </main>
     );
