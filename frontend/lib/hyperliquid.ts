@@ -5,7 +5,7 @@
  * Backend at NEXT_PUBLIC_API_URL proxies authenticated requests.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_CODE = process.env.NEXT_PUBLIC_HYPERLIQUID_REFERRAL_CODE ?? 'KNS';
 
 export const hyperliquid = {

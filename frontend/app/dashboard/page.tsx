@@ -4,20 +4,32 @@ import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { AffiliateGate } from '@/components/AffiliateGate';
+import { Sidebar } from '@/components/dashboard/Sidebar';
+import { TopBar } from '@/components/dashboard/TopBar';
+import { OverviewPanel } from '@/components/dashboard/OverviewPanel';
+
+type Section = 'overview' | 'trade' | 'bots' | 'history' | 'settings';
 
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
   const [verified, setVerified] = useState(false);
+  const [section, setSection] = useState<Section>('overview');
 
   if (!isConnected) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-950">
+      <main
+        className="flex min-h-screen items-center justify-center"
+        style={{ backgroundColor: '#0a0a0f' }}
+      >
         <div className="flex flex-col items-center gap-6 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-500">
-            <span className="text-2xl font-black text-gray-950">H</span>
+          <div
+            className="flex h-14 w-14 items-center justify-center rounded-xl font-black text-2xl"
+            style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
+          >
+            H
           </div>
           <div>
-            <h1 className="mb-2 text-2xl font-bold text-gray-100">HyperSoftTrade</h1>
+            <h1 className="mb-2 text-2xl font-bold text-white">HyperSoftTrade</h1>
             <p className="text-sm text-gray-400">Connect your wallet to continue</p>
           </div>
           <ConnectButton />
@@ -36,34 +48,26 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-950 text-gray-100 p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-8 h-8 rounded bg-emerald-500 flex items-center justify-center">
-            <span className="text-gray-950 font-black">H</span>
-          </div>
-          <h1 className="text-2xl font-bold">HyperSoftTrade Dashboard</h1>
-          <span className="ml-auto font-mono text-xs text-gray-500">
-            {address}
-          </span>
-        </div>
+    <div className="flex min-h-screen" style={{ backgroundColor: '#0a0a0f' }}>
+      <Sidebar
+        active={section}
+        onNavigate={setSection}
+        walletAddress={address!}
+      />
 
-        <p className="mb-8 text-gray-400">
-          Welcome to HyperSoftTrade Dashboard
-        </p>
+      {/* Main content offset by sidebar width */}
+      <div className="flex flex-col flex-1" style={{ marginLeft: 240 }}>
+        <TopBar section={section} />
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {['Portfolio', 'Open Positions', 'Active Bots'].map((panel) => (
-            <div
-              key={panel}
-              className="rounded-xl border border-gray-800 bg-gray-900 p-6 flex flex-col gap-2"
-            >
-              <h2 className="text-sm font-medium text-gray-400">{panel}</h2>
-              <p className="text-2xl font-bold text-gray-200">—</p>
+        <main className="flex-1">
+          {section === 'overview' && <OverviewPanel />}
+          {section !== 'overview' && (
+            <div className="flex items-center justify-center h-64">
+              <p className="text-gray-600 text-sm">Coming soon</p>
             </div>
-          ))}
-        </div>
+          )}
+        </main>
       </div>
-    </main>
+    </div>
   );
 }
