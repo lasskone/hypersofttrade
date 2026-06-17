@@ -20,10 +20,11 @@ const STEPS = [
   'Click "More" in the top navigation',
   'Select "API" from the dropdown',
   'Click "Generate API Wallet"',
-  'Copy the private key shown (starts with 0x…)',
+  'Copy the API Wallet Address and the Private Key shown',
 ];
 
 export function ApiKeyModal({ walletAddress, onComplete }: Props) {
+  const [apiWalletAddress, setApiWalletAddress] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
@@ -31,7 +32,7 @@ export function ApiKeyModal({ walletAddress, onComplete }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!privateKey.trim()) return;
+    if (!apiWalletAddress.trim() || !privateKey.trim()) return;
     setSaveStatus('saving');
     setErrorMsg('');
 
@@ -39,7 +40,11 @@ export function ApiKeyModal({ walletAddress, onComplete }: Props) {
       const res = await fetch(`${API_URL}/account/save-api-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wallet_address: walletAddress, private_key: privateKey }),
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          api_wallet_address: apiWalletAddress,
+          private_key: privateKey,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -116,22 +121,36 @@ export function ApiKeyModal({ walletAddress, onComplete }: Props) {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              {/* Key input */}
+              {/* API Wallet Address */}
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                  Your API Private Key
+                  API Wallet Address
+                </label>
+                <input
+                  type="text"
+                  placeholder="0x... (API wallet address provided by Hyperliquid)"
+                  value={apiWalletAddress}
+                  onChange={e => setApiWalletAddress(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none font-mono transition-colors"
+                  style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
+                  onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
+                  onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
+                />
+              </div>
+
+              {/* Private Key */}
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                  Private Key
                 </label>
                 <div className="relative">
                   <input
                     type={showKey ? 'text' : 'password'}
-                    placeholder="0x..."
+                    placeholder="0x... (private key provided by Hyperliquid)"
                     value={privateKey}
                     onChange={e => setPrivateKey(e.target.value)}
                     className="w-full rounded-lg px-3 py-2.5 pr-12 text-sm text-white outline-none font-mono transition-colors"
-                    style={{
-                      backgroundColor: '#0a0a0f',
-                      border: '1px solid #1a1a2e',
-                    }}
+                    style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
                     onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
                     onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
                   />
@@ -155,7 +174,7 @@ export function ApiKeyModal({ walletAddress, onComplete }: Props) {
                   color: '#fbbf24',
                 }}
               >
-                🔒 Your key is encrypted with AES-256. We store it securely and never have direct access to your funds.
+                🔒 Your private key is encrypted with AES-256. We store it securely and never have direct access to your funds.
               </div>
 
               {/* Error */}
@@ -166,7 +185,7 @@ export function ApiKeyModal({ walletAddress, onComplete }: Props) {
               {/* Submit */}
               <button
                 type="submit"
-                disabled={saveStatus === 'saving' || !privateKey.trim()}
+                disabled={saveStatus === 'saving' || !apiWalletAddress.trim() || !privateKey.trim()}
                 className="w-full py-3 rounded-xl text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
               >

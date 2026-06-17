@@ -58,6 +58,7 @@ class VerifyAffiliationRequest(BaseModel):
 
 class SaveApiKeyRequest(BaseModel):
     wallet_address: str
+    api_wallet_address: str
     private_key: str
 
 
@@ -172,6 +173,7 @@ async def save_api_key(body: SaveApiKeyRequest):
     db.table("users").upsert(
         {
             "wallet_address": wallet,
+            "api_wallet_address": body.api_wallet_address,
             "hyperliquid_api_key_encrypted": encrypted,
             "updated_at": _now(),
         },
