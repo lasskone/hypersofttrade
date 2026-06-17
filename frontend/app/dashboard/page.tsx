@@ -1,5 +1,40 @@
-// Protected route — authentication enforced at middleware level (TODO)
+'use client';
+
+import { useState } from 'react';
+import { useAccount } from 'wagmi';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { AffiliateGate } from '@/components/AffiliateGate';
+
 export default function DashboardPage() {
+  const { address, isConnected } = useAccount();
+  const [verified, setVerified] = useState(false);
+
+  if (!isConnected) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-950">
+        <div className="flex flex-col items-center gap-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-500">
+            <span className="text-2xl font-black text-gray-950">H</span>
+          </div>
+          <div>
+            <h1 className="mb-2 text-2xl font-bold text-gray-100">HyperSoftTrade</h1>
+            <p className="text-sm text-gray-400">Connect your wallet to continue</p>
+          </div>
+          <ConnectButton />
+        </div>
+      </main>
+    );
+  }
+
+  if (!verified) {
+    return (
+      <AffiliateGate
+        walletAddress={address!}
+        onVerified={() => setVerified(true)}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-950 text-gray-100 p-8">
       <div className="max-w-7xl mx-auto">
@@ -8,10 +43,14 @@ export default function DashboardPage() {
             <span className="text-gray-950 font-black">H</span>
           </div>
           <h1 className="text-2xl font-bold">HyperSoftTrade Dashboard</h1>
-          <span className="ml-auto px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-            Under Construction
+          <span className="ml-auto font-mono text-xs text-gray-500">
+            {address}
           </span>
         </div>
+
+        <p className="mb-8 text-gray-400">
+          Welcome to HyperSoftTrade Dashboard
+        </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {['Portfolio', 'Open Positions', 'Active Bots'].map((panel) => (
