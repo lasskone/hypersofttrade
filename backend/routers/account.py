@@ -1,4 +1,26 @@
-"""Account router — affiliation verification, status, portfolio, and API key management."""
+"""Account router — affiliation verification, status, portfolio, and API key management.
+
+Supabase deduplication SQL (run once in Supabase SQL Editor if duplicates exist):
+
+    -- Find duplicates
+    SELECT wallet_address, COUNT(*)
+    FROM users
+    GROUP BY wallet_address
+    HAVING COUNT(*) > 1;
+
+    -- Keep only the most recent row per wallet
+    DELETE FROM users
+    WHERE id NOT IN (
+      SELECT DISTINCT ON (wallet_address) id
+      FROM users
+      ORDER BY wallet_address, created_at DESC
+    );
+
+    -- Add unique constraint to prevent future duplicates
+    ALTER TABLE users
+    ADD CONSTRAINT users_wallet_address_unique
+    UNIQUE (wallet_address);
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -44,15 +66,19 @@ class SaveApiKeyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _get_user(db, wallet_address: str):
-    """Fetch user row with case-insensitive wallet match. Returns None if not found."""
-    resp = (
+    """Fetch user row with case-insensitive wallet match. Returns None if not found.
+    Uses .limit(1) to avoid crashing when duplicate rows exist in the table.
+    """
+    result = (
         db.table("users")
         .select("id, is_affiliated, hyperliquid_api_key_encrypted, created_at")
-        .filter("wallet_address", "ilike", wallet_address)
-        .maybe_single()
+        .ilike("wallet_address", wallet_address)
+        .limit(1)
         .execute()
     )
-    return resp.data
+    if result.data:
+        return result.data[0]
+    return None
 
 
 # ---------------------------------------------------------------------------
