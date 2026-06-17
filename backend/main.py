@@ -28,7 +28,7 @@ app.add_middleware(
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(account.router, prefix="/account", tags=["account"])
-app.include_router(orders.router, prefix="/orders", tags=["orders"])
+app.include_router(orders.router, prefix="/market", tags=["market"])
 app.include_router(bots.router, prefix="/bots", tags=["bots"])
 
 

@@ -23,7 +23,7 @@ export function TopBar({ section }: Props) {
   useEffect(() => {
     const fetchPrice = async () => {
       try {
-        const res = await fetch(`${API_URL}/orders/market/prices`);
+        const res = await fetch(`${API_URL}/market/prices`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const price = parseFloat(data.prices?.BTC);

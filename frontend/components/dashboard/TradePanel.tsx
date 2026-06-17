@@ -27,7 +27,7 @@ export function TradePanel() {
 
   const fetchBook = async (sym: string) => {
     try {
-      const res = await fetch(`${API_URL}/orders/market/orderbook/${sym}`);
+      const res = await fetch(`${API_URL}/market/orderbook/${sym}`);
       if (!res.ok) return;
       const data = await res.json();
       setBook(data);

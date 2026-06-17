@@ -14,7 +14,7 @@ TOP_ASSETS = ["BTC", "ETH", "SOL", "AVAX", "MATIC", "ARB", "OP", "DOGE", "LINK",
 # Market data
 # ---------------------------------------------------------------------------
 
-@router.get("/market/prices")
+@router.get("/prices")
 async def get_market_prices():
     """Return mid prices for the top 10 assets."""
     try:
@@ -30,7 +30,7 @@ async def get_market_prices():
     return {"prices": prices}
 
 
-@router.get("/market/orderbook/{symbol}")
+@router.get("/orderbook/{symbol}")
 async def get_orderbook(symbol: str):
     """Return top 10 bids and asks for *symbol*."""
     try:
