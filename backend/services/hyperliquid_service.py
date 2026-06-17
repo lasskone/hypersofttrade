@@ -64,12 +64,6 @@ class HyperliquidService:
             raise HTTPException(status_code=404, detail="Wallet address not found on Hyperliquid")
         return data
 
-    async def get_api_wallet_address(self, private_key: str) -> str:
-        """Derive the Ethereum address that corresponds to *private_key*."""
-        from eth_account import Account
-        account = Account.from_key(private_key)
-        return account.address
-
     async def check_affiliation(self, wallet_address: str, referral_code: str) -> bool:
         """Return True if *wallet_address* is referred by *referral_code*."""
         try:

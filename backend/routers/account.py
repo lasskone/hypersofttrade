@@ -146,9 +146,8 @@ async def get_account_status(wallet_address: str):
 async def get_portfolio(wallet_address: str):
     """Return account value, margin, PnL and open positions.
 
-    Requires the user to have saved an API key. The portfolio is queried
-    using the API wallet address derived from the stored private key —
-    NOT the MetaMask wallet address, which has no trading history.
+    Portfolio data is read from the master MetaMask wallet address (from the URL).
+    The stored API private key is for signing orders only — not for reading data.
     """
     db = _supabase()
     user = _get_user(db, wallet_address)
@@ -156,17 +155,10 @@ async def get_portfolio(wallet_address: str):
     if not user or not user.get("hyperliquid_api_key_encrypted"):
         return {"error": "no_api_key"}
 
-    # Decrypt the stored private key and derive the API wallet address
+    # Read portfolio using the master MetaMask wallet address.
+    # The API private key is for signing orders only — never for reading data.
     try:
-        decrypted_key = decrypt(user["hyperliquid_api_key_encrypted"])
-        api_wallet_address = await hyperliquid_service.get_api_wallet_address(decrypted_key)
-        print(f"[portfolio] metamask={wallet_address} api_wallet={api_wallet_address}")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Key decryption failed: {exc}") from exc
-
-    # Query Hyperliquid using the API wallet address, not the MetaMask address
-    try:
-        state = await hyperliquid_service.get_user_state(api_wallet_address)
+        state = await hyperliquid_service.get_user_state(wallet_address)
     except HTTPException:
         raise
     except Exception as exc:
