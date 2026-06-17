@@ -131,10 +131,9 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            {/* Button 1 — opens RainbowKit modal only, no affiliation logic */}
             <ConnectButton.Custom>
               {({ openConnectModal }) => (
-                <div className="flex flex-col gap-1.5">
+                <div style={{ width: '100%' }}>
                   <button
                     onClick={openConnectModal}
                     style={{
@@ -151,22 +150,31 @@ export default function DashboardPage() {
                   >
                     Connect your Account
                   </button>
-                  <p className="text-xs text-center" style={{ color: '#6b7280' }}>
+                  <p style={{
+                    color: '#6b7280',
+                    fontSize: '12px',
+                    textAlign: 'center',
+                    marginTop: '8px',
+                  }}>
                     Use your affiliated Hyperliquid wallet
                   </p>
+                  {isConnected && affiliationError && (
+                    <div style={{
+                      background: 'rgba(239,68,68,0.1)',
+                      border: '1px solid rgba(239,68,68,0.3)',
+                      borderRadius: '6px',
+                      padding: '10px',
+                      marginTop: '8px',
+                      color: '#ef4444',
+                      fontSize: '13px',
+                      textAlign: 'center',
+                    }}>
+                      {affiliationError}
+                    </div>
+                  )}
                 </div>
               )}
             </ConnectButton.Custom>
-
-            {/* Affiliation error — only shown after wallet connects and check returns false */}
-            {affiliationError !== '' && isConnected && (
-              <div
-                className="rounded-lg px-4 py-2.5 text-xs leading-relaxed"
-                style={{ backgroundColor: '#ef44440f', color: '#f87171' }}
-              >
-                {affiliationError}
-              </div>
-            )}
 
             {/* Divider */}
             <div className="flex items-center gap-3 my-1">
