@@ -76,7 +76,7 @@ export default function DashboardPage() {
 
     // No wallet — stay on connect screen, do nothing else
     if (!isConnected || !address) {
-      setStep('connect');
+      if (mounted) setStep('connect');
       return;
     }
 
