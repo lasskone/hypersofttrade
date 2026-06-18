@@ -232,4 +232,5 @@ async def close_position(body: ClosePositionRequest):
         tb = traceback.format_exc()
         print(f"[close_position] ERROR body={body} exc={exc}\n{tb}")
         raise HTTPException(status_code=500, detail=f"{exc} | {tb}") from exc
+    print(f"[close_position] FULL RESULT: {result_data}")
     return {"success": True, "result": result_data}
