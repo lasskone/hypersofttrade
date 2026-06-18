@@ -323,6 +323,22 @@ export function OverviewPanel({
     }
   };
 
+  const handleCancelOrder = async (coin: string, orderId: number) => {
+    if (!walletAddress) return
+    try {
+      const res = await fetch(`${API_URL}/orders/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: walletAddress, coin, order_id: orderId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail ?? 'Cancel failed')
+      fetchPortfolio()
+    } catch (e: any) {
+      console.error('Cancel order failed:', e.message)
+    }
+  }
+
   // ── Initial load ─────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchPortfolio();
@@ -473,7 +489,7 @@ export function OverviewPanel({
       </div>
 
       {/* Open Positions */}
-      <Section title="Open Positions">
+      <Section title={`Open Positions (${openPositions.length})`}>
         {openPositions.length === 0 ? (
           <div className="px-5 py-8 flex flex-col items-center gap-3">
             <p className="text-sm text-gray-600">No open positions — Start trading in the Trade tab</p>
@@ -492,7 +508,7 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
+                  <TH>Mark Price</TH><TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
                 </tr>
               </thead>
               <tbody>
@@ -521,6 +537,7 @@ export function OverviewPanel({
                       </td>
                       <TD>{fmt(pos?.size, 4)}</TD>
                       <TD>${fmt(pos?.entry_price)}</TD>
+                      <TD>${fmt(pos?.mark_price ?? 0)}</TD>
                       <TD>${fmt(pos?.position_value)}</TD>
                       <TD color={posPos ? '#10b981' : '#ef4444'}>{fmtPnl(upnl)}</TD>
                       <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
@@ -544,24 +561,51 @@ export function OverviewPanel({
 
       {/* Open Orders */}
       {openOrders.length > 0 && (
-        <Section title="Open Orders">
+        <Section title={`Open Orders (${openOrders.length})`}>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                  <TH>Coin</TH><TH>Side</TH><TH>Price</TH><TH>Size</TH>
+                  <TH>Coin</TH><TH>Side</TH><TH>Type</TH><TH>Price</TH><TH>Size</TH><TH>Time</TH><TH>Source</TH><TH>Action</TH>
                 </tr>
               </thead>
               <tbody>
                 {openOrders.map((o: any, i: number) => {
                   const buy = isBuySide(o?.side);
+                  const orderTime = o?.time ? new Date(o.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—';
+                  const orderDate = o?.time ? new Date(o.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                  const isTrigger = o?.orderType === 'Trigger' || o?.tpsl;
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
                       <td className="px-5 py-3 font-semibold text-white text-sm">{o?.coin ?? '—'}</td>
                       <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
+                      <td className="px-5 py-3">
+                        <span className="text-xs px-2 py-0.5 rounded font-medium"
+                          style={{ backgroundColor: isTrigger ? '#f59e0b18' : '#00d4aa18', color: isTrigger ? '#f59e0b' : '#00d4aa' }}>
+                          {isTrigger ? 'Trigger' : 'Limit'}
+                        </span>
+                      </td>
                       <TD>${fmt(o?.price)}</TD>
                       <TD>{fmt(o?.size, 4)}</TD>
+                      <td className="px-5 py-3">
+                        <p className="text-xs text-gray-300">{orderTime}</p>
+                        <p className="text-xs text-gray-600">{orderDate}</p>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="text-xs px-2 py-0.5 rounded font-medium"
+                          style={{ backgroundColor: '#1a1a2e', color: '#6b7280' }}>
+                          Manual
+                        </span>
+                      </td>
+                      <td className="px-5 py-3">
+                        <button
+                          onClick={() => handleCancelOrder(o?.coin, o?.order_id)}
+                          className="text-xs px-3 py-1 rounded font-semibold transition-opacity hover:opacity-80"
+                          style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                          Cancel
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -598,7 +642,7 @@ export function OverviewPanel({
 
       {/* Recent Trades */}
       {recentFills.length > 0 && (
-        <Section title="Recent Trades">
+        <Section title={`Recent Trades (${recentFills.slice(0, 10).length})`}>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -619,8 +663,8 @@ export function OverviewPanel({
                       <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
                       <TD>${fmt(f?.price)}</TD>
                       <TD>{fmt(f?.size, 4)}</TD>
-                      <TD color={cpnl !== 0 ? (cpnlPos ? '#10b981' : '#ef4444') : undefined}>
-                        {cpnl !== 0 ? fmtPnl(cpnl) : '—'}
+                      <TD color={cpnl > 0 ? '#10b981' : cpnl < 0 ? '#ef4444' : '#6b7280'}>
+                        {cpnl === 0 ? '—' : fmtPnl(cpnl)}
                       </TD>
                       <TD color="#6b7280">${fmt(f?.fee)}</TD>
                       <TD color="#6b7280">{fmtTime(f?.time)}</TD>
