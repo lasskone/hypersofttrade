@@ -176,7 +176,7 @@ function PositionModal({ pos, walletAddress, onClose, onAction }: {
       style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
       onClick={onClose}>
       <div
-        className="relative w-full max-w-md rounded-2xl border p-6 shadow-2xl"
+        className="relative w-full max-w-md rounded-2xl border p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
         style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
         onClick={e => e.stopPropagation()}>
 
@@ -491,7 +491,7 @@ export function OverviewPanel({
             <table className="w-full">
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                  <TH>DEX</TH><TH>Symbol</TH><TH>Size</TH><TH>Entry Price</TH>
+                  <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
                   <TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
                 </tr>
               </thead>
@@ -510,6 +510,15 @@ export function OverviewPanel({
                         </span>
                       </td>
                       <TD><span className="font-semibold text-white">{pos?.symbol ?? '—'}</span></TD>
+                      <td className="px-5 py-3">
+                        <span className="text-xs px-2 py-0.5 rounded font-semibold"
+                          style={{
+                            backgroundColor: parseFloat(pos?.size) > 0 ? '#00d4aa18' : '#ef444418',
+                            color: parseFloat(pos?.size) > 0 ? '#00d4aa' : '#ef4444'
+                          }}>
+                          {parseFloat(pos?.size) > 0 ? 'Buy' : 'Sell'}
+                        </span>
+                      </td>
                       <TD>{fmt(pos?.size, 4)}</TD>
                       <TD>${fmt(pos?.entry_price)}</TD>
                       <TD>${fmt(pos?.position_value)}</TD>
