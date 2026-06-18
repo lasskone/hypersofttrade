@@ -121,7 +121,7 @@ export function TradePanel({ walletAddress }: Props) {
   // Derived values
   const sizeNum = parseFloat(size) || 0
   const entryPrice = orderType === 'limit' ? (parseFloat(limitPrice) || markPrice) : markPrice
-  const assetSize = entryPrice > 0 ? sizeNum / entryPrice : 0
+  const assetSize = entryPrice > 0 ? (sizeNum * leverage) / entryPrice : 0
   const liqPrice = side === 'buy'
     ? entryPrice * (1 - 1 / leverage)
     : entryPrice * (1 + 1 / leverage)
@@ -168,6 +168,21 @@ export function TradePanel({ walletAddress }: Props) {
     setPlacing(true)
     setOrderMessage(null)
     try {
+      // Set leverage on Hyperliquid before placing order
+      try {
+        await fetch(`${API_URL}/orders/set-leverage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            wallet_address: walletAddress,
+            coin: selectedMarket.name,
+            leverage: leverage,
+            is_cross: !selectedMarket.only_isolated,
+          }),
+        })
+      } catch {
+        // non-blocking — proceed even if leverage set fails
+      }
       const res = await fetch(`${API_URL}/orders/place`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
