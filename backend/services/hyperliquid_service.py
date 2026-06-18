@@ -328,69 +328,84 @@ hyperliquid_service = HyperliquidService()
 async def get_all_markets() -> list:
     """
     Get ALL available trading pairs from ALL DEXes.
-    Uses allPerpMetas endpoint to get every pair in one call.
-    Returns list of: {name, display_name, max_leverage, sz_decimals, mark_price, dex, only_isolated}
+
+    allPerpMetas returns a flat list of meta dicts (one per DEX):
+      [{'universe': [...], ...}, {'universe': [...], ...}, ...]
+
+    Mark prices for the main DEX come from metaAndAssetCtxs → [meta, ctxs].
+    Prices for HIP-3 coins fall back to allMids.
     """
     async with httpx.AsyncClient() as client:
-        response = await client.post(
+        # Flat list of meta dicts, one per DEX
+        metas_resp = await client.post(
             INFO_ENDPOINT,
             json={"type": "allPerpMetas"},
             headers={"Content-Type": "application/json"},
             timeout=15.0,
         )
-        all_metas = response.json()
+        all_metas = metas_resp.json()
 
-        prices_response = await client.post(
+        # Main DEX mark prices: returns [meta_dict, [ctx1, ctx2, ...]]
+        ctxs_resp = await client.post(
+            INFO_ENDPOINT,
+            json={"type": "metaAndAssetCtxs"},
+            headers={"Content-Type": "application/json"},
+            timeout=10.0,
+        )
+        main_ctxs_data = ctxs_resp.json()
+        main_ctxs = main_ctxs_data[1] if len(main_ctxs_data) > 1 else []
+        main_universe = main_ctxs_data[0].get("universe", []) if main_ctxs_data else []
+
+        # name → markPx for the main DEX
+        main_price_map: dict[str, float] = {}
+        for i, asset in enumerate(main_universe):
+            if i < len(main_ctxs):
+                px = main_ctxs[i].get("markPx")
+                if px:
+                    main_price_map[asset["name"]] = float(px)
+
+        # Fallback prices for HIP-3 coins
+        mids_resp = await client.post(
             INFO_ENDPOINT,
             json={"type": "allMids"},
             headers={"Content-Type": "application/json"},
             timeout=10.0,
         )
-        prices = prices_response.json()
+        all_mids = mids_resp.json()
 
-    print(f"[markets] allPerpMetas type={type(all_metas)} len={len(all_metas) if isinstance(all_metas, list) else 'N/A'}")
-    if isinstance(all_metas, list) and len(all_metas) > 0:
-        print(f"[markets] first item type={type(all_metas[0])}")
-        print(f"[markets] first item={str(all_metas[0])[:200]}")
+    print(f"[markets] allPerpMetas len={len(all_metas)}")
+    print(f"[markets] main price map size={len(main_price_map)}")
 
     markets = []
-    for dex_entry in all_metas:
-        if not isinstance(dex_entry, list) or len(dex_entry) < 2:
-            continue
-        meta = dex_entry[0]
-        ctxs = dex_entry[1]
+    for meta in all_metas:
         if not isinstance(meta, dict):
             continue
         universe = meta.get("universe", [])
 
-        for i, asset in enumerate(universe):
+        for asset in universe:
             name = asset.get("name", "")
-            if not name:
-                continue
-            if asset.get("isDelisted"):
+            if not name or asset.get("isDelisted"):
                 continue
 
-            mark_px = 0.0
-            if i < len(ctxs):
-                ctx = ctxs[i]
-                mark_px = float(ctx.get("markPx", 0) or 0)
+            mark_px = (
+                main_price_map.get(name)
+                or float(all_mids.get(name, 0) or 0)
+            )
 
-            if mark_px == 0 and name in prices:
-                mark_px = float(prices[name] or 0)
-
-            dex_prefix = name.split(":")[0] if ":" in name else "main"
+            dex = name.split(":")[0] if ":" in name else "main"
+            display = name.split(":")[-1] if ":" in name else name
 
             markets.append({
                 "name": name,
-                "display_name": name.replace("xyz:", "").replace("nq:", "").replace("birb:", ""),
+                "display_name": display,
                 "max_leverage": asset.get("maxLeverage", 50),
                 "sz_decimals": asset.get("szDecimals", 4),
                 "mark_price": mark_px,
-                "dex": dex_prefix,
+                "dex": dex,
                 "only_isolated": asset.get("onlyIsolated", False),
             })
 
-    markets.sort(key=lambda x: (x["dex"] != "main", x["name"]))
+    markets.sort(key=lambda x: (x["dex"] != "main", -x["mark_price"]))
     print(f"[markets] Total markets found: {len(markets)}")
     return markets
 
