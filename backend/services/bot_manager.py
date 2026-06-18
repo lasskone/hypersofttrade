@@ -91,6 +91,8 @@ class BotManager:
 
         if bot_type == "grid":
             await self._run_grid_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "envelope_dca":
+            await self._run_envelope_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -141,6 +143,42 @@ class BotManager:
         if not await engine.initialize():
             raise RuntimeError("TradingEngine failed to initialize")
         await engine.start()
+
+
+    async def _run_envelope_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.envelope.strategy import EnvelopeBot
+
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "") or None
+        coin = f"{dex}:{symbol}" if dex else symbol
+        allocated_usdc = float(config.get("allocated_usdc", 100))
+        ma_period = int(config.get("ma_period", 5))
+        envelopes = [
+            float(config.get("envelope_1_pct", 7)) / 100,
+            float(config.get("envelope_2_pct", 10)) / 100,
+            float(config.get("envelope_3_pct", 15)) / 100,
+        ]
+        stop_loss_pct = float(config.get("stop_loss_pct", 10))
+        sz_decimals = int(config.get("sz_decimals", 5))
+
+        def log_callback(level: str, message: str):
+            self._add_log(bot_id, level, message)
+
+        bot = EnvelopeBot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=allocated_usdc,
+            ma_period=ma_period,
+            envelopes=envelopes,
+            stop_loss_pct=stop_loss_pct,
+            sz_decimals=sz_decimals,
+            dex=dex,
+            log_callback=log_callback,
+        )
+
+        self._add_log(bot_id, "info", f"Envelope Bot initializing — {coin} MA={ma_period} envelopes={envelopes} allocation=${allocated_usdc}")
+        await bot.run()
 
 
 bot_manager = BotManager()

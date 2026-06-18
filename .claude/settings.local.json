@@ -38,7 +38,8 @@
       "Bash(cp /tmp/hl-bot/src/core/key_manager.py backend/bots/grid/key_manager.py)",
       "Bash(cp /tmp/hl-bot/src/core/endpoint_router.py backend/bots/grid/endpoint_router.py)",
       "Bash(cp /tmp/hl-bot/src/utils/events.py backend/bots/grid/events.py)",
-      "Bash(grep *)"
+      "Bash(grep *)",
+      "Read(//private/tmp/envelope-bot/utilities/**)"
     ]
   }
 }
