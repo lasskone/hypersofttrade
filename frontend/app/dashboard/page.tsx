@@ -80,30 +80,34 @@ export default function DashboardPage() {
     }
 
     // Wallet connected — now check status
-    const checkStatus = async () => {
-      setIsChecking(true);
-      try {
-        const res = await fetch(`${API_URL}/account/${address}/status`);
-        const data = await res.json();
-        if (!data.is_affiliated) {
-          setAffiliationError(
-            'This wallet is not linked to HyperSoftTrade. ' +
-            'Please create an account via our link first.'
-          );
+    // Small delay to let RainbowKit modal close gracefully
+    const timer = setTimeout(() => {
+      const checkStatus = async () => {
+        setIsChecking(true);
+        try {
+          const res = await fetch(`${API_URL}/account/${address}/status`);
+          const data = await res.json();
+          if (!data.is_affiliated) {
+            setAffiliationError(
+              'This wallet is not linked to HyperSoftTrade. ' +
+              'Please create an account via our link first.'
+            );
+            setStep('connect');
+          } else if (!data.has_api_key) {
+            setStep('api_setup');
+          } else {
+            setStep('dashboard');
+          }
+        } catch {
+          // Network error — stay on connect, no error shown
           setStep('connect');
-        } else if (!data.has_api_key) {
-          setStep('api_setup');
-        } else {
-          setStep('dashboard');
+        } finally {
+          setIsChecking(false);
         }
-      } catch {
-        // Network error — stay on connect, no error shown
-        setStep('connect');
-      } finally {
-        setIsChecking(false);
-      }
-    };
-    checkStatus();
+      };
+      checkStatus();
+    }, 1000);
+    return () => clearTimeout(timer);
   }, [address, isConnected]);
 
   // Show hint 2 seconds after a connect attempt if still on connect screen
