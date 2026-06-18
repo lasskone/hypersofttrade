@@ -42,6 +42,8 @@ export function TradePanel({ walletAddress }: Props) {
   const [leverage, setLeverage] = useState(1)
   const [placing, setPlacing] = useState(false)
   const [orderMessage, setOrderMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [tpPrice, setTpPrice] = useState('')
+  const [slPrice, setSlPrice] = useState('')
 
   // Market data
   const [orderbook, setOrderbook] = useState<{ bids: string[][]; asks: string[][] }>({ bids: [], asks: [] })
@@ -230,6 +232,32 @@ export function TradePanel({ walletAddress }: Props) {
       // Genuine success
       setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
       setSize('')
+      // Place TP/SL if set
+      const tpVal = parseFloat(tpPrice)
+      const slVal = parseFloat(slPrice)
+      if ((tpVal > 0 || slVal > 0) && selectedMarket) {
+        try {
+          await fetch(`${API_URL}/orders/tp-sl`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              wallet_address: walletAddress,
+              coin: selectedMarket.name,
+              is_long: side === 'buy',
+              size: roundedSize,
+              sz_decimals: selectedMarket.sz_decimals || 5,
+              tp_price: tpVal > 0 ? tpVal : null,
+              sl_price: slVal > 0 ? slVal : null,
+            }),
+          })
+          const tpSlMsg = [tpVal > 0 ? `TP: $${tpVal}` : '', slVal > 0 ? `SL: $${slVal}` : ''].filter(Boolean).join(' | ')
+          setOrderMessage({ type: 'success', text: `Order placed! ${tpSlMsg}` })
+        } catch {
+          setOrderMessage({ type: 'success', text: 'Order placed! TP/SL may not have been set.' })
+        }
+        setTpPrice('')
+        setSlPrice('')
+      }
     } catch {
       setOrderMessage({ type: 'error', text: 'Network error. Please try again.' })
     } finally {
@@ -594,6 +622,33 @@ export function TradePanel({ walletAddress }: Props) {
                 <span style={{ fontSize: '11px', color: 'white' }}>{value}</span>
               </div>
             ))}
+          </div>
+
+          {/* TP / SL */}
+          <div style={{ marginBottom: 12 }}>
+            <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 6, fontWeight: 600, letterSpacing: '0.05em' }}>TAKE PROFIT / STOP LOSS <span style={{ fontWeight: 400, color: '#4b5563' }}>(optional)</span></p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Take Profit (USD)</p>
+                <input
+                  type="number"
+                  placeholder="TP Price"
+                  value={tpPrice}
+                  onChange={e => setTpPrice(e.target.value)}
+                  style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#10b981', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Stop Loss (USD)</p>
+                <input
+                  type="number"
+                  placeholder="SL Price"
+                  value={slPrice}
+                  onChange={e => setSlPrice(e.target.value)}
+                  style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#ef4444', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Order Message */}

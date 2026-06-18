@@ -97,6 +97,9 @@ function PositionModal({ pos, walletAddress, onClose, onAction }: {
   const [closePercent, setClosePercent] = useState(100);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState('');
+  const [tpPrice, setTpPrice] = useState('');
+  const [slPrice, setSlPrice] = useState('');
+  const [tpSlLoading, setTpSlLoading] = useState(false);
 
   const isLong = parseFloat(pos.size) > 0;
   const absSize = Math.abs(parseFloat(pos.size));
@@ -132,6 +135,38 @@ function PositionModal({ pos, walletAddress, onClose, onAction }: {
       showToast(`❌ ${e.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSetTpSl = async () => {
+    const tpVal = parseFloat(tpPrice)
+    const slVal = parseFloat(slPrice)
+    if (!tpVal && !slVal) return
+    setTpSlLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/orders/tp-sl`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          coin: pos.symbol,
+          is_long: isLong,
+          size: absSize,
+          sz_decimals: pos.sz_decimals ?? 5,
+          tp_price: tpVal > 0 ? tpVal : null,
+          sl_price: slVal > 0 ? slVal : null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail ?? 'Error')
+      const msg = [tpVal > 0 ? `TP: $${tpVal}` : '', slVal > 0 ? `SL: $${slVal}` : ''].filter(Boolean).join(' | ')
+      showToast(`✅ Set ${msg}`)
+      setTpPrice('')
+      setSlPrice('')
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`)
+    } finally {
+      setTpSlLoading(false)
     }
   };
 
@@ -218,10 +253,39 @@ function PositionModal({ pos, walletAddress, onClose, onAction }: {
           </button>
         </div>
 
-        {/* Info note */}
-        <p className="text-xs text-gray-600 text-center">
-          TP / SL orders can be placed directly from the Trade panel using limit orders.
-        </p>
+        {/* TP / SL */}
+        <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: '#13131f', border: '1px solid #1a1a2e' }}>
+          <p className="text-sm font-semibold text-white mb-3">Take Profit / Stop Loss</p>
+          <div className="flex gap-2 mb-3">
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Take Profit (USD)</p>
+              <input
+                type="number"
+                placeholder="TP Price"
+                value={tpPrice}
+                onChange={e => setTpPrice(e.target.value)}
+                style={{ width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#10b981', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Stop Loss (USD)</p>
+              <input
+                type="number"
+                placeholder="SL Price"
+                value={slPrice}
+                onChange={e => setSlPrice(e.target.value)}
+                style={{ width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#ef4444', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          <button
+            onClick={handleSetTpSl}
+            disabled={tpSlLoading || (!parseFloat(tpPrice) && !parseFloat(slPrice))}
+            className="w-full py-2.5 rounded-lg text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-50"
+            style={{ backgroundColor: '#00d4aa', color: '#000' }}>
+            {tpSlLoading ? 'Setting...' : 'Set TP / SL'}
+          </button>
+        </div>
       </div>
     </div>
   );
