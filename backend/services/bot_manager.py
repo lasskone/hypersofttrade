@@ -125,7 +125,7 @@ class BotManager:
                 "take_profit_pct": take_profit_pct,
                 "tpsl_mode": "polling",
                 "max_drawdown_pct": stop_loss_pct * 2,
-                "max_position_size_pct": 100,
+                "max_position_size_pct": 200,
             },
             "monitoring": {"log_level": "INFO"},
             "bot_config": {

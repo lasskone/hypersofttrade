@@ -80,6 +80,7 @@ async def start_bot(bot_id: str, body: BotActionRequest):
     b = bot.data[0]
     if bot_manager.is_running(bot_id):
         return {"success": True, "message": "Already running"}
+    db.table("bots").update({"error_message": None, "status": "stopped", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
     await bot_manager.start(bot_id, b["config"], body.wallet_address)
     return {"success": True, "message": "Bot started"}
 
