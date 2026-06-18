@@ -831,7 +831,7 @@ class HyperliquidAdapter(ExchangeAdapter):
             return []
 
         try:
-            from interfaces.strategy import Position
+            from bots.grid.interfaces_strategy import Position
 
             dex_list = self._known_dexes if all_dexes else [self._dex_arg(dex)]
             positions: List[Position] = []
