@@ -302,6 +302,8 @@ class HyperliquidService:
         private_key    = API wallet private key (decrypted)
         master_address = MetaMask wallet address (master account)
         """
+        # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
+        coin = coin.split(":")[-1] if ":" in coin else coin
         # Round size to asset precision (floor to avoid float_to_wire errors)
         factor = 10 ** sz_decimals
         size = math.floor(size * factor) / factor
@@ -355,6 +357,8 @@ class HyperliquidService:
         from hyperliquid.exchange import Exchange
         from hyperliquid.utils import constants
 
+        # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
+        coin = coin.split(":")[-1] if ":" in coin else coin
         account = eth_account.Account.from_key(private_key)
         exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
         result = await asyncio.to_thread(exchange.cancel, coin, order_id)
@@ -372,6 +376,8 @@ class HyperliquidService:
         percentage: int,
         mark_price: float,
     ) -> dict:
+        # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
+        coin = coin.split(":")[-1] if ":" in coin else coin
         import asyncio
         import eth_account
         from hyperliquid.exchange import Exchange
