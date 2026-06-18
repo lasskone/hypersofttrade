@@ -302,9 +302,7 @@ class HyperliquidService:
         private_key    = API wallet private key (decrypted)
         master_address = MetaMask wallet address (master account)
         """
-        # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
         dex_name = coin.split(":")[0] if ":" in coin else None
-        coin = coin.split(":")[-1] if ":" in coin else coin
         # Round size to asset precision (floor to avoid float_to_wire errors)
         factor = 10 ** sz_decimals
         size = math.floor(size * factor) / factor
@@ -363,9 +361,7 @@ class HyperliquidService:
         from hyperliquid.exchange import Exchange
         from hyperliquid.utils import constants
 
-        # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
         dex_name = coin.split(":")[0] if ":" in coin else None
-        coin = coin.split(":")[-1] if ":" in coin else coin
         account = eth_account.Account.from_key(private_key)
         # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
         # coin has already been stripped to short name at this point
@@ -387,9 +383,7 @@ class HyperliquidService:
         percentage: int,
         mark_price: float,
     ) -> dict:
-        # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
         dex_name = coin.split(":")[0] if ":" in coin else None
-        coin = coin.split(":")[-1] if ":" in coin else coin
         import asyncio
         import eth_account
         from hyperliquid.exchange import Exchange
