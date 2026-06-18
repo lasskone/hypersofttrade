@@ -87,6 +87,146 @@ function LiveDot() {
   );
 }
 
+// ─── Position management modal ───────────────────────────────────────────────
+function PositionModal({ pos, walletAddress, onClose, onAction }: {
+  pos: any;
+  walletAddress: string;
+  onClose: () => void;
+  onAction: () => void;
+}) {
+  const [closePercent, setClosePercent] = useState(100);
+  const [loading, setLoading] = useState(false);
+  const [toast, setToast] = useState('');
+
+  const isLong = parseFloat(pos.size) > 0;
+  const absSize = Math.abs(parseFloat(pos.size));
+  const markPrice = parseFloat(pos.mark_price ?? pos.entry_price ?? 0);
+  const upnl = parseFloat(pos.unrealized_pnl ?? 0);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const handleClose = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/orders/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          coin: pos.symbol,
+          is_long: isLong,
+          size: absSize,
+          sz_decimals: pos.sz_decimals ?? 5,
+          percentage: closePercent,
+          mark_price: markPrice,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Error');
+      showToast(`✅ Position closed (${closePercent}%)`);
+      setTimeout(onAction, 1500);
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+      onClick={onClose}>
+      <div
+        className="relative w-full max-w-md rounded-2xl border p-6 shadow-2xl"
+        style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* Toast */}
+        {toast && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 text-xs px-4 py-2 rounded-lg font-medium z-10"
+            style={{ backgroundColor: '#1a1a2e', color: '#00d4aa', border: '1px solid #00d4aa44' }}>
+            {toast}
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-bold text-white">{pos.symbol}</h2>
+            <span className="text-xs px-2 py-0.5 rounded font-semibold"
+              style={{ backgroundColor: isLong ? '#00d4aa18' : '#ef444418', color: isLong ? '#00d4aa' : '#ef4444' }}>
+              {isLong ? 'LONG' : 'SHORT'}
+            </span>
+            <span className="text-xs px-2 py-0.5 rounded font-medium"
+              style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>
+              {pos.dex}
+            </span>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl leading-none">×</button>
+        </div>
+
+        {/* Position summary */}
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          {[
+            { label: 'Size', value: `${absSize}` },
+            { label: 'Entry Price', value: `$${fmt(pos.entry_price)}` },
+            { label: 'Unrealized PnL', value: `${upnl >= 0 ? '+' : ''}$${fmt(upnl)}`, color: upnl >= 0 ? '#10b981' : '#ef4444' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="rounded-lg p-3 text-center" style={{ backgroundColor: '#13131f' }}>
+              <p className="text-xs text-gray-500 mb-1">{label}</p>
+              <p className="text-sm font-bold" style={{ color: color ?? '#fff' }}>{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Close Position */}
+        <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: '#13131f', border: '1px solid #1a1a2e' }}>
+          <p className="text-sm font-semibold text-white mb-3">Close Position</p>
+
+          {/* Percentage presets */}
+          <div className="flex gap-2 mb-3">
+            {[25, 50, 75, 100].map(p => (
+              <button
+                key={p}
+                onClick={() => setClosePercent(p)}
+                className="flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all"
+                style={{
+                  backgroundColor: closePercent === p ? '#00d4aa' : '#1a1a2e',
+                  color: closePercent === p ? '#000' : '#9ca3af',
+                  border: '1px solid #1a1a2e',
+                }}>
+                {p}%
+              </button>
+            ))}
+          </div>
+
+          {/* Close summary */}
+          <p className="text-xs text-gray-500 mb-3">
+            Closing {closePercent}% → {fmt(absSize * closePercent / 100, 5)} {pos.symbol?.replace('-USD', '')} at market
+          </p>
+
+          <button
+            onClick={handleClose}
+            disabled={loading}
+            className="w-full py-2.5 rounded-lg text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-50"
+            style={{ backgroundColor: '#ef4444', color: '#fff' }}>
+            {loading ? 'Processing...' : `Close ${closePercent}% of Position`}
+          </button>
+        </div>
+
+        {/* Info note */}
+        <p className="text-xs text-gray-600 text-center">
+          TP / SL orders can be placed directly from the Trade panel using limit orders.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export function OverviewPanel({
   walletAddress,
@@ -99,24 +239,30 @@ export function OverviewPanel({
   const [data, setData] = useState<any>(null);
   const [status, setStatus] = useState<'loading' | 'no_api_key' | 'error' | 'loaded'>('loading');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [managingPos, setManagingPos] = useState<any>(null);
 
-  // ── Initial load ─────────────────────────────────────────────────────────────
-  useEffect(() => {
+  // ── Fetch portfolio (extracted so it can be called from onAction) ─────────────
+  const fetchPortfolio = async () => {
     if (!walletAddress) return;
     setStatus('loading');
     setData(null);
-    (async () => {
-      try {
-        const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        if (json?.error === 'no_api_key') { setStatus('no_api_key'); return; }
-        setData(json);
-        setStatus('loaded');
-      } catch {
-        setStatus('error');
-      }
-    })();
+    try {
+      const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json?.error === 'no_api_key') { setStatus('no_api_key'); return; }
+      setData(json);
+      setStatus('loaded');
+    } catch {
+      setStatus('error');
+    }
+  };
+
+  // ── Initial load ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchPortfolio();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
 
   // ── Live PnL polling (every 10s) ─────────────────────────────────────────────
@@ -282,7 +428,7 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH>
+                  <TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
                 </tr>
               </thead>
               <tbody>
@@ -306,6 +452,14 @@ export function OverviewPanel({
                       <TD color={posPos ? '#10b981' : '#ef4444'}>{fmtPnl(upnl)}</TD>
                       <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
                       <TD>{liqPx > 0 ? `$${fmt(liqPx)}` : '—'}</TD>
+                      <td className="px-5 py-3">
+                        <button
+                          onClick={() => setManagingPos(pos)}
+                          className="text-xs font-semibold px-3 py-1 rounded-lg transition-opacity hover:opacity-80"
+                          style={{ backgroundColor: '#00d4aa18', color: '#00d4aa', border: '1px solid #00d4aa44' }}>
+                          Manage
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -406,6 +560,14 @@ export function OverviewPanel({
         </Section>
       )}
 
+      {managingPos && (
+        <PositionModal
+          pos={managingPos}
+          walletAddress={walletAddress}
+          onClose={() => setManagingPos(null)}
+          onAction={() => { setManagingPos(null); fetchPortfolio(); }}
+        />
+      )}
     </div>
   );
 }
