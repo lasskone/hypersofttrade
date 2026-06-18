@@ -13,7 +13,11 @@
       "Bash(git push *)",
       "Bash(curl -s https://hypersofttrade-backend-production.up.railway.app/account/0x1b981579a2B194018d08bAdffd38Ac23b5DfB763/portfolio)",
       "Bash(python3 -m json.tool)",
-      "Bash(curl -s -X POST https://api.hyperliquid.xyz/info -H 'Content-Type: application/json' -d '{\"type\":\"clearinghouseState\",\"user\":\"0x1b981579a2B194018d08bAdffd38Ac23b5DfB763\"}')"
+      "Bash(curl -s -X POST https://api.hyperliquid.xyz/info -H 'Content-Type: application/json' -d '{\"type\":\"clearinghouseState\",\"user\":\"0x1b981579a2B194018d08bAdffd38Ac23b5DfB763\"}')",
+      "Bash(git -C /Users/lassinakone/Projects/HyperSoftTrade add -A)",
+      "Bash(git -C /Users/lassinakone/Projects/HyperSoftTrade diff --cached --stat)",
+      "Bash(git *)",
+      "Bash(curl *)"
     ]
   }
 }
