@@ -2,8 +2,9 @@
 import { useEffect, useRef } from 'react'
 
 interface Props {
-  symbol: string  // display name e.g. "BTC", "XYZ100"
-  dex: string     // "main" or "xyz" etc.
+  symbol: string   // display name e.g. "BTC", "XYZ100"
+  dex: string      // "main" or "xyz" etc.
+  height?: number  // chart height in px, defaults to 420
 }
 
 // Map Hyperliquid symbols to TradingView symbols
@@ -38,7 +39,7 @@ function getTVSymbol(symbol: string, dex: string): string | null {
   return TV_SYMBOL_MAP[symbol] || `BINANCE:${symbol}USDT`
 }
 
-export default function TradingViewChart({ symbol, dex }: Props) {
+export default function TradingViewChart({ symbol, dex, height = 420 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const tvSymbol = getTVSymbol(symbol, dex)
 
@@ -48,7 +49,7 @@ export default function TradingViewChart({ symbol, dex }: Props) {
 
     if (!tvSymbol) {
       containerRef.current.innerHTML = `
-        <div style="height:450px;display:flex;align-items:center;
+        <div style="height:${height}px;display:flex;align-items:center;
           justify-content:center;flex-direction:column;gap:8px;
           color:#6b7280;font-size:13px;">
           <span style="font-size:24px;">📊</span>
@@ -90,7 +91,7 @@ export default function TradingViewChart({ symbol, dex }: Props) {
   return (
     <div
       ref={containerRef}
-      style={{ height: '450px', width: '100%' }}
+      style={{ height: `${height}px`, width: '100%' }}
     />
   )
 }

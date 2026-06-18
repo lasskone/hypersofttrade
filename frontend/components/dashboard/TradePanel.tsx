@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import TradingViewChart from './TradingViewChart'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ||
@@ -48,6 +48,11 @@ export function TradePanel({ walletAddress }: Props) {
   const [recentTrades, setRecentTrades] = useState<any[]>([])
   const [markPrice, setMarkPrice] = useState(0)
   const [prevMarkPrice, setPrevMarkPrice] = useState(0)
+
+  // Chart resize
+  const [chartHeight, setChartHeight] = useState(420)
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeRef = useRef<HTMLDivElement>(null)
 
   // Load all markets on mount
   useEffect(() => {
@@ -182,6 +187,28 @@ export function TradePanel({ walletAddress }: Props) {
   }
 
   const maxLev = selectedMarket?.max_leverage || 50
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+    const startY = e.clientY
+    const startHeight = chartHeight
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const delta = ev.clientY - startY
+      const newHeight = Math.max(200, Math.min(700, startHeight + delta))
+      setChartHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column',
@@ -552,21 +579,51 @@ export function TradePanel({ walletAddress }: Props) {
 
         {/* ── RIGHT COLUMN — Chart + Orderbook ─────────────────────────── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
-          gap: '12px', overflowY: 'auto', minWidth: 0 }}>
+          overflow: 'hidden', minWidth: 0,
+          cursor: isResizing ? 'row-resize' : 'default' }}>
 
           {/* TradingView Chart */}
           {selectedMarket && (
             <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
-              borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
+              borderRadius: '8px', overflow: 'hidden', flexShrink: 0,
+              position: 'relative', height: chartHeight }}>
+
+              {/* S/M/L quick-size buttons */}
+              <div style={{ position: 'absolute', top: '8px', right: '8px',
+                zIndex: 10, display: 'flex', gap: '4px' }}>
+                {([['S', 280], ['M', 420], ['L', 600]] as [string, number][]).map(([label, h]) => (
+                  <button key={label} onClick={() => setChartHeight(h)} style={{
+                    padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
+                    background: chartHeight === h ? '#00d4aa' : '#1a1a2e',
+                    color: chartHeight === h ? '#0a0a0f' : '#6b7280',
+                    border: '1px solid #1a1a2e', borderRadius: '4px',
+                  }}>{label}</button>
+                ))}
+              </div>
+
               <TradingViewChart
                 symbol={selectedMarket.display_name}
                 dex={selectedMarket.dex}
+                height={chartHeight}
               />
             </div>
           )}
 
+          {/* Drag-to-resize handle */}
+          <div
+            ref={resizeRef}
+            onMouseDown={handleMouseDown}
+            style={{ height: '6px', background: '#1a1a2e', cursor: 'row-resize',
+              borderRadius: '3px', margin: '6px 0', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >
+            <div style={{ width: '40px', height: '3px',
+              background: '#374151', borderRadius: '2px' }} />
+          </div>
+
           {/* Orderbook + Recent Trades */}
-          <div style={{ display: 'flex', gap: '12px', flex: 1, minHeight: '280px' }}>
+          <div style={{ display: 'flex', gap: '12px', flex: 1, minHeight: '200px',
+            overflow: 'hidden' }}>
 
             {/* Orderbook */}
             <div style={{ flex: 1, background: '#0d0d14', border: '1px solid #1a1a2e',
