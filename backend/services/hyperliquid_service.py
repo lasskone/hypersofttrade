@@ -356,13 +356,19 @@ async def get_all_markets() -> list:
         main_ctxs = main_ctxs_data[1] if len(main_ctxs_data) > 1 else []
         main_universe = main_ctxs_data[0].get("universe", []) if main_ctxs_data else []
 
-        # name → markPx for the main DEX
+        # name → markPx / prevDayPx / funding for the main DEX
         main_price_map: dict[str, float] = {}
+        main_ctx_map: dict[str, dict] = {}
         for i, asset in enumerate(main_universe):
             if i < len(main_ctxs):
-                px = main_ctxs[i].get("markPx")
+                ctx = main_ctxs[i]
+                px = ctx.get("markPx")
                 if px:
                     main_price_map[asset["name"]] = float(px)
+                main_ctx_map[asset["name"]] = {
+                    "prev_day_px": float(ctx.get("prevDayPx", 0) or 0),
+                    "funding": float(ctx.get("funding", 0) or 0),
+                }
 
         # Fallback prices for HIP-3 coins
         mids_resp = await client.post(
@@ -394,6 +400,7 @@ async def get_all_markets() -> list:
 
             dex = name.split(":")[0] if ":" in name else "main"
             display = name.split(":")[-1] if ":" in name else name
+            ctx_data = main_ctx_map.get(name, {})
 
             markets.append({
                 "name": name,
@@ -403,6 +410,8 @@ async def get_all_markets() -> list:
                 "mark_price": mark_px,
                 "dex": dex,
                 "only_isolated": asset.get("onlyIsolated", False),
+                "prev_day_px": ctx_data.get("prev_day_px", 0),
+                "funding": ctx_data.get("funding", 0),
             })
 
     markets.sort(key=lambda x: (x["dex"] != "main", -x["mark_price"]))
