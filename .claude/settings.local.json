@@ -22,7 +22,23 @@
       "Bash(python3 -c ' *)",
       "Bash(pip3 install *)",
       "Bash(pip install *)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Read(//tmp/hl-bot/bots/**)",
+      "Read(//tmp/hl-bot/src/**)",
+      "Read(//private/tmp/hl-bot/src/strategies/grid/**)",
+      "Read(//private/tmp/hl-bot/src/core/**)",
+      "Read(//private/tmp/hl-bot/bots/**)",
+      "Bash(cp /tmp/hl-bot/src/strategies/grid/basic_grid.py backend/bots/grid/basic_grid.py)",
+      "Bash(cp /tmp/hl-bot/src/core/engine.py backend/bots/grid/engine.py)",
+      "Bash(cp /tmp/hl-bot/src/core/risk_manager.py backend/bots/grid/risk_manager.py)",
+      "Bash(cp /tmp/hl-bot/src/core/enhanced_config.py backend/bots/grid/config.py)",
+      "Bash(cp /tmp/hl-bot/src/exchanges/hyperliquid/adapter.py backend/bots/grid/adapter.py)",
+      "Bash(cp /tmp/hl-bot/src/interfaces/strategy.py backend/bots/grid/interfaces_strategy.py)",
+      "Bash(cp /tmp/hl-bot/src/interfaces/exchange.py backend/bots/grid/interfaces_exchange.py)",
+      "Bash(cp /tmp/hl-bot/src/core/key_manager.py backend/bots/grid/key_manager.py)",
+      "Bash(cp /tmp/hl-bot/src/core/endpoint_router.py backend/bots/grid/endpoint_router.py)",
+      "Bash(cp /tmp/hl-bot/src/utils/events.py backend/bots/grid/events.py)",
+      "Bash(grep *)"
     ]
   }
 }
