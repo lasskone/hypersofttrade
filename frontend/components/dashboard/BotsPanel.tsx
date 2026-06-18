@@ -321,6 +321,10 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [rangePct, setRangePct] = useState('5')
   const [stopLossPct, setStopLossPct] = useState('10')
   const [takeProfitPct, setTakeProfitPct] = useState('30')
+  const [maPeriod, setMaPeriod] = useState('5')
+  const [envelope1, setEnvelope1] = useState('7')
+  const [envelope2, setEnvelope2] = useState('10')
+  const [envelope3, setEnvelope3] = useState('15')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -337,12 +341,20 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
           bot_type: botType,
           symbol,
           allocated_usdc: parseFloat(allocatedUsdc),
-          config: {
+          config: botType === 'grid' ? {
             dex,
             levels: parseInt(levels),
             range_pct: parseFloat(rangePct),
             stop_loss_pct: parseFloat(stopLossPct),
             take_profit_pct: parseFloat(takeProfitPct),
+            allocated_usdc: parseFloat(allocatedUsdc),
+          } : {
+            dex,
+            ma_period: parseInt(maPeriod),
+            envelope_1_pct: parseFloat(envelope1),
+            envelope_2_pct: parseFloat(envelope2),
+            envelope_3_pct: parseFloat(envelope3),
+            stop_loss_pct: parseFloat(stopLossPct),
             allocated_usdc: parseFloat(allocatedUsdc),
           }
         })
@@ -394,30 +406,62 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             <label style={labelStyle}>Allocation (USDC)</label>
             <input style={inputStyle} type="number" value={allocatedUsdc} onChange={e => setAllocatedUsdc(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={labelStyle}>Grid Levels</label>
-              <input style={inputStyle} type="number" value={levels} onChange={e => setLevels(e.target.value)} />
-              <p style={hintStyle}>{BOT_TYPES.grid.params.levels.hint}</p>
-            </div>
-            <div>
-              <label style={labelStyle}>Price Range %</label>
-              <input style={inputStyle} type="number" value={rangePct} onChange={e => setRangePct(e.target.value)} />
-              <p style={hintStyle}>{BOT_TYPES.grid.params.range_pct.hint}</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={labelStyle}>Stop Loss %</label>
-              <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
-              <p style={hintStyle}>{BOT_TYPES.grid.params.stop_loss_pct.hint}</p>
-            </div>
-            <div>
-              <label style={labelStyle}>Take Profit %</label>
-              <input style={inputStyle} type="number" value={takeProfitPct} onChange={e => setTakeProfitPct(e.target.value)} />
-              <p style={hintStyle}>{BOT_TYPES.grid.params.take_profit_pct.hint}</p>
-            </div>
-          </div>
+          {botType === 'grid' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Grid Levels</label>
+                <input style={inputStyle} type="number" value={levels} onChange={e => setLevels(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Number of buy/sell order pairs</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Price Range %</label>
+                  <input style={inputStyle} type="number" value={rangePct} onChange={e => setRangePct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Total range around current price</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Take Profit %</label>
+                  <input style={inputStyle} type="number" value={takeProfitPct} onChange={e => setTakeProfitPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>MA Period</label>
+                <input style={inputStyle} type="number" value={maPeriod} onChange={e => setMaPeriod(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Moving average window (recommended: 5–20)</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Envelope 1 % (required)</label>
+                <input style={inputStyle} type="number" value={envelope1} onChange={e => setEnvelope1(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First buy level below MA. e.g. 7 = buy at MA -7%</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Envelope 2 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope2} onChange={e => setEnvelope2(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Envelope 3 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope3} onChange={e => setEnvelope3(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if portfolio drops by this %. 0 = disabled</p>
+              </div>
+            </>
+          )}
 
           {error && <p className="text-xs text-red-400">{error}</p>}
 
