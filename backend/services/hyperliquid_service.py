@@ -303,6 +303,7 @@ class HyperliquidService:
         master_address = MetaMask wallet address (master account)
         """
         # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
+        dex_name = coin.split(":")[0] if ":" in coin else None
         coin = coin.split(":")[-1] if ":" in coin else coin
         # Round size to asset precision (floor to avoid float_to_wire errors)
         factor = 10 ** sz_decimals
@@ -321,10 +322,15 @@ class HyperliquidService:
 
         account = eth_account.Account.from_key(private_key)
 
+        # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
+        # coin has already been stripped to short name at this point
+        # We need the original coin passed to the method — use the dex extracted before stripping
+        dex_list = [dex_name] if dex_name else []
         exchange = Exchange(
             account,
             constants.MAINNET_API_URL,
             account_address=master_address,
+            perp_dexs=dex_list if dex_list else None,
         )
 
         if order_type == "market":
@@ -358,9 +364,14 @@ class HyperliquidService:
         from hyperliquid.utils import constants
 
         # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
+        dex_name = coin.split(":")[0] if ":" in coin else None
         coin = coin.split(":")[-1] if ":" in coin else coin
         account = eth_account.Account.from_key(private_key)
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
+        # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
+        # coin has already been stripped to short name at this point
+        # We need the original coin passed to the method — use the dex extracted before stripping
+        dex_list = [dex_name] if dex_name else []
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
         result = await asyncio.to_thread(exchange.cancel, coin, order_id)
         print(f"[cancel_order] result={result}")
         return result
@@ -377,6 +388,7 @@ class HyperliquidService:
         mark_price: float,
     ) -> dict:
         # Strip HIP-3 DEX prefix if present (e.g. "xyz:XYZ100" → "XYZ100")
+        dex_name = coin.split(":")[0] if ":" in coin else None
         coin = coin.split(":")[-1] if ":" in coin else coin
         import asyncio
         import eth_account
@@ -389,7 +401,11 @@ class HyperliquidService:
             raise ValueError("Size too small after rounding.")
 
         account = eth_account.Account.from_key(private_key)
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
+        # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
+        # coin has already been stripped to short name at this point
+        # We need the original coin passed to the method — use the dex extracted before stripping
+        dex_list = [dex_name] if dex_name else []
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
 
         # Close = opposite side, IOC market order with 5% slippage
         is_close_buy = not is_long

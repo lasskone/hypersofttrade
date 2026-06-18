@@ -18,7 +18,11 @@
       "Bash(git -C /Users/lassinakone/Projects/HyperSoftTrade diff --cached --stat)",
       "Bash(git *)",
       "Bash(curl *)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 install *)",
+      "Bash(pip install *)",
+      "Bash(python3 *)"
     ]
   }
 }
