@@ -2,15 +2,13 @@
 
 import { useDisconnect } from 'wagmi';
 
-type Section = 'overview' | 'trade' | 'bots' | 'history' | 'settings';
-
 interface Props {
-  active: Section;
-  onNavigate: (s: Section) => void;
+  active: string;
+  onNavigate: (s: string) => void;
   walletAddress: string;
 }
 
-const NAV: { id: Section; label: string; icon: string }[] = [
+const NAV: { id: string; label: string; icon: string }[] = [
   { id: 'overview',  label: 'Overview',  icon: '📊' },
   { id: 'trade',     label: 'Trade',     icon: '📈' },
   { id: 'bots',      label: 'Bots',      icon: '🤖' },

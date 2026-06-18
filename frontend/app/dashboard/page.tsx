@@ -14,7 +14,6 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backe
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
 
 type FlowStep = 'connect' | 'api_setup' | 'dashboard';
-type Section = 'overview' | 'trade' | 'bots' | 'history' | 'settings';
 
 async function fetchStatus(address: string): Promise<{ is_affiliated: boolean; has_api_key: boolean }> {
   const res = await fetch(`${API_URL}/account/${address}/status`);
@@ -29,8 +28,8 @@ function DashboardLayout({
   onNavigate,
 }: {
   address: string;
-  section: Section;
-  onNavigate: (s: Section) => void;
+  section: string;
+  onNavigate: (s: string) => void;
 }) {
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: '#0a0a0f' }}>
@@ -62,7 +61,7 @@ export default function DashboardPage() {
   const { address, isConnected } = useAccount();
 
   const [step, setStep] = useState<FlowStep>('connect');
-  const [section, setSection] = useState<Section>('overview');
+  const [section, setSection] = useState<string>('overview');
   const [affiliationError, setAffiliationError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
   const [affiliateClicked, setAffiliateClicked] = useState(false);
