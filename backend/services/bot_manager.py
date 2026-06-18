@@ -95,29 +95,28 @@ class BotManager:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
     async def _run_grid_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
-        import yaml, tempfile, os as _os
         from backend.bots.grid.engine import TradingEngine
-        from backend.bots.grid.config import EnhancedBotConfig
 
-        symbol = config["symbol"]
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "")
+        symbol_full = f"{dex}:{symbol}" if dex else symbol
         allocated_usdc = float(config.get("allocated_usdc", 100))
         levels = int(config.get("levels", 10))
         range_pct = float(config.get("range_pct", 5.0))
         stop_loss_pct = float(config.get("stop_loss_pct", 5.0))
         take_profit_pct = float(config.get("take_profit_pct", 20.0))
-        dex = config.get("dex", "")
 
-        # Build YAML config that the grid engine expects
-        symbol_full = f"{dex}:{symbol}" if dex else symbol
-        yaml_config = {
+        engine_config = {
             "name": config.get("name", "Grid Bot"),
-            "active": True,
             "exchange": {"type": "hyperliquid", "testnet": False},
-            "account": {"max_allocation_pct": 100},
-            "grid": {
+            # "strategy" is what TradingEngine._initialize_strategy() and start() read
+            "strategy": {
+                "type": "basic_grid",
                 "symbol": symbol_full,
                 "levels": levels,
-                "price_range": {"mode": "auto", "auto": {"range_pct": range_pct}}
+                "range_pct": range_pct,
+                "total_allocation": allocated_usdc,
+                "rebalance_threshold_pct": range_pct / 2,
             },
             "risk_management": {
                 "stop_loss_enabled": stop_loss_pct > 0,
@@ -127,28 +126,21 @@ class BotManager:
                 "tpsl_mode": "polling",
                 "max_drawdown_pct": stop_loss_pct * 2,
                 "max_position_size_pct": 100,
-                "rebalance": {"price_move_threshold_pct": range_pct / 2}
             },
-            "monitoring": {"log_level": "INFO"}
+            "monitoring": {"log_level": "INFO"},
+            "bot_config": {
+                "name": config.get("name", "Grid Bot"),
+                "mainnet_private_key": private_key,
+                "mainnet_wallet_address": master_address,
+            }
         }
 
-        # Write temp YAML file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(yaml_config, f)
-            yaml_path = f.name
+        self._add_log(bot_id, "info", f"Grid engine starting — {symbol_full} {levels} levels ±{range_pct}% allocation=${allocated_usdc}")
 
-        try:
-            bot_config = EnhancedBotConfig.from_yaml(yaml_path)
-            engine = TradingEngine(
-                config=bot_config,
-                private_key=private_key,
-                wallet_address=master_address,
-                allocated_usdc=allocated_usdc,
-            )
-            self._add_log(bot_id, "info", f"Grid engine initialized for {symbol_full} — {levels} levels ±{range_pct}%")
-            await engine.run()
-        finally:
-            _os.unlink(yaml_path)
+        engine = TradingEngine(engine_config)
+        if not await engine.initialize():
+            raise RuntimeError("TradingEngine failed to initialize")
+        await engine.start()
 
 
 bot_manager = BotManager()
