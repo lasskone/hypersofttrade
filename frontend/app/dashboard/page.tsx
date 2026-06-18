@@ -9,6 +9,7 @@ import { TopBar } from '@/components/dashboard/TopBar';
 import { OverviewPanel } from '@/components/dashboard/OverviewPanel';
 import { TradePanel } from '@/components/dashboard/TradePanel';
 import { SettingsPanel } from '@/components/dashboard/SettingsPanel';
+import BotsPanel from '@/components/dashboard/BotsPanel';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
@@ -39,11 +40,7 @@ function DashboardLayout({
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} />}
           {section === 'trade' && <TradePanel walletAddress={address} />}
-          {section === 'bots' && (
-            <div className="flex items-center justify-center h-64">
-              <p className="text-sm text-gray-600">Bot Library — Coming in next update</p>
-            </div>
-          )}
+          {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
           {section === 'history' && (
             <div className="flex items-center justify-center h-64">
               <p className="text-sm text-gray-600">Trade History — Coming in next update</p>
