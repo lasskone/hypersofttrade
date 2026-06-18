@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
@@ -60,3 +60,59 @@ async def admin_list_all_bots():
         b["is_running"] = bot_manager.is_running(b["id"])
         result.append(b)
     return {"bots": result}
+
+
+# ---------------------------------------------------------------------------
+# Backtest route
+# ---------------------------------------------------------------------------
+@app.post("/backtest", tags=["backtest"])
+async def run_backtest(body: dict):
+    from services.backtest_engine import run_grid_backtest, run_envelope_dca_backtest
+    from services.hyperliquid_service import get_candles
+
+    bot_type = body.get("bot_type", "grid")
+    symbol = body.get("symbol", "BTC")
+    dex = body.get("dex", "")
+    interval = body.get("interval", "1h")
+    limit = int(body.get("limit", 500))
+    allocation = float(body.get("allocation", 1000))
+
+    coin = f"{dex}:{symbol}" if dex else symbol
+
+    try:
+        candles = await get_candles(coin, interval, limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch candles: {exc}")
+
+    if len(candles) < 10:
+        raise HTTPException(status_code=400, detail="Not enough historical data")
+
+    try:
+        if bot_type == "grid":
+            result = run_grid_backtest(
+                candles=candles,
+                allocation=allocation,
+                levels=int(body.get("levels", 10)),
+                range_pct=float(body.get("range_pct", 5.0)),
+                stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
+                take_profit_pct=float(body.get("take_profit_pct", 30.0)),
+            )
+        elif bot_type == "envelope_dca":
+            result = run_envelope_dca_backtest(
+                candles=candles,
+                allocation=allocation,
+                ma_period=int(body.get("ma_period", 20)),
+                envelope_1_pct=float(body.get("envelope_1_pct", 7.0)),
+                envelope_2_pct=float(body.get("envelope_2_pct", 10.0)),
+                envelope_3_pct=float(body.get("envelope_3_pct", 15.0)),
+                stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    result["symbol"] = coin
+    result["interval"] = interval
+    result["bot_type"] = bot_type
+    return result
