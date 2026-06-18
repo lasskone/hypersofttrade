@@ -60,7 +60,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function TH({ children }: { children: React.ReactNode }) {
+function TH({ children }: { children?: React.ReactNode }) {
   return <th className="px-5 py-3 text-left font-medium text-xs text-gray-500">{children}</th>;
 }
 
@@ -611,7 +611,7 @@ export function OverviewPanel({
             <table className="w-full">
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                  <TH></TH><TH>Coin</TH><TH>Side</TH><TH>Type</TH><TH>Price</TH><TH>Size</TH><TH>Time</TH><TH>Source</TH><TH>Action</TH>
+                  <TH> </TH><TH>Coin</TH><TH>Side</TH><TH>Type</TH><TH>Price</TH><TH>Size</TH><TH>Time</TH><TH>Source</TH><TH>Action</TH>
                 </tr>
               </thead>
               <tbody>
