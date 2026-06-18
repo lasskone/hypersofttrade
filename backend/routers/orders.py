@@ -175,6 +175,7 @@ async def place_order(body: PlaceOrderRequest):
         print(f"[place_order] ERROR: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    print(f"[place_order] FULL RESULT: {result_data}")
     return {"success": True, "result": result_data}
 
 
