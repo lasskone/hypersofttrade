@@ -37,6 +37,22 @@ class PlaceOrderRequest(BaseModel):
     sz_decimals: int = 5  # asset's decimal precision for size rounding
 
 
+class CancelOrderRequest(BaseModel):
+    wallet_address: str
+    coin: str
+    order_id: int
+
+
+class ClosePositionRequest(BaseModel):
+    wallet_address: str
+    coin: str
+    is_long: bool
+    size: float
+    sz_decimals: int
+    percentage: int  # 1-100
+    mark_price: float
+
+
 # ---------------------------------------------------------------------------
 # Market data
 # ---------------------------------------------------------------------------
@@ -162,6 +178,55 @@ async def place_order(body: PlaceOrderRequest):
     return {"success": True, "result": result_data}
 
 
-@orders_router.delete("/{order_id}")
-async def cancel_order(order_id: str):
-    return {"status": "placeholder", "order_id": order_id}
+@orders_router.post("/cancel")
+async def cancel_order(body: CancelOrderRequest):
+    db = _supabase()
+    result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    encrypted = result.data[0].get("hyperliquid_api_key_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    try:
+        private_key = decrypt(encrypted)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
+    try:
+        result_data = await hyperliquid_service.cancel_order(
+            private_key=private_key,
+            master_address=body.wallet_address,
+            coin=body.coin,
+            order_id=body.order_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"success": True, "result": result_data}
+
+
+@orders_router.post("/close")
+async def close_position(body: ClosePositionRequest):
+    db = _supabase()
+    result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    encrypted = result.data[0].get("hyperliquid_api_key_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    try:
+        private_key = decrypt(encrypted)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
+    try:
+        result_data = await hyperliquid_service.close_position(
+            private_key=private_key,
+            master_address=body.wallet_address,
+            coin=body.coin,
+            is_long=body.is_long,
+            size=body.size,
+            sz_decimals=body.sz_decimals,
+            percentage=body.percentage,
+            mark_price=body.mark_price,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"success": True, "result": result_data}

@@ -343,6 +343,61 @@ class HyperliquidService:
         print(f"[order] result={order_result}")
         return order_result
 
+    async def cancel_order(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        order_id: int,
+    ) -> dict:
+        import asyncio
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        account = eth_account.Account.from_key(private_key)
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
+        result = await asyncio.to_thread(exchange.cancel, coin, order_id)
+        print(f"[cancel_order] result={result}")
+        return result
+
+    async def close_position(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        is_long: bool,
+        size: float,
+        sz_decimals: int,
+        percentage: int,
+        mark_price: float,
+    ) -> dict:
+        import asyncio
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        factor = 10 ** sz_decimals
+        close_size = math.floor(size * (percentage / 100) * factor) / factor
+        if close_size <= 0:
+            raise ValueError("Size too small after rounding.")
+
+        account = eth_account.Account.from_key(private_key)
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
+
+        # Close = opposite side, IOC market order with 5% slippage
+        is_close_buy = not is_long
+        slippage = 0.05
+        limit_price = round(mark_price * (1 + slippage), 2) if is_close_buy else round(mark_price * (1 - slippage), 2)
+
+        result = await asyncio.to_thread(
+            exchange.order,
+            coin, is_close_buy, close_size, limit_price,
+            {"limit": {"tif": "Ioc"}},
+        )
+        print(f"[close_position] result={result}")
+        return result
+
 
 hyperliquid_service = HyperliquidService()
 
