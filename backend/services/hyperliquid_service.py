@@ -142,36 +142,47 @@ class HyperliquidService:
                 print(f"[portfolio] DEX {dex_names[i]!r} error: {state}")
                 continue
 
-            dex_label = dex_names[i] or "main"
-            margin    = state.get("marginSummary", {})
-            acct_val  = float(margin.get("accountValue", "0") or "0")
+            if not isinstance(state, dict):
+                print(f"[portfolio] DEX {dex_names[i]!r} returned non-dict: {type(state)}")
+                continue
+
+            dex_label      = dex_names[i] or "main"
+            margin_summary = state.get("marginSummary") or {}
+            acct_val       = float(margin_summary.get("accountValue", "0") or "0")
             total_account_value += acct_val
             print(f"[portfolio] DEX={dex_label} accountValue={acct_val}")
 
-            for ap in state.get("assetPositions", []):
-                pos = ap.get("position", {})
+            asset_positions = state.get("assetPositions") or []
+            for ap in asset_positions:
+                if not isinstance(ap, dict):
+                    continue
+                pos = ap.get("position") or {}
+                if not isinstance(pos, dict):
+                    continue
                 szi = float(pos.get("szi", "0") or "0")
                 if szi == 0.0:
                     continue
                 upnl = float(pos.get("unrealizedPnl", "0") or "0")
                 total_unrealized_pnl += upnl
                 all_positions.append({
-                    "dex":              dex_label,
-                    "symbol":           pos.get("coin", ""),
-                    "size":             szi,
-                    "entry_price":      float(pos.get("entryPx", "0") or "0"),
-                    "position_value":   float(pos.get("positionValue", "0") or "0"),
-                    "unrealized_pnl":   upnl,
-                    "leverage":         (pos.get("leverage") or {}).get("value", 1),
-                    "leverage_type":    (pos.get("leverage") or {}).get("type", "cross"),
+                    "dex":               dex_label,
+                    "symbol":            pos.get("coin", ""),
+                    "size":              szi,
+                    "entry_price":       float(pos.get("entryPx", "0") or "0"),
+                    "position_value":    float(pos.get("positionValue", "0") or "0"),
+                    "unrealized_pnl":    upnl,
+                    "leverage":          (pos.get("leverage") or {}).get("value", 1),
+                    "leverage_type":     (pos.get("leverage") or {}).get("type", "cross"),
                     "liquidation_price": float(pos.get("liquidationPx", "0") or "0"),
-                    "margin_used":      float(pos.get("marginUsed", "0") or "0"),
+                    "margin_used":       float(pos.get("marginUsed", "0") or "0"),
                 })
 
         # Step 4: spot balances (also add USDC spot to account value)
         spot_balances: list[dict] = []
-        if not isinstance(spot_state, Exception):
-            for balance in spot_state.get("balances", []):
+        if not isinstance(spot_state, Exception) and isinstance(spot_state, dict):
+            for balance in (spot_state.get("balances") or []):
+                if not isinstance(balance, dict):
+                    continue
                 amount = float(balance.get("total", "0") or "0")
                 if amount > 0:
                     spot_balances.append({
@@ -187,6 +198,8 @@ class HyperliquidService:
         recent_fills: list[dict] = []
         if not isinstance(fills, Exception) and isinstance(fills, list):
             for fill in fills[:50]:
+                if not isinstance(fill, dict):
+                    continue
                 recent_fills.append({
                     "coin":       fill.get("coin", ""),
                     "side":       fill.get("side", ""),
@@ -202,6 +215,8 @@ class HyperliquidService:
         orders: list[dict] = []
         if not isinstance(open_orders, Exception) and isinstance(open_orders, list):
             for order in open_orders:
+                if not isinstance(order, dict):
+                    continue
                 orders.append({
                     "coin":     order.get("coin", ""),
                     "side":     order.get("side", ""),
