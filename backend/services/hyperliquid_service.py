@@ -481,6 +481,60 @@ class HyperliquidService:
         print(f"[set_leverage] coin={coin} leverage={leverage} is_cross={is_cross} result={result}")
         return result
 
+    async def place_tp_sl(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        is_long: bool,
+        size: float,
+        sz_decimals: int,
+        tp_price: float | None,
+        sl_price: float | None,
+    ) -> dict:
+        dex_name = coin.split(":")[0] if ":" in coin else None
+        import asyncio
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        factor = 10 ** sz_decimals
+        rounded_size = math.floor(size * factor) / factor
+        if rounded_size <= 0:
+            raise ValueError("Size too small after rounding.")
+
+        account = eth_account.Account.from_key(private_key)
+        dex_list = [dex_name] if dex_name else []
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+
+        # Close side is opposite of position side
+        is_close_buy = not is_long
+        results = {}
+
+        if tp_price is not None and tp_price > 0:
+            tp_px = round(tp_price) if tp_price >= 1000 else round(tp_price, 1) if tp_price >= 10 else round(tp_price, 2)
+            tp_result = await asyncio.to_thread(
+                exchange.order,
+                coin, is_close_buy, rounded_size, tp_px,
+                {"trigger": {"triggerPx": tp_px, "isMarket": True, "tpsl": "tp"}},
+                True,  # reduce_only
+            )
+            print(f"[tp_sl] TP result={tp_result}")
+            results["tp"] = tp_result
+
+        if sl_price is not None and sl_price > 0:
+            sl_px = round(sl_price) if sl_price >= 1000 else round(sl_price, 1) if sl_price >= 10 else round(sl_price, 2)
+            sl_result = await asyncio.to_thread(
+                exchange.order,
+                coin, is_close_buy, rounded_size, sl_px,
+                {"trigger": {"triggerPx": sl_px, "isMarket": True, "tpsl": "sl"}},
+                True,  # reduce_only
+            )
+            print(f"[tp_sl] SL result={sl_result}")
+            results["sl"] = sl_result
+
+        return results
+
 
 hyperliquid_service = HyperliquidService()
 

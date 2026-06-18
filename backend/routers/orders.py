@@ -60,6 +60,16 @@ class SetLeverageRequest(BaseModel):
     is_cross: bool
 
 
+class PlaceTpSlRequest(BaseModel):
+    wallet_address: str
+    coin: str
+    is_long: bool
+    size: float
+    sz_decimals: int
+    tp_price: float | None = None
+    sl_price: float | None = None
+
+
 # ---------------------------------------------------------------------------
 # Market data
 # ---------------------------------------------------------------------------
@@ -241,6 +251,37 @@ async def close_position(body: ClosePositionRequest):
         print(f"[close_position] ERROR body={body} exc={exc}\n{tb}")
         raise HTTPException(status_code=500, detail=f"{exc} | {tb}") from exc
     print(f"[close_position] FULL RESULT: {result_data}")
+    return {"success": True, "result": result_data}
+
+
+@orders_router.post("/tp-sl")
+async def place_tp_sl(body: PlaceTpSlRequest):
+    db = _supabase()
+    result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    encrypted = result.data[0].get("hyperliquid_api_key_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    try:
+        private_key = decrypt(encrypted)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
+    try:
+        result_data = await hyperliquid_service.place_tp_sl(
+            private_key=private_key,
+            master_address=body.wallet_address,
+            coin=body.coin,
+            is_long=body.is_long,
+            size=body.size,
+            sz_decimals=body.sz_decimals,
+            tp_price=body.tp_price,
+            sl_price=body.sl_price,
+        )
+    except Exception as exc:
+        print(f"[tp_sl] ERROR: {exc}")
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "result": result_data}
 
 
