@@ -39,7 +39,7 @@ function DashboardLayout({
         <TopBar section={section} />
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} />}
-          {section === 'trade' && <TradePanel />}
+          {section === 'trade' && <TradePanel walletAddress={address} />}
           {section === 'bots' && (
             <div className="flex items-center justify-center h-64">
               <p className="text-sm text-gray-600">Bot Library — Coming in next update</p>

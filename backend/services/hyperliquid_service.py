@@ -269,8 +269,53 @@ class HyperliquidService:
         state = await self.get_user_state(address)
         return state.get("assetPositions", [])
 
-    async def place_order(self, payload: dict) -> dict:
-        raise NotImplementedError("place_order not yet implemented")
+    async def place_order(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        is_buy: bool,
+        size: float,
+        price: float,
+        order_type: str,
+        leverage: int = 1,
+    ) -> dict:
+        """
+        Place an order on Hyperliquid using the SDK.
+        private_key    = API wallet private key (decrypted)
+        master_address = MetaMask wallet address (master account)
+        """
+        import asyncio
+
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        account = eth_account.Account.from_key(private_key)
+
+        exchange = Exchange(
+            account,
+            constants.MAINNET_API_URL,
+            account_address=master_address,
+        )
+
+        if order_type == "market":
+            slippage = 0.05
+            limit_price = round(price * (1 + slippage), 2) if is_buy else round(price * (1 - slippage), 2)
+            order_result = await asyncio.to_thread(
+                exchange.order,
+                coin, is_buy, size, limit_price,
+                {"limit": {"tif": "Ioc"}},
+            )
+        else:
+            order_result = await asyncio.to_thread(
+                exchange.order,
+                coin, is_buy, size, price,
+                {"limit": {"tif": "Gtc"}},
+            )
+
+        print(f"[order] result={order_result}")
+        return order_result
 
 
 hyperliquid_service = HyperliquidService()
