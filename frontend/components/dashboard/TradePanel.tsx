@@ -130,7 +130,9 @@ export function TradePanel({ walletAddress }: Props) {
   const fundingPct = selectedMarket ? (selectedMarket.funding * 100).toFixed(4) : '0.0000'
 
   // Unique DEX groups (in order of first appearance)
-  const dexGroups = [...new Set(markets.map(m => m.dex))]
+  const dexGroupsSet: { [key: string]: boolean } = {}
+  markets.forEach(m => { dexGroupsSet[m.dex] = true })
+  const dexGroups = Object.keys(dexGroupsSet)
 
   const filteredMarkets = markets.filter(m =>
     m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
