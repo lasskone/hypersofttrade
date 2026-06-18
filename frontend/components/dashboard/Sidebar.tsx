@@ -12,6 +12,7 @@ const NAV: { id: string; label: string; icon: string }[] = [
   { id: 'overview',  label: 'Overview',  icon: '📊' },
   { id: 'trade',     label: 'Trade',     icon: '📈' },
   { id: 'bots',      label: 'Bots',      icon: '🤖' },
+  { id: 'backtest',  label: 'Backtest',  icon: '🔬' },
   { id: 'history',   label: 'History',   icon: '📋' },
   { id: 'settings',  label: 'Settings',  icon: '⚙️' },
 ];
