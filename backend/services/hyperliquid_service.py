@@ -133,6 +133,30 @@ class HyperliquidService:
         fills       = results[len(dex_names) + 1]
         open_orders = results[len(dex_names) + 2]
 
+        # Fetch mark prices and sz_decimals for position enrichment
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                mids_r, metas_r = await asyncio.gather(
+                    client.post(INFO_ENDPOINT, json={"type": "allMids"}, headers={"Content-Type": "application/json"}),
+                    client.post(INFO_ENDPOINT, json={"type": "allPerpMetas"}, headers={"Content-Type": "application/json"}),
+                )
+            mids_json = mids_r.json()
+            metas_json = metas_r.json()
+            all_mids = mids_json if isinstance(mids_json, dict) else {}
+            perp_metas_raw = metas_json if isinstance(metas_json, list) else []
+        except Exception:
+            all_mids = {}
+            perp_metas_raw = []
+
+        # Build coin→sz_decimals lookup from allPerpMetas (flat list of dicts)
+        sz_decimals_map: dict[str, int] = {}
+        for meta_dex in perp_metas_raw:
+            if not isinstance(meta_dex, dict):
+                continue
+            for asset in meta_dex.get("universe", []):
+                if isinstance(asset, dict) and "name" in asset:
+                    sz_decimals_map[asset["name"]] = asset.get("szDecimals", 5)
+
         # Step 3: aggregate perp positions across all DEXes
         total_account_value  = 0.0
         total_unrealized_pnl = 0.0
@@ -176,6 +200,8 @@ class HyperliquidService:
                     "leverage_type":     (pos.get("leverage") or {}).get("type", "cross"),
                     "liquidation_price": float(pos.get("liquidationPx", "0") or "0"),
                     "margin_used":       float(pos.get("marginUsed", "0") or "0"),
+                    "sz_decimals":       sz_decimals_map.get(pos.get("coin", ""), 5),
+                    "mark_price":        float(all_mids.get(pos.get("coin", ""), pos.get("entryPx", "0")) or "0"),
                 })
 
         # Step 4: spot balances (also add USDC spot to account value)
