@@ -184,12 +184,20 @@ export function TradePanel({ walletAddress }: Props) {
         }),
       })
       const data = await res.json()
-      if (res.ok) {
-        setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
-        setSize('')
-      } else {
+      if (!res.ok) {
         setOrderMessage({ type: 'error', text: data.detail || 'Order failed' })
+        return
       }
+      // Check for Hyperliquid-level order rejection (HTTP 200 but error in payload)
+      const statuses = data?.result?.response?.data?.statuses
+      const firstStatus = Array.isArray(statuses) ? statuses[0] : null
+      if (firstStatus?.error) {
+        setOrderMessage({ type: 'error', text: firstStatus.error })
+        return
+      }
+      // Genuine success
+      setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
+      setSize('')
     } catch {
       setOrderMessage({ type: 'error', text: 'Network error. Please try again.' })
     } finally {
