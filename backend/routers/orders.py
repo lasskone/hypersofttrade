@@ -7,7 +7,7 @@ from supabase import create_client
 
 from core.config import settings
 from core.security import decrypt
-from services.hyperliquid_service import hyperliquid_service, get_all_markets, get_recent_trades
+from services.hyperliquid_service import hyperliquid_service, get_all_markets, get_recent_trades, get_candles
 
 router = APIRouter()          # mounted at /market  (market data)
 orders_router = APIRouter()  # mounted at /orders  (order execution)
@@ -93,6 +93,20 @@ async def get_trades(symbol: str):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return trades
+
+
+@router.get("/candles/{symbol:path}")
+async def get_candles_route(
+    symbol: str,
+    interval: str = "15m",
+    limit: int = 500,
+):
+    """Return OHLCV candles for *symbol* (supports HIP-3 names like xyz:XYZ100)."""
+    try:
+        candles = await get_candles(symbol, interval, limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return candles
 
 
 # ---------------------------------------------------------------------------

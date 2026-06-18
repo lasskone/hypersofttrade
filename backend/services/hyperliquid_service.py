@@ -454,3 +454,60 @@ async def get_recent_trades(coin: str) -> list:
             "time": trade.get("time", 0),
         })
     return trades
+
+
+async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
+    """
+    Get OHLCV candles for any coin including HIP-3.
+    coin:     full name e.g. "BTC" or "xyz:XYZ100"
+    interval: "1m","3m","5m","15m","30m","1h","2h","4h","8h","12h","1d","1w"
+    """
+    import time as _time
+    end_time = int(_time.time() * 1000)
+
+    interval_ms = {
+        "1m":  60_000,
+        "3m":  180_000,
+        "5m":  300_000,
+        "15m": 900_000,
+        "30m": 1_800_000,
+        "1h":  3_600_000,
+        "2h":  7_200_000,
+        "4h":  14_400_000,
+        "8h":  28_800_000,
+        "12h": 43_200_000,
+        "1d":  86_400_000,
+        "3d":  259_200_000,
+        "1w":  604_800_000,
+    }
+    ms = interval_ms.get(interval, 900_000)
+    start_time = end_time - ms * limit
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            INFO_ENDPOINT,
+            json={
+                "type": "candleSnapshot",
+                "req": {
+                    "coin": coin,
+                    "interval": interval,
+                    "startTime": start_time,
+                    "endTime": end_time,
+                },
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=15.0,
+        )
+        candles = response.json()
+
+    result = []
+    for c in candles:
+        result.append({
+            "time":   int(c["t"]) // 1000,  # ms → seconds for lightweight-charts
+            "open":   float(c["o"]),
+            "high":   float(c["h"]),
+            "low":    float(c["l"]),
+            "close":  float(c["c"]),
+            "volume": float(c["v"]),
+        })
+    return result

@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import TradingViewChart from './TradingViewChart'
+import HLChart from './HLChart'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ||
   'https://hypersofttrade-backend-production.up.railway.app'
@@ -601,11 +601,7 @@ export function TradePanel({ walletAddress }: Props) {
                 ))}
               </div>
 
-              <TradingViewChart
-                symbol={selectedMarket.display_name}
-                dex={selectedMarket.dex}
-                height={chartHeight}
-              />
+              <HLChart symbol={selectedMarket.name} height={chartHeight} />
             </div>
           )}
 
