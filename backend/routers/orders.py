@@ -34,6 +34,7 @@ class PlaceOrderRequest(BaseModel):
     order_type: str       # "market" or "limit"
     limit_price: float = 0.0
     leverage: int = 1
+    sz_decimals: int = 5  # asset's decimal precision for size rounding
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ async def place_order(body: PlaceOrderRequest):
             price=exec_price,
             order_type=body.order_type,
             leverage=body.leverage,
+            sz_decimals=body.sz_decimals,
         )
     except Exception as exc:
         print(f"[place_order] ERROR: {exc}")

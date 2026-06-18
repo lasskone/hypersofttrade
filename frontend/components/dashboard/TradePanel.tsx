@@ -155,6 +155,16 @@ export function TradePanel({ walletAddress }: Props) {
 
   const handlePlaceOrder = async () => {
     if (!selectedMarket || sizeNum <= 0) return
+
+    // Round size client-side to catch zero-size before hitting the API
+    const szDec = selectedMarket.sz_decimals || 5
+    const factor = Math.pow(10, szDec)
+    const roundedSize = Math.floor(assetSize * factor) / factor
+    if (roundedSize <= 0) {
+      setOrderMessage({ type: 'error', text: `Order size too small. Increase USD amount.` })
+      return
+    }
+
     setPlacing(true)
     setOrderMessage(null)
     try {
@@ -165,11 +175,12 @@ export function TradePanel({ walletAddress }: Props) {
           wallet_address: walletAddress,
           coin: selectedMarket.name,
           is_buy: side === 'buy',
-          size: assetSize,
+          size: roundedSize,
           price: markPrice,
           order_type: orderType,
           limit_price: parseFloat(limitPrice) || markPrice,
           leverage,
+          sz_decimals: szDec,
         }),
       })
       const data = await res.json()

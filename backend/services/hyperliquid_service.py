@@ -4,6 +4,7 @@ Hyperliquid service — async HTTP wrapper around the Hyperliquid public REST AP
 from __future__ import annotations
 
 import asyncio
+import math
 
 import httpx
 from fastapi import HTTPException
@@ -294,12 +295,22 @@ class HyperliquidService:
         price: float,
         order_type: str,
         leverage: int = 1,
+        sz_decimals: int = 5,
     ) -> dict:
         """
         Place an order on Hyperliquid using the SDK.
         private_key    = API wallet private key (decrypted)
         master_address = MetaMask wallet address (master account)
         """
+        # Round size to asset precision (floor to avoid float_to_wire errors)
+        factor = 10 ** sz_decimals
+        size = math.floor(size * factor) / factor
+        if size <= 0:
+            raise ValueError(
+                f"Size too small after rounding to {sz_decimals} decimals. "
+                f"Increase USD amount."
+            )
+
         import asyncio
 
         import eth_account
