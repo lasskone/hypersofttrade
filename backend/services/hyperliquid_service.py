@@ -359,7 +359,14 @@ class HyperliquidService:
 
         if order_type == "market":
             slippage = 0.05
-            limit_price = round(price * (1 + slippage), 2) if is_buy else round(price * (1 - slippage), 2)
+            raw_price = price * (1 + slippage) if is_buy else price * (1 - slippage)
+            # Round to appropriate precision based on price magnitude
+            if raw_price >= 1000:
+                limit_price = round(raw_price)        # whole number for high-price assets
+            elif raw_price >= 10:
+                limit_price = round(raw_price, 1)     # 1 decimal for mid-price assets
+            else:
+                limit_price = round(raw_price, 2)     # 2 decimals for low-price assets
             order_result = await asyncio.to_thread(
                 exchange.order,
                 coin, is_buy, size, limit_price,
@@ -430,7 +437,14 @@ class HyperliquidService:
         # Close = opposite side, IOC market order with 5% slippage
         is_close_buy = not is_long
         slippage = 0.05
-        limit_price = round(mark_price * (1 + slippage), 2) if is_close_buy else round(mark_price * (1 - slippage), 2)
+        raw_price = mark_price * (1 + slippage) if is_close_buy else mark_price * (1 - slippage)
+        # Round to appropriate precision based on price magnitude
+        if raw_price >= 1000:
+            limit_price = round(raw_price)        # whole number for high-price assets
+        elif raw_price >= 10:
+            limit_price = round(raw_price, 1)     # 1 decimal for mid-price assets
+        else:
+            limit_price = round(raw_price, 2)     # 2 decimals for low-price assets
 
         result = await asyncio.to_thread(
             exchange.order,
