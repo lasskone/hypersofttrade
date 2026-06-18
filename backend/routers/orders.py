@@ -53,6 +53,13 @@ class ClosePositionRequest(BaseModel):
     mark_price: float
 
 
+class SetLeverageRequest(BaseModel):
+    wallet_address: str
+    coin: str
+    leverage: int
+    is_cross: bool
+
+
 # ---------------------------------------------------------------------------
 # Market data
 # ---------------------------------------------------------------------------
@@ -234,4 +241,31 @@ async def close_position(body: ClosePositionRequest):
         print(f"[close_position] ERROR body={body} exc={exc}\n{tb}")
         raise HTTPException(status_code=500, detail=f"{exc} | {tb}") from exc
     print(f"[close_position] FULL RESULT: {result_data}")
+    return {"success": True, "result": result_data}
+
+
+@orders_router.post("/set-leverage")
+async def set_leverage(body: SetLeverageRequest):
+    db = _supabase()
+    result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    encrypted = result.data[0].get("hyperliquid_api_key_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    try:
+        private_key = decrypt(encrypted)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
+    try:
+        result_data = await hyperliquid_service.set_leverage(
+            private_key=private_key,
+            master_address=body.wallet_address,
+            coin=body.coin,
+            leverage=body.leverage,
+            is_cross=body.is_cross,
+        )
+    except Exception as exc:
+        print(f"[set_leverage] ERROR: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "result": result_data}

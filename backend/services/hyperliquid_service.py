@@ -454,6 +454,33 @@ class HyperliquidService:
         print(f"[close_position] result={result}")
         return result
 
+    async def set_leverage(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        leverage: int,
+        is_cross: bool,
+    ) -> dict:
+        dex_name = coin.split(":")[0] if ":" in coin else None
+        import asyncio
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        account = eth_account.Account.from_key(private_key)
+        dex_list = [dex_name] if dex_name else []
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+
+        result = await asyncio.to_thread(
+            exchange.update_leverage,
+            leverage,
+            coin,
+            is_cross,
+        )
+        print(f"[set_leverage] coin={coin} leverage={leverage} is_cross={is_cross} result={result}")
+        return result
+
 
 hyperliquid_service = HyperliquidService()
 
