@@ -9,7 +9,8 @@ from core.config import settings
 from core.security import decrypt
 from services.hyperliquid_service import hyperliquid_service, get_all_markets, get_recent_trades
 
-router = APIRouter()
+router = APIRouter()          # mounted at /market  (market data)
+orders_router = APIRouter()  # mounted at /orders  (order execution)
 
 TOP_ASSETS = ["BTC", "ETH", "SOL", "AVAX", "MATIC", "ARB", "OP", "DOGE", "LINK", "UNI"]
 
@@ -95,10 +96,10 @@ async def get_trades(symbol: str):
 
 
 # ---------------------------------------------------------------------------
-# Order execution
+# Order execution  (served under /orders via orders_router)
 # ---------------------------------------------------------------------------
 
-@router.post("/place")
+@orders_router.post("/place")
 async def place_order(body: PlaceOrderRequest):
     """Place an order on Hyperliquid using the user's stored API key."""
     # 1. Fetch user from Supabase
@@ -145,6 +146,6 @@ async def place_order(body: PlaceOrderRequest):
     return {"success": True, "result": result_data}
 
 
-@router.delete("/{order_id}")
+@orders_router.delete("/{order_id}")
 async def cancel_order(order_id: str):
     return {"status": "placeholder", "order_id": order_id}

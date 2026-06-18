@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
-from routers import account, orders, bots
+from routers import account, bots
+from routers.orders import router as market_router, orders_router
 
 app = FastAPI(
     title="HyperSoftTrade API",
@@ -27,9 +28,10 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
-app.include_router(account.router, prefix="/account", tags=["account"])
-app.include_router(orders.router, prefix="/market", tags=["market"])
-app.include_router(bots.router, prefix="/bots", tags=["bots"])
+app.include_router(account.router,  prefix="/account", tags=["account"])
+app.include_router(market_router,   prefix="/market",  tags=["market"])
+app.include_router(orders_router,   prefix="/orders",  tags=["orders"])
+app.include_router(bots.router,     prefix="/bots",    tags=["bots"])
 
 
 # ---------------------------------------------------------------------------
