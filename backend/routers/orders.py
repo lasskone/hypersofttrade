@@ -228,7 +228,8 @@ async def close_position(body: ClosePositionRequest):
             mark_price=body.mark_price,
         )
     except Exception as exc:
-        print(f"[close_position] ERROR body={body} exc={exc}")
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[close_position] ERROR body={body} exc={exc}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"{exc} | {tb}") from exc
     return {"success": True, "result": result_data}
