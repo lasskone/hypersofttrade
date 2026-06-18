@@ -1,375 +1,521 @@
-'use client';
+'use client'
+import { useState, useEffect } from 'react'
+import TradingViewChart from './TradingViewChart'
 
-import { useEffect, useRef, useState } from 'react';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ||
+  'https://hypersofttrade-backend-production.up.railway.app'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
+interface Market {
+  name: string
+  display_name: string
+  max_leverage: number
+  sz_decimals: number
+  mark_price: number
+  dex: string
+  only_isolated: boolean
+}
 
-const ASSETS = ['BTC', 'ETH', 'SOL', 'AVAX', 'ARB', 'OP', 'DOGE', 'LINK', 'UNI', 'xyz:XYZ100'];
+interface Props {
+  walletAddress: string
+}
 
-interface BookLevel { px: string; sz: string; }
-interface Orderbook { bids: BookLevel[]; asks: BookLevel[]; }
+export function TradePanel({ walletAddress }: Props) {
+  // Markets
+  const [markets, setMarkets] = useState<Market[]>([])
+  const [selectedMarket, setSelectedMarket] = useState<Market | null>(null)
+  const [marketSearch, setMarketSearch] = useState('')
+  const [showMarketList, setShowMarketList] = useState(false)
+  const [marketsLoading, setMarketsLoading] = useState(true)
 
-const fmt2 = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmt4 = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  // Order form
+  const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
+  const [side, setSide] = useState<'buy' | 'sell'>('buy')
+  const [size, setSize] = useState('')
+  const [limitPrice, setLimitPrice] = useState('')
+  const [leverage, setLeverage] = useState(1)
+  const [placing, setPlacing] = useState(false)
+  const [orderMessage, setOrderMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-export function TradePanel({ walletAddress }: { walletAddress: string }) {
-  const [asset, setAsset]           = useState('BTC');
-  const [orderType, setOrderType]   = useState<'market' | 'limit'>('market');
-  const [side, setSide]             = useState<'buy' | 'sell'>('buy');
-  const [size, setSize]             = useState('');
-  const [limitPrice, setLimitPrice] = useState('');
-  const [leverage, setLeverage]     = useState(1);
+  // Market data
+  const [orderbook, setOrderbook] = useState<{ bids: string[][]; asks: string[][] }>({ bids: [], asks: [] })
+  const [recentTrades, setRecentTrades] = useState<any[]>([])
+  const [markPrice, setMarkPrice] = useState(0)
+  const [prevMarkPrice, setPrevMarkPrice] = useState(0)
 
-  const [markPrice, setMarkPrice]   = useState<number | null>(null);
-  const [prevPrice, setPrevPrice]   = useState<number | null>(null);
-  const [book, setBook]             = useState<Orderbook | null>(null);
-
-  const [placing, setPlacing]       = useState(false);
-  const [toast, setToast]           = useState<{ msg: string; ok: boolean } | null>(null);
-
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ── Mark price + orderbook polling ──────────────────────────────────────────
-  const fetchAll = async (sym: string) => {
-    try {
-      const [priceRes, bookRes] = await Promise.all([
-        fetch(`${API_URL}/market/prices`),
-        fetch(`${API_URL}/market/orderbook/${sym}`),
-      ]);
-      if (priceRes.ok) {
-        const pd = await priceRes.json();
-        const raw = pd.prices?.[sym];
-        if (raw != null) {
-          const n = parseFloat(String(raw));
-          setMarkPrice(prev => { setPrevPrice(prev); return n; });
-        }
-      }
-      if (bookRes.ok) {
-        const bd = await bookRes.json();
-        setBook({ bids: bd.bids ?? [], asks: bd.asks ?? [] });
-      }
-    } catch { /* silent */ }
-  };
-
+  // Load all markets on mount
   useEffect(() => {
-    setMarkPrice(null);
-    setPrevPrice(null);
-    setBook(null);
-    fetchAll(asset);
-    const id = setInterval(() => fetchAll(asset), 3000);
-    return () => clearInterval(id);
-  }, [asset]);
+    const loadMarkets = async () => {
+      try {
+        const res = await fetch(`${API_URL}/market/all`)
+        const data = await res.json()
+        setMarkets(data)
+        const btc = data.find((m: Market) => m.name === 'BTC')
+        if (btc) {
+          setSelectedMarket(btc)
+          setMarkPrice(btc.mark_price)
+          setLeverage(Math.min(10, btc.max_leverage))
+        }
+      } catch (e) {
+        console.error('Failed to load markets:', e)
+      } finally {
+        setMarketsLoading(false)
+      }
+    }
+    loadMarkets()
+  }, [])
 
-  // ── Derived values ───────────────────────────────────────────────────────────
-  const sizeNum       = parseFloat(size) || 0;
-  const entryPrice    = orderType === 'limit' ? (parseFloat(limitPrice) || 0) : (markPrice ?? 0);
-  const assetUnits    = entryPrice > 0 ? sizeNum / entryPrice : 0;
-  const liqPrice      = entryPrice > 0 && leverage > 0
-    ? side === 'buy'
-      ? entryPrice * (1 - 1 / leverage)
-      : entryPrice * (1 + 1 / leverage)
-    : 0;
-  const fee           = orderType === 'market' ? sizeNum * 0.00035 : sizeNum * 0.0001;
-  const spread        = book && book.bids[0] && book.asks[0]
-    ? parseFloat(book.asks[0].px) - parseFloat(book.bids[0].px)
-    : null;
-  const spreadPct     = spread != null && book?.asks[0]
-    ? (spread / parseFloat(book.asks[0].px)) * 100
-    : null;
+  // Poll orderbook + mark price every 3 seconds
+  useEffect(() => {
+    if (!selectedMarket) return
+    const poll = async () => {
+      try {
+        const [obRes, pricesRes] = await Promise.all([
+          fetch(`${API_URL}/market/orderbook/${encodeURIComponent(selectedMarket.name)}`),
+          fetch(`${API_URL}/market/prices`),
+        ])
+        const ob = await obRes.json()
+        const prices = await pricesRes.json()
 
-  const priceColor = markPrice != null && prevPrice != null
-    ? markPrice >= prevPrice ? '#10b981' : '#ef4444'
-    : '#ffffff';
+        setOrderbook(ob)
 
-  // ── Show toast ───────────────────────────────────────────────────────────────
-  const showToast = (msg: string, ok: boolean) => {
-    setToast({ msg, ok });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 4000);
-  };
+        const newPrice =
+          prices.prices?.[selectedMarket.name] ||
+          prices.prices?.[selectedMarket.display_name] ||
+          selectedMarket.mark_price
+        if (newPrice) {
+          setPrevMarkPrice(markPrice)
+          setMarkPrice(parseFloat(newPrice))
+        }
+      } catch (e) {
+        console.error('Orderbook poll error:', e)
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 3000)
+    return () => clearInterval(interval)
+  }, [selectedMarket])
 
-  // ── Place order ──────────────────────────────────────────────────────────────
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!sizeNum || !walletAddress) return;
-    if (orderType === 'limit' && !parseFloat(limitPrice)) return;
-    setPlacing(true);
+  // Poll recent trades every 5 seconds
+  useEffect(() => {
+    if (!selectedMarket) return
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `${API_URL}/market/trades/${encodeURIComponent(selectedMarket.name)}`
+        )
+        const data = await res.json()
+        setRecentTrades(data)
+      } catch (e) { /* silent */ }
+    }
+    poll()
+    const interval = setInterval(poll, 5000)
+    return () => clearInterval(interval)
+  }, [selectedMarket])
+
+  const filteredMarkets = markets.filter(m =>
+    m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
+    m.display_name.toLowerCase().includes(marketSearch.toLowerCase())
+  )
+
+  const sizeNum = parseFloat(size) || 0
+  const entryPrice = orderType === 'limit' ? (parseFloat(limitPrice) || markPrice) : markPrice
+  const assetSize = entryPrice > 0 ? sizeNum / entryPrice : 0
+  const liqPrice = side === 'buy'
+    ? entryPrice * (1 - 1 / leverage)
+    : entryPrice * (1 + 1 / leverage)
+  const fee = orderType === 'market' ? sizeNum * 0.00035 : sizeNum * 0.0001
+
+  const handlePlaceOrder = async () => {
+    if (!selectedMarket || sizeNum <= 0) return
+    setPlacing(true)
+    setOrderMessage(null)
     try {
       const res = await fetch(`${API_URL}/orders/place`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           wallet_address: walletAddress,
-          coin: asset,
+          coin: selectedMarket.name,
           is_buy: side === 'buy',
-          size: sizeNum,
-          price: markPrice ?? 0,
+          size: assetSize,
+          price: markPrice,
           order_type: orderType,
-          limit_price: parseFloat(limitPrice) || 0,
-          leverage,
+          limit_price: parseFloat(limitPrice) || markPrice,
+          leverage: leverage,
         }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-      showToast('Order placed successfully!', true);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Order failed', false);
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
+        setSize('')
+      } else {
+        setOrderMessage({ type: 'error', text: data.detail || 'Order failed' })
+      }
+    } catch {
+      setOrderMessage({ type: 'error', text: 'Network error. Please try again.' })
     } finally {
-      setPlacing(false);
+      setPlacing(false)
     }
-  };
+  }
 
-  const displayAsset = asset.includes(':') ? asset.split(':')[1] : asset;
+  const priceColor = markPrice >= prevMarkPrice ? '#00d4aa' : '#ef4444'
 
   return (
-    <div className="p-6 flex gap-6 flex-col xl:flex-row min-h-0">
+    <div style={{ display: 'flex', gap: '16px', padding: '16px',
+      height: 'calc(100vh - 60px)', overflow: 'hidden' }}>
 
-      {/* ── LEFT: Order form ─────────────────────────────────────────────────── */}
-      <div
-        className="rounded-xl border p-5 flex-shrink-0 flex flex-col gap-4"
-        style={{ width: 340, backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
-      >
-        {/* Mark price */}
-        <div className="flex items-baseline justify-between">
-          <span className="text-xs text-gray-500">{displayAsset} Mark Price</span>
-          <span className="text-lg font-black" style={{ color: priceColor }}>
-            {markPrice != null ? `$${fmt2(markPrice)}` : '—'}
-          </span>
+      {/* LEFT COLUMN — Order Form (320px fixed) */}
+      <div style={{ width: '320px', flexShrink: 0, display: 'flex',
+        flexDirection: 'column', gap: '12px', overflowY: 'auto' }}>
+
+        {/* Market Selector */}
+        <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
+          borderRadius: '8px', padding: '12px' }}>
+          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>
+            MARKET
+          </div>
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              value={showMarketList ? marketSearch : (selectedMarket?.name || '')}
+              onChange={e => { setMarketSearch(e.target.value); setShowMarketList(true) }}
+              onFocus={() => setShowMarketList(true)}
+              placeholder={marketsLoading ? 'Loading markets…' : 'Search markets…'}
+              style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                borderRadius: '6px', padding: '8px 12px', color: 'white',
+                fontSize: '14px', fontWeight: '600', boxSizing: 'border-box' }}
+            />
+            {showMarketList && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0,
+                background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
+                maxHeight: '300px', overflowY: 'auto', zIndex: 100, marginTop: '4px' }}>
+                {['main', 'xyz', 'nq', 'birb'].map(dexName => {
+                  const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
+                  if (dexMarkets.length === 0) return null
+                  return (
+                    <div key={dexName}>
+                      <div style={{ padding: '4px 12px', fontSize: '10px',
+                        color: '#6b7280', background: '#0a0a0f',
+                        textTransform: 'uppercase', letterSpacing: '1px' }}>
+                        {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'}
+                      </div>
+                      {dexMarkets.map(market => (
+                        <div
+                          key={market.name}
+                          onClick={() => {
+                            setSelectedMarket(market)
+                            setMarkPrice(market.mark_price)
+                            setLeverage(Math.min(leverage, market.max_leverage))
+                            setShowMarketList(false)
+                            setMarketSearch('')
+                          }}
+                          style={{ padding: '8px 12px', cursor: 'pointer',
+                            display: 'flex', justifyContent: 'space-between',
+                            background: selectedMarket?.name === market.name
+                              ? '#1a1a2e' : 'transparent' }}
+                          onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                          onMouseLeave={e => (e.currentTarget.style.background =
+                            selectedMarket?.name === market.name ? '#1a1a2e' : 'transparent')}
+                        >
+                          <span style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>
+                            {market.name}
+                          </span>
+                          <span style={{ color: '#6b7280', fontSize: '12px' }}>
+                            ${market.mark_price > 0
+                              ? market.mark_price.toLocaleString('en-US',
+                                  { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+                              : '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          {selectedMarket && (
+            <div style={{ marginTop: '8px', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: priceColor, fontSize: '20px', fontWeight: '700' }}>
+                ${markPrice.toLocaleString('en-US',
+                  { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              </span>
+              <span style={{ fontSize: '11px', color: '#6b7280' }}>
+                Max {selectedMarket.max_leverage}x
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Asset selector */}
-        <div>
-          <label className="text-xs text-gray-500 mb-1.5 block">Asset</label>
-          <select
-            value={asset}
-            onChange={e => { setAsset(e.target.value); setSize(''); setLimitPrice(''); }}
-            className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none"
-            style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
-          >
-            {ASSETS.map(a => (
-              <option key={a} value={a}>{a.includes(':') ? a.split(':')[1] : a}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Order type tabs */}
-        <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#1a1a2e' }}>
-          {(['market', 'limit'] as const).map(t => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setOrderType(t)}
-              className="flex-1 py-2 text-xs font-semibold capitalize transition-colors"
-              style={{
-                backgroundColor: orderType === t ? '#00d4aa' : 'transparent',
-                color: orderType === t ? '#0a0a0f' : '#6b7280',
-              }}
-            >
-              {t}
+        {/* Order Type */}
+        <div style={{ display: 'flex', background: '#0d0d14',
+          border: '1px solid #1a1a2e', borderRadius: '8px', overflow: 'hidden' }}>
+          {(['market', 'limit'] as const).map(type => (
+            <button key={type} onClick={() => setOrderType(type)} style={{
+              flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
+              background: orderType === type ? '#1a1a2e' : 'transparent',
+              color: orderType === type ? '#00d4aa' : '#6b7280',
+              fontSize: '13px', fontWeight: '600',
+              textTransform: 'capitalize',
+            }}>
+              {type.charAt(0).toUpperCase() + type.slice(1)}
             </button>
           ))}
         </div>
 
-        {/* Side toggle */}
-        <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#1a1a2e' }}>
-          <button
-            type="button"
-            onClick={() => setSide('buy')}
-            className="flex-1 py-2 text-xs font-bold transition-colors"
-            style={{ backgroundColor: side === 'buy' ? '#10b981' : 'transparent', color: side === 'buy' ? '#fff' : '#6b7280' }}
-          >
+        {/* Side */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => setSide('buy')} style={{
+            flex: 1, padding: '12px', cursor: 'pointer',
+            borderRadius: '8px', fontWeight: '700', fontSize: '14px',
+            background: side === 'buy' ? '#00d4aa' : '#0d0d14',
+            color: side === 'buy' ? '#0a0a0f' : '#6b7280',
+            border: `1px solid ${side === 'buy' ? '#00d4aa' : '#1a1a2e'}`,
+          }}>
             Buy / Long
           </button>
-          <button
-            type="button"
-            onClick={() => setSide('sell')}
-            className="flex-1 py-2 text-xs font-bold transition-colors"
-            style={{ backgroundColor: side === 'sell' ? '#ef4444' : 'transparent', color: side === 'sell' ? '#fff' : '#6b7280' }}
-          >
+          <button onClick={() => setSide('sell')} style={{
+            flex: 1, padding: '12px', cursor: 'pointer',
+            borderRadius: '8px', fontWeight: '700', fontSize: '14px',
+            background: side === 'sell' ? '#ef4444' : '#0d0d14',
+            color: side === 'sell' ? 'white' : '#6b7280',
+            border: `1px solid ${side === 'sell' ? '#ef4444' : '#1a1a2e'}`,
+          }}>
             Sell / Short
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {/* Size */}
-          <div>
-            <label className="text-xs text-gray-500 mb-1.5 block">Size (USD)</label>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              placeholder="0.00"
-              value={size}
-              onChange={e => setSize(e.target.value)}
-              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none"
-              style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
-              onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
-              onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
-            />
-            {assetUnits > 0 && (
-              <p className="text-xs mt-1" style={{ color: '#6b7280' }}>
-                ≈ {fmt4(assetUnits)} {displayAsset}
-              </p>
-            )}
-          </div>
+        {/* Inputs */}
+        <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
+          borderRadius: '8px', padding: '12px', display: 'flex',
+          flexDirection: 'column', gap: '12px' }}>
 
-          {/* Limit price */}
           {orderType === 'limit' && (
             <div>
-              <label className="text-xs text-gray-500 mb-1.5 block">Limit Price</label>
+              <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
+                LIMIT PRICE (USD)
+              </label>
               <input
                 type="number"
-                min="0"
-                step="any"
-                placeholder="0.00"
                 value={limitPrice}
                 onChange={e => setLimitPrice(e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none"
-                style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
-                onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
+                placeholder={markPrice.toFixed(2)}
+                style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                  borderRadius: '6px', padding: '8px 12px', color: 'white',
+                  fontSize: '14px', boxSizing: 'border-box' }}
               />
             </div>
           )}
 
-          {/* Leverage */}
           <div>
-            <label className="text-xs text-gray-500 mb-1.5 flex justify-between">
-              <span>Leverage</span>
-              <span style={{ color: '#00d4aa' }}>{leverage}x</span>
+            <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
+              SIZE (USD)
             </label>
             <input
-              type="range" min={1} max={50} value={leverage}
-              onChange={e => setLeverage(Number(e.target.value))}
-              className="w-full accent-teal-400"
+              type="number"
+              value={size}
+              onChange={e => setSize(e.target.value)}
+              placeholder="0.00"
+              style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                borderRadius: '6px', padding: '8px 12px', color: 'white',
+                fontSize: '14px', boxSizing: 'border-box' }}
             />
-            <div className="flex justify-between text-xs text-gray-600 mt-1">
-              <span>1x</span><span>50x</span>
-            </div>
+            {sizeNum > 0 && selectedMarket && (
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                ≈ {assetSize.toFixed(selectedMarket.sz_decimals)} {selectedMarket.display_name}
+              </div>
+            )}
           </div>
 
-          {/* Order summary */}
-          <div className="rounded-lg p-3 flex flex-col gap-1.5 text-xs"
-            style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}>
-            <div className="flex justify-between">
-              <span style={{ color: '#6b7280' }}>Entry Price</span>
-              <span className="text-white">{entryPrice > 0 ? `$${fmt2(entryPrice)}` : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span style={{ color: '#6b7280' }}>Size</span>
-              <span className="text-white">
-                {sizeNum > 0 ? `$${fmt2(sizeNum)} = ${fmt4(assetUnits)} ${displayAsset}` : '—'}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <label style={{ fontSize: '11px', color: '#6b7280' }}>LEVERAGE</label>
+              <span style={{ fontSize: '12px', color: '#00d4aa', fontWeight: '700' }}>
+                {leverage}x
               </span>
             </div>
-            <div className="flex justify-between">
-              <span style={{ color: '#6b7280' }}>Leverage</span>
-              <span className="text-white">{leverage}x</span>
-            </div>
-            <div className="flex justify-between">
-              <span style={{ color: '#6b7280' }}>Est. Liq. Price</span>
-              <span style={{ color: '#ef4444' }}>{liqPrice > 0 ? `$${fmt2(liqPrice)}` : '—'}</span>
-            </div>
-            <div className="flex justify-between border-t pt-1.5 mt-0.5" style={{ borderColor: '#1a1a2e' }}>
-              <span style={{ color: '#6b7280' }}>
-                Fee ({orderType === 'market' ? '0.035% taker' : '0.01% maker'})
+            <input
+              type="range"
+              min={1}
+              max={selectedMarket?.max_leverage || 50}
+              value={leverage}
+              onChange={e => setLeverage(parseInt(e.target.value))}
+              style={{ width: '100%', accentColor: '#00d4aa' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '10px', color: '#6b7280' }}>1x</span>
+              <span style={{ fontSize: '10px', color: '#6b7280' }}>
+                {selectedMarket?.max_leverage || 50}x
               </span>
-              <span className="text-white">{sizeNum > 0 ? `$${fee.toFixed(4)}` : '—'}</span>
             </div>
           </div>
-
-          {/* Toast */}
-          {toast && (
-            <div className="rounded-lg px-3 py-2 text-xs font-medium" style={{
-              backgroundColor: toast.ok ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-              border: `1px solid ${toast.ok ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
-              color: toast.ok ? '#10b981' : '#ef4444',
-            }}>
-              {toast.msg}
-            </div>
-          )}
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={placing || !sizeNum || (orderType === 'limit' && !parseFloat(limitPrice))}
-            className="w-full py-3 rounded-lg text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ backgroundColor: side === 'buy' ? '#10b981' : '#ef4444', color: '#fff' }}
-          >
-            {placing ? 'Placing order…' : `Place ${side === 'buy' ? 'Buy' : 'Sell'} Order`}
-          </button>
-        </form>
-      </div>
-
-      {/* ── RIGHT: Orderbook ─────────────────────────────────────────────────── */}
-      <div className="rounded-xl border flex-1 overflow-hidden flex flex-col"
-        style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}>
-
-        {/* Header */}
-        <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: '#1a1a2e' }}>
-          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-            Order Book — {displayAsset}
-          </h2>
-          {spread != null && spreadPct != null && (
-            <span className="text-xs" style={{ color: '#6b7280' }}>
-              Spread: ${fmt2(spread)} ({spreadPct.toFixed(3)}%)
-            </span>
-          )}
         </div>
 
-        {!book ? (
-          <div className="flex items-center justify-center h-32">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-700 border-t-teal-400" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 divide-x divide-[#1a1a2e] flex-1 overflow-hidden">
-            {/* Bids */}
-            <div className="overflow-auto">
-              <div className="px-4 py-2 border-b sticky top-0" style={{ borderColor: '#1a1a2e', backgroundColor: '#0d0d14' }}>
-                <span className="text-xs font-semibold text-emerald-400">Bids</span>
-              </div>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-gray-600">
-                    <th className="px-4 py-1.5 text-left font-normal">Price</th>
-                    <th className="px-4 py-1.5 text-right font-normal">Size</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {book.bids.slice(0, 12).map((b, i) => (
-                    <tr key={i} className="hover:bg-emerald-500/5 transition-colors">
-                      <td className="px-4 py-1 text-emerald-400">{parseFloat(b.px).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-4 py-1 text-right text-gray-400">{parseFloat(b.sz).toFixed(4)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* Order Summary */}
+        <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
+          borderRadius: '8px', padding: '12px' }}>
+          {([
+            ['Entry Price', `$${entryPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`],
+            ['Size', sizeNum > 0 ? `$${sizeNum.toFixed(2)}` : '—'],
+            ['Leverage', `${leverage}x`],
+            ['Est. Liq. Price', sizeNum > 0 ? `$${liqPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : '—'],
+            [`Fee (${orderType === 'market' ? '0.035%' : '0.01%'})`, sizeNum > 0 ? `$${fee.toFixed(4)}` : '—'],
+          ] as [string, string][]).map(([label, value]) => (
+            <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
+              padding: '4px 0', borderBottom: '1px solid #0a0a0f' }}>
+              <span style={{ fontSize: '12px', color: '#6b7280' }}>{label}</span>
+              <span style={{ fontSize: '12px', color: 'white' }}>{value}</span>
             </div>
+          ))}
+        </div>
 
-            {/* Asks */}
-            <div className="overflow-auto">
-              <div className="px-4 py-2 border-b sticky top-0" style={{ borderColor: '#1a1a2e', backgroundColor: '#0d0d14' }}>
-                <span className="text-xs font-semibold text-red-400">Asks</span>
-              </div>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-gray-600">
-                    <th className="px-4 py-1.5 text-left font-normal">Price</th>
-                    <th className="px-4 py-1.5 text-right font-normal">Size</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {book.asks.slice(0, 12).map((a, i) => (
-                    <tr key={i} className="hover:bg-red-500/5 transition-colors">
-                      <td className="px-4 py-1 text-red-400">{parseFloat(a.px).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-4 py-1 text-right text-gray-400">{parseFloat(a.sz).toFixed(4)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {/* Order Message */}
+        {orderMessage && (
+          <div style={{
+            padding: '10px', borderRadius: '6px', fontSize: '13px', textAlign: 'center',
+            background: orderMessage.type === 'success'
+              ? 'rgba(0,212,170,0.1)' : 'rgba(239,68,68,0.1)',
+            border: `1px solid ${orderMessage.type === 'success' ? '#00d4aa' : '#ef4444'}`,
+            color: orderMessage.type === 'success' ? '#00d4aa' : '#ef4444',
+          }}>
+            {orderMessage.text}
           </div>
         )}
+
+        {/* Place Order Button */}
+        <button
+          onClick={handlePlaceOrder}
+          disabled={placing || sizeNum <= 0 || !selectedMarket}
+          style={{
+            width: '100%', padding: '14px', border: 'none', cursor: 'pointer',
+            borderRadius: '8px', fontWeight: '700', fontSize: '15px',
+            background: placing || sizeNum <= 0
+              ? '#1a1a2e'
+              : side === 'buy' ? '#00d4aa' : '#ef4444',
+            color: placing || sizeNum <= 0
+              ? '#6b7280'
+              : side === 'buy' ? '#0a0a0f' : 'white',
+          }}
+        >
+          {placing ? 'Placing…' : `Place ${side === 'buy' ? 'Buy' : 'Sell'} Order`}
+        </button>
       </div>
+
+      {/* RIGHT COLUMN — Chart + Orderbook */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+        gap: '12px', overflowY: 'auto', minWidth: 0 }}>
+
+        {/* TradingView Chart */}
+        {selectedMarket && (
+          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
+            borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
+            <TradingViewChart
+              symbol={selectedMarket.display_name}
+              dex={selectedMarket.dex}
+            />
+          </div>
+        )}
+
+        {/* Orderbook + Recent Trades side by side */}
+        <div style={{ display: 'flex', gap: '12px', flex: 1, minHeight: '300px' }}>
+
+          {/* Orderbook */}
+          <div style={{ flex: 1, background: '#0d0d14', border: '1px solid #1a1a2e',
+            borderRadius: '8px', padding: '12px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between',
+              marginBottom: '12px' }}>
+              <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: '600',
+                textTransform: 'uppercase', letterSpacing: '1px' }}>
+                Order Book
+              </span>
+              {orderbook.bids.length > 0 && orderbook.asks.length > 0 && (
+                <span style={{ fontSize: '11px', color: '#6b7280' }}>
+                  Spread: ${(
+                    parseFloat(orderbook.asks[0]?.[0] || '0') -
+                    parseFloat(orderbook.bids[0]?.[0] || '0')
+                  ).toFixed(2)}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {/* Bids */}
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                  fontSize: '10px', color: '#6b7280', marginBottom: '4px' }}>
+                  <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
+                </div>
+                {orderbook.bids.slice(0, 12).map((bid, i) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                    fontSize: '12px', padding: '2px 0' }}>
+                    <span style={{ color: '#00d4aa' }}>
+                      {parseFloat(bid[0]).toLocaleString()}
+                    </span>
+                    <span style={{ color: '#9ca3af', textAlign: 'right' }}>
+                      {parseFloat(bid[1]).toFixed(4)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {/* Asks */}
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                  fontSize: '10px', color: '#6b7280', marginBottom: '4px' }}>
+                  <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
+                </div>
+                {orderbook.asks.slice(0, 12).map((ask, i) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                    fontSize: '12px', padding: '2px 0' }}>
+                    <span style={{ color: '#ef4444' }}>
+                      {parseFloat(ask[0]).toLocaleString()}
+                    </span>
+                    <span style={{ color: '#9ca3af', textAlign: 'right' }}>
+                      {parseFloat(ask[1]).toFixed(4)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Recent Trades */}
+          <div style={{ width: '220px', flexShrink: 0, background: '#0d0d14',
+            border: '1px solid #1a1a2e', borderRadius: '8px', padding: '12px',
+            overflow: 'hidden' }}>
+            <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '600',
+              textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
+              Recent Trades
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+              fontSize: '10px', color: '#6b7280', marginBottom: '4px' }}>
+              <span>Price</span><span>Size</span><span>Time</span>
+            </div>
+            {recentTrades.slice(0, 15).map((trade: any, i: number) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+                fontSize: '11px', padding: '2px 0' }}>
+                <span style={{ color: trade.side === 'B' ? '#00d4aa' : '#ef4444' }}>
+                  {parseFloat(trade.price).toLocaleString()}
+                </span>
+                <span style={{ color: '#9ca3af' }}>
+                  {parseFloat(trade.size).toFixed(3)}
+                </span>
+                <span style={{ color: '#6b7280' }}>
+                  {new Date(trade.time).toLocaleTimeString('en-US',
+                    { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Click outside to close market list */}
+      {showMarketList && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 50 }}
+          onClick={() => setShowMarketList(false)}
+        />
+      )}
     </div>
-  );
+  )
 }

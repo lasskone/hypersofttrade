@@ -319,3 +319,92 @@ class HyperliquidService:
 
 
 hyperliquid_service = HyperliquidService()
+
+
+# ---------------------------------------------------------------------------
+# Standalone market helpers (not tied to a user session)
+# ---------------------------------------------------------------------------
+
+async def get_all_markets() -> list:
+    """
+    Get ALL available trading pairs from ALL DEXes.
+    Uses allPerpMetas endpoint to get every pair in one call.
+    Returns list of: {name, display_name, max_leverage, sz_decimals, mark_price, dex, only_isolated}
+    """
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            INFO_ENDPOINT,
+            json={"type": "allPerpMetas"},
+            headers={"Content-Type": "application/json"},
+            timeout=15.0,
+        )
+        all_metas = response.json()
+
+        prices_response = await client.post(
+            INFO_ENDPOINT,
+            json={"type": "allMids"},
+            headers={"Content-Type": "application/json"},
+            timeout=10.0,
+        )
+        prices = prices_response.json()
+
+    markets = []
+    for dex_data in all_metas:
+        if not isinstance(dex_data, list) or len(dex_data) < 2:
+            continue
+        meta = dex_data[0]
+        ctxs = dex_data[1]
+        universe = meta.get("universe", [])
+
+        for i, asset in enumerate(universe):
+            name = asset.get("name", "")
+            if not name:
+                continue
+            if asset.get("isDelisted"):
+                continue
+
+            mark_px = 0.0
+            if i < len(ctxs):
+                ctx = ctxs[i]
+                mark_px = float(ctx.get("markPx", 0) or 0)
+
+            if mark_px == 0 and name in prices:
+                mark_px = float(prices[name] or 0)
+
+            dex_prefix = name.split(":")[0] if ":" in name else "main"
+
+            markets.append({
+                "name": name,
+                "display_name": name.replace("xyz:", "").replace("nq:", "").replace("birb:", ""),
+                "max_leverage": asset.get("maxLeverage", 50),
+                "sz_decimals": asset.get("szDecimals", 4),
+                "mark_price": mark_px,
+                "dex": dex_prefix,
+                "only_isolated": asset.get("onlyIsolated", False),
+            })
+
+    markets.sort(key=lambda x: (x["dex"] != "main", x["name"]))
+    print(f"[markets] Total markets found: {len(markets)}")
+    return markets
+
+
+async def get_recent_trades(coin: str) -> list:
+    """Get the last 20 recent trades for *coin*."""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            INFO_ENDPOINT,
+            json={"type": "recentTrades", "coin": coin},
+            headers={"Content-Type": "application/json"},
+            timeout=10.0,
+        )
+        data = response.json()
+
+    trades = []
+    for trade in data[:20]:
+        trades.append({
+            "price": float(trade.get("px", 0)),
+            "size": float(trade.get("sz", 0)),
+            "side": trade.get("side", ""),
+            "time": trade.get("time", 0),
+        })
+    return trades

@@ -7,7 +7,7 @@ from supabase import create_client
 
 from core.config import settings
 from core.security import decrypt
-from services.hyperliquid_service import hyperliquid_service
+from services.hyperliquid_service import hyperliquid_service, get_all_markets, get_recent_trades
 
 router = APIRouter()
 
@@ -55,19 +55,43 @@ async def get_market_prices():
     return {"prices": prices}
 
 
-@router.get("/orderbook/{symbol}")
-async def get_orderbook(symbol: str):
-    """Return top 12 bids and asks for *symbol*."""
+@router.get("/all")
+async def get_all_markets_route():
+    """Return all available trading pairs from all DEXes with current prices."""
     try:
-        book = await hyperliquid_service.get_orderbook(symbol.upper())
+        markets = await get_all_markets()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return markets
+
+
+@router.get("/orderbook/{symbol:path}")
+async def get_orderbook(symbol: str):
+    """Return top 12 bids and asks for *symbol* (supports xyz:XYZ100 style names)."""
+    try:
+        book = await hyperliquid_service.get_orderbook(symbol)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # Convert {px, sz} objects → [px, sz] arrays for the frontend
+    bids = [[level["px"], level["sz"]] for level in book["bids"][:12]]
+    asks = [[level["px"], level["sz"]] for level in book["asks"][:12]]
+
     return {
-        "symbol": symbol.upper(),
-        "bids": book["bids"][:12],
-        "asks": book["asks"][:12],
+        "symbol": symbol,
+        "bids": bids,
+        "asks": asks,
     }
+
+
+@router.get("/trades/{symbol:path}")
+async def get_trades(symbol: str):
+    """Return last 20 recent trades for *symbol*."""
+    try:
+        trades = await get_recent_trades(symbol)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return trades
 
 
 # ---------------------------------------------------------------------------
