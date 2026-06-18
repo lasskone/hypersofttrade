@@ -348,12 +348,19 @@ async def get_all_markets() -> list:
         )
         prices = prices_response.json()
 
+    print(f"[markets] allPerpMetas type={type(all_metas)} len={len(all_metas) if isinstance(all_metas, list) else 'N/A'}")
+    if isinstance(all_metas, list) and len(all_metas) > 0:
+        print(f"[markets] first item type={type(all_metas[0])}")
+        print(f"[markets] first item={str(all_metas[0])[:200]}")
+
     markets = []
-    for dex_data in all_metas:
-        if not isinstance(dex_data, list) or len(dex_data) < 2:
+    for dex_entry in all_metas:
+        if not isinstance(dex_entry, list) or len(dex_entry) < 2:
             continue
-        meta = dex_data[0]
-        ctxs = dex_data[1]
+        meta = dex_entry[0]
+        ctxs = dex_entry[1]
+        if not isinstance(meta, dict):
+            continue
         universe = meta.get("universe", [])
 
         for i, asset in enumerate(universe):
