@@ -58,7 +58,7 @@ function DashboardLayout({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
 
   const [step, setStep] = useState<FlowStep>('connect');
   const [section, setSection] = useState<string>('overview');
@@ -67,6 +67,8 @@ export default function DashboardPage() {
   const [affiliateClicked, setAffiliateClicked] = useState(false);
   const [connectAttempted, setConnectAttempted] = useState(false);
   const [showConnectHint, setShowConnectHint] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     // Clear error every time this runs
@@ -119,6 +121,17 @@ export default function DashboardPage() {
   const handleAffiliateClick = () => {
     setAffiliateClicked(true);
   };
+
+  if (!mounted || status === 'reconnecting' || status === 'connecting') {
+    return (
+      <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm" style={{ color: '#6b7280' }}>Loading terminal...</p>
+        </div>
+      </div>
+    );
+  }
 
   // ── Step: connect ────────────────────────────────────────────────────────────
   if (step === 'connect') {
