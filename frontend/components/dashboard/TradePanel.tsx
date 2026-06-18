@@ -88,13 +88,29 @@ export function TradePanel({ walletAddress }: Props) {
         const ob = await obRes.json()
         const prices = await pricesRes.json()
         setOrderbook(ob)
-        const newPrice =
+        // Try /market/prices first (top 10 assets)
+        let newPrice =
           prices.prices?.[selectedMarket.name] ||
-          prices.prices?.[selectedMarket.display_name] ||
-          selectedMarket.mark_price
+          prices.prices?.[selectedMarket.display_name]
+
+        // For HIP-3 or any asset not in top 10, derive price from orderbook mid
+        if (!newPrice && ob?.bids?.length && ob?.asks?.length) {
+          const bestBid = parseFloat(ob.bids[0]?.[0] || '0')
+          const bestAsk = parseFloat(ob.asks[0]?.[0] || '0')
+          if (bestBid > 0 && bestAsk > 0) {
+            newPrice = ((bestBid + bestAsk) / 2).toString()
+          }
+        }
+
+        // Final fallback: stale market price
+        if (!newPrice) newPrice = selectedMarket.mark_price?.toString()
+
         if (newPrice) {
-          setPrevMarkPrice(p => p || parseFloat(newPrice))
-          setMarkPrice(prev => { setPrevMarkPrice(prev || parseFloat(newPrice)); return parseFloat(newPrice) })
+          const parsed = parseFloat(newPrice)
+          if (parsed > 0) {
+            setPrevMarkPrice(prev => prev || parsed)
+            setMarkPrice(prev => { setPrevMarkPrice(prev || parsed); return parsed })
+          }
         }
       } catch { /* silent */ }
     }
