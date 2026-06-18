@@ -88,18 +88,19 @@ export function TradePanel({ walletAddress }: Props) {
         const ob = await obRes.json()
         const prices = await pricesRes.json()
         setOrderbook(ob)
-        // Try /market/prices first (top 10 assets)
-        let newPrice =
-          prices.prices?.[selectedMarket.name] ||
-          prices.prices?.[selectedMarket.display_name]
-
-        // For HIP-3 or any asset not in top 10, derive price from orderbook mid
-        if (!newPrice && ob?.bids?.length && ob?.asks?.length) {
+        // Derive mid price from orderbook (works for ALL assets including HIP-3)
+        let newPrice: string | undefined
+        if (ob?.bids?.length && ob?.asks?.length) {
           const bestBid = parseFloat(ob.bids[0]?.[0] || '0')
           const bestAsk = parseFloat(ob.asks[0]?.[0] || '0')
           if (bestBid > 0 && bestAsk > 0) {
             newPrice = ((bestBid + bestAsk) / 2).toString()
           }
+        }
+        // Fallback to /market/prices for top 10 assets if orderbook mid unavailable
+        if (!newPrice) {
+          newPrice = prices.prices?.[selectedMarket.name] ||
+            prices.prices?.[selectedMarket.display_name]
         }
 
         // Final fallback: stale market price
@@ -162,8 +163,8 @@ export function TradePanel({ walletAddress }: Props) {
 
   const handleSelectMarket = (market: Market) => {
     setSelectedMarket(market)
-    setMarkPrice(market.mark_price)
-    setPrevMarkPrice(market.mark_price)
+    setMarkPrice(market.mark_price || 0)
+    setPrevMarkPrice(market.mark_price || 0)
     setLeverage(Math.min(leverage, market.max_leverage))
     setShowSearch(false)
     setMarketSearch('')
