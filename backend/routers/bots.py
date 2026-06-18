@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 
-from backend.services.bot_manager import bot_manager
+from services.bot_manager import bot_manager
 
 router = APIRouter()
 

@@ -10,8 +10,8 @@ import json
 from typing import Dict, List, Optional, Callable, Any
 import time
 
-from backend.bots.grid.interfaces_strategy import MarketData
-from backend.bots.grid.endpoint_router import get_endpoint_router, redact_address, redact_url
+from bots.grid.interfaces_strategy import MarketData
+from bots.grid.endpoint_router import get_endpoint_router, redact_address, redact_url
 
 
 class HyperliquidMarketData:

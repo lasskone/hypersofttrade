@@ -50,7 +50,7 @@ async def admin_list_all_bots():
     """Admin route — returns ALL bots across all users with wallet_address joined."""
     from supabase import create_client
     import os
-    from backend.services.bot_manager import bot_manager
+    from services.bot_manager import bot_manager
     db = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     bots = db.table("bots").select("*, users(wallet_address)").order("created_at", desc=True).execute()
     result = []

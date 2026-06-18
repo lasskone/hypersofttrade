@@ -8,7 +8,7 @@ Technical implementation separated from business logic.
 from typing import Dict, List, Optional, Any
 import time
 
-from backend.bots.grid.interfaces_exchange import (
+from bots.grid.interfaces_exchange import (
     ExchangeAdapter,
     Order,
     OrderSide,
@@ -17,7 +17,7 @@ from backend.bots.grid.interfaces_exchange import (
     Balance,
     MarketInfo,
 )
-from backend.bots.grid.endpoint_router import get_endpoint_router, redact_address, redact_url
+from bots.grid.endpoint_router import get_endpoint_router, redact_address, redact_url
 
 
 class HyperliquidAdapter(ExchangeAdapter):

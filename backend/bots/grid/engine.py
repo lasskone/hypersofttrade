@@ -10,23 +10,23 @@ import time
 from typing import Dict, List, Optional, Any, Tuple
 import logging
 
-from backend.bots.grid.interfaces_strategy import (
+from bots.grid.interfaces_strategy import (
     TradingStrategy,
     TradingSignal,
     SignalType,
     MarketData,
     Position,
 )
-from backend.bots.grid.interfaces_exchange import (
+from bots.grid.interfaces_exchange import (
     ExchangeAdapter,
     Order,
     OrderSide,
     OrderType,
     OrderStatus,
 )
-from backend.bots.grid.market_data import HyperliquidMarketData
-from backend.bots.grid.key_manager import key_manager
-from backend.bots.grid.risk_manager import RiskManager, RiskEvent, RiskAction, AccountMetrics
+from bots.grid.market_data import HyperliquidMarketData
+from bots.grid.key_manager import key_manager
+from bots.grid.risk_manager import RiskManager, RiskEvent, RiskAction, AccountMetrics
 
 
 class TradingEngine:
@@ -130,7 +130,7 @@ class TradingEngine:
             return False
 
         # Use factory pattern to create exchange adapter
-        from backend.bots.grid.adapter import HyperliquidAdapter as create_exchange_adapter_cls; create_exchange_adapter = lambda t, c: create_exchange_adapter_cls(c)
+        from bots.grid.adapter import HyperliquidAdapter as create_exchange_adapter_cls; create_exchange_adapter = lambda t, c: create_exchange_adapter_cls(c)
 
         exchange_type = exchange_config.get("type", "hyperliquid")
         exchange_config_with_key = {**exchange_config, "private_key": private_key}
@@ -163,7 +163,7 @@ class TradingEngine:
         strategy_type = strategy_config.get("type", "basic_grid")
 
         try:
-            from backend.bots.grid.basic_grid import BasicGridStrategy; create_strategy = lambda t, c: BasicGridStrategy(c)
+            from bots.grid.basic_grid import BasicGridStrategy; create_strategy = lambda t, c: BasicGridStrategy(c)
 
             self.strategy = create_strategy(strategy_type, strategy_config)
 

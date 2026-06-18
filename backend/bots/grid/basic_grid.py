@@ -15,7 +15,7 @@ MIN_NOTIONAL_USD = 10.5  # Hyperliquid $10 floor + 5% buffer for size-rounding
 
 logger = logging.getLogger(__name__)
 
-from backend.bots.grid.interfaces_strategy import (
+from bots.grid.interfaces_strategy import (
     TradingStrategy,
     TradingSignal,
     SignalType,

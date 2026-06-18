@@ -95,7 +95,7 @@ class BotManager:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
     async def _run_grid_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
-        from backend.bots.grid.engine import TradingEngine
+        from bots.grid.engine import TradingEngine
 
         symbol = config.get("symbol", "BTC")
         dex = config.get("dex", "")

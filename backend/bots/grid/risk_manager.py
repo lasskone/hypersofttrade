@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 import time
 
-from backend.bots.grid.interfaces_strategy import Position, MarketData
+from bots.grid.interfaces_strategy import Position, MarketData
 
 
 class RiskAction(Enum):
