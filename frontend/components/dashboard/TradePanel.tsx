@@ -621,8 +621,8 @@ export function TradePanel({ walletAddress }: Props) {
             {/* Orderbook */}
             <div style={{ flex: 1, background: '#0d0d14', border: '1px solid #1a1a2e',
               borderRadius: '8px', padding: '12px', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between',
-                marginBottom: '10px' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                 <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600',
                   textTransform: 'uppercase', letterSpacing: '1px' }}>
                   Order Book
@@ -636,47 +636,89 @@ export function TradePanel({ walletAddress }: Props) {
                   </span>
                 )}
               </div>
+
+              {/* Cumulative depth */}
+              <div style={{ display: 'flex', justifyContent: 'space-between',
+                padding: '3px 6px', marginBottom: '6px', fontSize: '11px',
+                background: '#0a0a0f', borderRadius: '4px' }}>
+                <span style={{ color: '#00d4aa' }}>
+                  B: ${orderbook.bids.slice(0, 12).reduce((sum: number, b: any) =>
+                    sum + parseFloat(b[1]) * parseFloat(b[0]), 0).toFixed(0)}
+                </span>
+                <span style={{ color: '#ef4444' }}>
+                  A: ${orderbook.asks.slice(0, 12).reduce((sum: number, a: any) =>
+                    sum + parseFloat(a[1]) * parseFloat(a[0]), 0).toFixed(0)}
+                </span>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 {/* Bids */}
-                <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                    fontSize: '10px', color: '#4b5563', marginBottom: '4px',
-                    paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
-                    <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
-                  </div>
-                  {orderbook.bids.slice(0, 12).map((bid, i) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                      fontSize: '12px', padding: '2px 0' }}>
-                      <span style={{ color: '#00d4aa', fontVariantNumeric: 'tabular-nums' }}>
-                        {parseFloat(bid[0]).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span style={{ color: '#6b7280', textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums' }}>
-                        {parseFloat(bid[1]).toFixed(4)}
-                      </span>
+                {(() => {
+                  const maxBidSize = Math.max(...orderbook.bids.slice(0, 12).map((b: any) => parseFloat(b[1])))
+                  return (
+                    <div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                        fontSize: '10px', color: '#4b5563', marginBottom: '4px',
+                        paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
+                        <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
+                      </div>
+                      {orderbook.bids.slice(0, 12).map((bid: any, i: number) => (
+                        <div key={i} style={{ position: 'relative', padding: '2px 0' }}>
+                          <div style={{
+                            position: 'absolute', right: 0, top: 0, bottom: 0,
+                            width: `${(parseFloat(bid[1]) / maxBidSize) * 100}%`,
+                            background: 'rgba(0,212,170,0.12)', borderRadius: '2px',
+                          }} />
+                          <div style={{
+                            position: 'relative', zIndex: 1,
+                            display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '12px',
+                          }}>
+                            <span style={{ color: '#00d4aa', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(bid[0]).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                            </span>
+                            <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(bid[1]).toFixed(4)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  )
+                })()}
+
                 {/* Asks */}
-                <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                    fontSize: '10px', color: '#4b5563', marginBottom: '4px',
-                    paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
-                    <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
-                  </div>
-                  {orderbook.asks.slice(0, 12).map((ask, i) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                      fontSize: '12px', padding: '2px 0' }}>
-                      <span style={{ color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
-                        {parseFloat(ask[0]).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span style={{ color: '#6b7280', textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums' }}>
-                        {parseFloat(ask[1]).toFixed(4)}
-                      </span>
+                {(() => {
+                  const maxAskSize = Math.max(...orderbook.asks.slice(0, 12).map((a: any) => parseFloat(a[1])))
+                  return (
+                    <div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                        fontSize: '10px', color: '#4b5563', marginBottom: '4px',
+                        paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
+                        <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
+                      </div>
+                      {orderbook.asks.slice(0, 12).map((ask: any, i: number) => (
+                        <div key={i} style={{ position: 'relative', padding: '2px 0' }}>
+                          <div style={{
+                            position: 'absolute', left: 0, top: 0, bottom: 0,
+                            width: `${(parseFloat(ask[1]) / maxAskSize) * 100}%`,
+                            background: 'rgba(239,68,68,0.12)', borderRadius: '2px',
+                          }} />
+                          <div style={{
+                            position: 'relative', zIndex: 1,
+                            display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '12px',
+                          }}>
+                            <span style={{ color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(ask[0]).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                            </span>
+                            <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(ask[1]).toFixed(4)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  )
+                })()}
               </div>
             </div>
 

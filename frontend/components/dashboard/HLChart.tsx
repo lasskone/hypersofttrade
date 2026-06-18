@@ -6,6 +6,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ||
 
 const INTERVALS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
 const EMA_PRESETS = [9, 20, 50, 100, 200]
+const RSI_PRESETS = [7, 14, 21]
+const RSI_HEIGHT = 120
 
 interface Candle {
   time: number
@@ -22,25 +24,38 @@ interface Props {
 }
 
 export default function HLChart({ symbol, height = 420 }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<any>(null)
-  const loadingRef = useRef(false)
+  const containerRef    = useRef<HTMLDivElement>(null)
+  const chartRef        = useRef<any>(null)
+  const rsiContainerRef = useRef<HTMLDivElement>(null)
+  const rsiChartRef     = useRef<any>(null)
+  const loadingRef      = useRef(false)
 
-  const [selectedInterval, setSelectedInterval] = useState('15m')
-  const [showEMA, setShowEMA] = useState(true)
-  const [emaPeriod, setEmaPeriod] = useState(20)
-  const [showPeriodInput, setShowPeriodInput] = useState(false)
-  const [showVolume, setShowVolume] = useState(true)
-  const [loading, setLoading] = useState(true)
-  const [ohlc, setOhlc] = useState<Candle | null>(null)
+  const [selectedInterval, setSelectedInterval]     = useState('15m')
+  const [showEMA, setShowEMA]                       = useState(true)
+  const [emaPeriod, setEmaPeriod]                   = useState(20)
+  const [showPeriodInput, setShowPeriodInput]       = useState(false)
+  const [showVolume, setShowVolume]                 = useState(true)
+  const [showRSI, setShowRSI]                       = useState(false)
+  const [rsiPeriod, setRsiPeriod]                   = useState(14)
+  const [showRSIPeriodInput, setShowRSIPeriodInput] = useState(false)
+  const [loading, setLoading]                       = useState(true)
+  const [ohlc, setOhlc]                             = useState<Candle | null>(null)
 
-  // Close period dropdown on outside click
+  // Close EMA period dropdown on outside click
   useEffect(() => {
     if (!showPeriodInput) return
     const handler = () => setShowPeriodInput(false)
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showPeriodInput])
+
+  // Close RSI period dropdown on outside click
+  useEffect(() => {
+    if (!showRSIPeriodInput) return
+    const handler = () => setShowRSIPeriodInput(false)
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showRSIPeriodInput])
 
   const calcEMA = (data: Candle[], period: number) => {
     const k = 2 / (period + 1)
@@ -51,6 +66,34 @@ export default function HLChart({ symbol, height = 420 }: Props) {
     })
   }
 
+  const calcRSI = (data: Candle[], period: number) => {
+    const rsi: { time: any; value: number }[] = []
+    if (data.length < period + 1) return rsi
+
+    let gains = 0, losses = 0
+    for (let i = 1; i <= period; i++) {
+      const change = data[i].close - data[i - 1].close
+      if (change > 0) gains += change
+      else losses -= change
+    }
+    let avgGain = gains / period
+    let avgLoss = losses / period
+
+    for (let i = period + 1; i < data.length; i++) {
+      const change = data[i].close - data[i - 1].close
+      const gain = change > 0 ? change : 0
+      const loss = change < 0 ? -change : 0
+      avgGain = (avgGain * (period - 1) + gain) / period
+      avgLoss = (avgLoss * (period - 1) + loss) / period
+      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss
+      rsi.push({ time: data[i].time as any, value: 100 - 100 / (1 + rs) })
+    }
+    return rsi
+  }
+
+  // Main chart height: subtract toolbar (50px) and RSI pane if visible
+  const mainChartH = height - 50 - (showRSI ? RSI_HEIGHT + 1 : 0)
+
   useEffect(() => {
     if (loadingRef.current) return
     loadingRef.current = true
@@ -58,15 +101,16 @@ export default function HLChart({ symbol, height = 420 }: Props) {
     let cancelled = false
 
     const init = async () => {
-      if (!containerRef.current) {
-        loadingRef.current = false
-        return
-      }
+      if (!containerRef.current) { loadingRef.current = false; return }
 
-      // Destroy existing chart
+      // Destroy existing charts
       if (chartRef.current) {
         try { chartRef.current.remove() } catch {}
         chartRef.current = null
+      }
+      if (rsiChartRef.current) {
+        try { rsiChartRef.current.remove() } catch {}
+        rsiChartRef.current = null
       }
 
       setLoading(true)
@@ -98,9 +142,10 @@ export default function HLChart({ symbol, height = 420 }: Props) {
 
         setOhlc(candles[candles.length - 1])
 
+        // ── Main chart ────────────────────────────────────────────────
         const chart = createChart(containerRef.current, {
           width: containerRef.current.clientWidth,
-          height: height - 50,
+          height: mainChartH,
           layout: {
             background: { type: ColorType.Solid, color: '#0a0a0f' },
             textColor: '#9ca3af',
@@ -119,72 +164,113 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         })
         chartRef.current = chart
 
-        // Candlestick series (v5 API)
+        // Candlesticks
         const candleSeries = chart.addSeries(CandlestickSeries, {
-          upColor: '#00d4aa',
-          downColor: '#ef4444',
-          borderUpColor: '#00d4aa',
-          borderDownColor: '#ef4444',
-          wickUpColor: '#00d4aa',
-          wickDownColor: '#ef4444',
+          upColor: '#00d4aa', downColor: '#ef4444',
+          borderUpColor: '#00d4aa', borderDownColor: '#ef4444',
+          wickUpColor: '#00d4aa', wickDownColor: '#ef4444',
         })
         candleSeries.setData(candles.map(c => ({
-          time: c.time as any,
-          open: c.open, high: c.high,
-          low: c.low, close: c.close,
+          time: c.time as any, open: c.open, high: c.high, low: c.low, close: c.close,
         })))
 
-        // Volume histogram (v5 API)
+        // Volume histogram
         if (showVolume) {
           const volSeries = chart.addSeries(HistogramSeries, {
             color: 'rgba(0,212,170,0.3)',
             priceFormat: { type: 'volume' as const },
             priceScaleId: 'vol',
           })
-          chart.priceScale('vol').applyOptions({
-            scaleMargins: { top: 0.85, bottom: 0 },
-          })
+          chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } })
           volSeries.setData(candles.map(c => ({
             time: c.time as any,
             value: c.volume,
-            color: c.close >= c.open
-              ? 'rgba(0,212,170,0.3)'
-              : 'rgba(239,68,68,0.3)',
+            color: c.close >= c.open ? 'rgba(0,212,170,0.3)' : 'rgba(239,68,68,0.3)',
           })))
         }
 
-        // EMA line (v5 API)
+        // EMA
         if (showEMA) {
           const emaSeries = chart.addSeries(LineSeries, {
-            color: '#f59e0b',
-            lineWidth: 1 as const,
-            priceLineVisible: false,
+            color: '#f59e0b', lineWidth: 1 as const, priceLineVisible: false,
           })
           emaSeries.setData(calcEMA(candles, emaPeriod))
         }
 
-        // Crosshair OHLC tooltip
+        // Crosshair OHLC
         chart.subscribeCrosshairMove((param: any) => {
           if (!param.time) return
           const data = param.seriesData?.get(candleSeries)
           if (data && data.open !== undefined) {
-            setOhlc({
-              time: param.time,
-              open: data.open, high: data.high,
-              low: data.low, close: data.close,
-              volume: 0,
-            })
+            setOhlc({ time: param.time, open: data.open, high: data.high, low: data.low, close: data.close, volume: 0 })
           }
         })
 
         chart.timeScale().fitContent()
 
-        // Resize observer
+        // ── RSI chart ─────────────────────────────────────────────────
+        if (showRSI && rsiContainerRef.current) {
+          const rsiChart = createChart(rsiContainerRef.current, {
+            width: rsiContainerRef.current.clientWidth,
+            height: RSI_HEIGHT,
+            layout: {
+              background: { type: ColorType.Solid, color: '#0a0a0f' },
+              textColor: '#9ca3af',
+            },
+            grid: {
+              vertLines: { color: 'rgba(26,26,46,0.4)' },
+              horzLines: { color: 'rgba(26,26,46,0.4)' },
+            },
+            rightPriceScale: {
+              borderColor: '#1a1a2e',
+              scaleMargins: { top: 0.1, bottom: 0.1 },
+            },
+            timeScale: { borderColor: '#1a1a2e', visible: false },
+            crosshair: { mode: CrosshairMode.Normal },
+          })
+          rsiChartRef.current = rsiChart
+
+          // RSI line
+          const rsiSeries = rsiChart.addSeries(LineSeries, {
+            color: '#a78bfa', lineWidth: 1 as const, priceLineVisible: false,
+          })
+          rsiSeries.setData(calcRSI(candles, rsiPeriod))
+
+          // Overbought (70)
+          const ob = rsiChart.addSeries(LineSeries, {
+            color: 'rgba(239,68,68,0.5)', lineWidth: 1 as const,
+            lineStyle: 2, priceLineVisible: false,
+          })
+          ob.setData(candles.slice(rsiPeriod + 1).map(c => ({ time: c.time as any, value: 70 })))
+
+          // Oversold (30)
+          const os = rsiChart.addSeries(LineSeries, {
+            color: 'rgba(0,212,170,0.5)', lineWidth: 1 as const,
+            lineStyle: 2, priceLineVisible: false,
+          })
+          os.setData(candles.slice(rsiPeriod + 1).map(c => ({ time: c.time as any, value: 30 })))
+
+          // Sync time scales bidirectionally
+          chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+            if (range) rsiChart.timeScale().setVisibleLogicalRange(range)
+          })
+          rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+            if (range) chart.timeScale().setVisibleLogicalRange(range)
+          })
+
+          // RSI resize observer
+          const rsiRO = new ResizeObserver(() => {
+            if (rsiContainerRef.current && rsiChartRef.current) {
+              rsiChartRef.current.applyOptions({ width: rsiContainerRef.current.clientWidth })
+            }
+          })
+          rsiRO.observe(rsiContainerRef.current)
+        }
+
+        // Main chart resize observer
         const observer = new ResizeObserver(() => {
           if (containerRef.current && chartRef.current) {
-            chartRef.current.applyOptions({
-              width: containerRef.current.clientWidth,
-            })
+            chartRef.current.applyOptions({ width: containerRef.current.clientWidth })
           }
         })
         observer.observe(containerRef.current)
@@ -205,16 +291,20 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         try { chartRef.current.remove() } catch {}
         chartRef.current = null
       }
+      if (rsiChartRef.current) {
+        try { rsiChartRef.current.remove() } catch {}
+        rsiChartRef.current = null
+      }
       loadingRef.current = false
     }
-  }, [symbol, selectedInterval, showEMA, emaPeriod, showVolume, height])
+  }, [symbol, selectedInterval, showEMA, emaPeriod, showVolume, showRSI, rsiPeriod, mainChartH])
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
 
   return (
     <div style={{ background: '#0a0a0f', borderRadius: '8px', overflow: 'hidden' }}>
-      {/* ── Toolbar ─────────────────────────────────────────────────── */}
+      {/* ── Toolbar ───────────────────────────────────────────────────── */}
       <div style={{
         display: 'flex', alignItems: 'center',
         padding: '0 12px', borderBottom: '1px solid #1a1a2e',
@@ -222,9 +312,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
       }}>
         {/* Left: symbol + OHLC */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          <span style={{ color: 'white', fontWeight: '700', fontSize: '13px' }}>
-            {symbol}
-          </span>
+          <span style={{ color: 'white', fontWeight: '700', fontSize: '13px' }}>{symbol}</span>
           {ohlc && (
             <span style={{ fontSize: '11px', color: '#6b7280', display: 'flex', gap: '6px' }}>
               <span>O<span style={{ color: 'white' }}>{fmtPrice(ohlc.open)}</span></span>
@@ -256,19 +344,16 @@ export default function HLChart({ symbol, height = 420 }: Props) {
 
         {/* Indicators */}
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          {/* EMA button with period badge + dropdown */}
+
+          {/* EMA with period dropdown */}
           <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
-            <button
-              onClick={() => setShowPeriodInput(v => !v)}
-              style={{
-                padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                background: showEMA ? 'rgba(245,158,11,0.15)' : 'transparent',
-                color: showEMA ? '#f59e0b' : '#6b7280',
-                border: `1px solid ${showEMA ? '#f59e0b' : '#374151'}`,
-                borderRadius: '4px',
-                display: 'flex', alignItems: 'center', gap: '4px',
-              }}
-            >
+            <button onClick={() => setShowPeriodInput(v => !v)} style={{
+              padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
+              background: showEMA ? 'rgba(245,158,11,0.15)' : 'transparent',
+              color: showEMA ? '#f59e0b' : '#6b7280',
+              border: `1px solid ${showEMA ? '#f59e0b' : '#374151'}`,
+              borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px',
+            }}>
               <span onMouseDown={e => { e.stopPropagation(); e.preventDefault() }}
                 onClick={e => { e.stopPropagation(); setShowEMA(v => !v) }}>
                 EMA
@@ -276,50 +361,35 @@ export default function HLChart({ symbol, height = 420 }: Props) {
               <span style={{
                 background: showEMA ? '#f59e0b' : '#374151',
                 color: showEMA ? '#0a0a0f' : '#6b7280',
-                borderRadius: '3px', padding: '0 4px',
-                fontSize: '10px', fontWeight: '700',
-              }}>
-                {emaPeriod}
-              </span>
+                borderRadius: '3px', padding: '0 4px', fontSize: '10px', fontWeight: '700',
+              }}>{emaPeriod}</span>
             </button>
-
             {showPeriodInput && (
               <div style={{
-                position: 'absolute', top: '100%', right: 0,
-                background: '#0d0d14', border: '1px solid #1a1a2e',
-                borderRadius: '6px', padding: '8px', zIndex: 100,
-                marginTop: '4px', display: 'flex', flexDirection: 'column',
-                gap: '6px', minWidth: '140px',
+                position: 'absolute', top: '100%', right: 0, zIndex: 100, marginTop: '4px',
+                background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
+                padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '140px',
               }}>
                 <span style={{ fontSize: '11px', color: '#6b7280' }}>EMA Period</span>
                 <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                   {EMA_PRESETS.map(p => (
-                    <button key={p}
-                      onClick={() => { setEmaPeriod(p); setShowPeriodInput(false) }}
-                      style={{
-                        padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                        background: emaPeriod === p ? '#f59e0b' : '#1a1a2e',
-                        color: emaPeriod === p ? '#0a0a0f' : '#9ca3af',
-                        border: 'none', borderRadius: '4px',
-                      }}>{p}</button>
+                    <button key={p} onClick={() => { setEmaPeriod(p); setShowPeriodInput(false) }} style={{
+                      padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
+                      background: emaPeriod === p ? '#f59e0b' : '#1a1a2e',
+                      color: emaPeriod === p ? '#0a0a0f' : '#9ca3af',
+                      border: 'none', borderRadius: '4px',
+                    }}>{p}</button>
                   ))}
                 </div>
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                  <input
-                    type="number" min="2" max="500"
-                    value={emaPeriod}
+                  <input type="number" min="2" max="500" value={emaPeriod}
                     onChange={e => setEmaPeriod(parseInt(e.target.value) || 20)}
-                    style={{
-                      width: '60px', background: '#0a0a0f',
-                      border: '1px solid #1a1a2e', borderRadius: '4px',
-                      color: 'white', padding: '3px 6px', fontSize: '12px',
-                      outline: 'none',
-                    }}
+                    style={{ width: '60px', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                      borderRadius: '4px', color: 'white', padding: '3px 6px', fontSize: '12px', outline: 'none' }}
                   />
                   <button onClick={() => setShowPeriodInput(false)} style={{
                     padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                    background: '#00d4aa', color: '#0a0a0f',
-                    border: 'none', borderRadius: '4px',
+                    background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
                   }}>OK</button>
                 </div>
               </div>
@@ -331,13 +401,63 @@ export default function HLChart({ symbol, height = 420 }: Props) {
             padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
             background: showVolume ? 'rgba(0,212,170,0.1)' : 'transparent',
             color: showVolume ? '#00d4aa' : '#6b7280',
-            border: `1px solid ${showVolume ? '#00d4aa' : '#374151'}`,
-            borderRadius: '4px',
+            border: `1px solid ${showVolume ? '#00d4aa' : '#374151'}`, borderRadius: '4px',
           }}>VOL</button>
+
+          {/* RSI with period dropdown */}
+          <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
+            <button onClick={() => setShowRSIPeriodInput(v => !v)} style={{
+              padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
+              background: showRSI ? 'rgba(167,139,250,0.15)' : 'transparent',
+              color: showRSI ? '#a78bfa' : '#6b7280',
+              border: `1px solid ${showRSI ? '#a78bfa' : '#374151'}`,
+              borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px',
+            }}>
+              <span onMouseDown={e => { e.stopPropagation(); e.preventDefault() }}
+                onClick={e => { e.stopPropagation(); setShowRSI(v => !v) }}>
+                RSI
+              </span>
+              <span style={{
+                background: showRSI ? '#a78bfa' : '#374151',
+                color: showRSI ? '#0a0a0f' : '#6b7280',
+                borderRadius: '3px', padding: '0 4px', fontSize: '10px', fontWeight: '700',
+              }}>{rsiPeriod}</span>
+            </button>
+            {showRSIPeriodInput && (
+              <div style={{
+                position: 'absolute', top: '100%', right: 0, zIndex: 100, marginTop: '4px',
+                background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
+                padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '140px',
+              }}>
+                <span style={{ fontSize: '11px', color: '#6b7280' }}>RSI Period</span>
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {RSI_PRESETS.map(p => (
+                    <button key={p} onClick={() => { setRsiPeriod(p); setShowRSIPeriodInput(false) }} style={{
+                      padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
+                      background: rsiPeriod === p ? '#a78bfa' : '#1a1a2e',
+                      color: rsiPeriod === p ? '#0a0a0f' : '#9ca3af',
+                      border: 'none', borderRadius: '4px',
+                    }}>{p}</button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <input type="number" min="2" max="100" value={rsiPeriod}
+                    onChange={e => setRsiPeriod(parseInt(e.target.value) || 14)}
+                    style={{ width: '60px', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                      borderRadius: '4px', color: 'white', padding: '3px 6px', fontSize: '12px', outline: 'none' }}
+                  />
+                  <button onClick={() => setShowRSIPeriodInput(false)} style={{
+                    padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
+                    background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
+                  }}>OK</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Chart area */}
+      {/* ── Chart area ────────────────────────────────────────────────── */}
       <div style={{ position: 'relative' }}>
         {loading && (
           <div style={{
@@ -348,8 +468,22 @@ export default function HLChart({ symbol, height = 420 }: Props) {
             <span style={{ color: '#6b7280', fontSize: '13px' }}>Loading chart…</span>
           </div>
         )}
-        <div ref={containerRef} style={{ width: '100%', height: `${height - 50}px` }} />
+        <div ref={containerRef} style={{ width: '100%', height: `${mainChartH}px` }} />
       </div>
+
+      {/* ── RSI pane ──────────────────────────────────────────────────── */}
+      {showRSI && (
+        <div style={{ borderTop: '1px solid #1a1a2e' }}>
+          <div style={{
+            padding: '3px 12px', fontSize: '10px', color: '#a78bfa',
+            background: '#0a0a0f', display: 'flex', justifyContent: 'space-between',
+          }}>
+            <span>RSI ({rsiPeriod})</span>
+            <span style={{ color: '#4b5563' }}>70 / 30</span>
+          </div>
+          <div ref={rsiContainerRef} style={{ width: '100%', height: `${RSI_HEIGHT}px` }} />
+        </div>
+      )}
     </div>
   )
 }
