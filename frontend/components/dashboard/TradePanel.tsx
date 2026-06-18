@@ -582,25 +582,11 @@ export function TradePanel({ walletAddress }: Props) {
           overflow: 'hidden', minWidth: 0,
           cursor: isResizing ? 'row-resize' : 'default' }}>
 
-          {/* TradingView Chart */}
+          {/* Chart */}
           {selectedMarket && (
             <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
               borderRadius: '8px', overflow: 'hidden', flexShrink: 0,
-              position: 'relative', height: chartHeight }}>
-
-              {/* S/M/L quick-size buttons */}
-              <div style={{ position: 'absolute', top: '8px', right: '8px',
-                zIndex: 10, display: 'flex', gap: '4px' }}>
-                {([['S', 280], ['M', 420], ['L', 600]] as [string, number][]).map(([label, h]) => (
-                  <button key={label} onClick={() => setChartHeight(h)} style={{
-                    padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
-                    background: chartHeight === h ? '#00d4aa' : '#1a1a2e',
-                    color: chartHeight === h ? '#0a0a0f' : '#6b7280',
-                    border: '1px solid #1a1a2e', borderRadius: '4px',
-                  }}>{label}</button>
-                ))}
-              </div>
-
+              height: chartHeight }}>
               <HLChart symbol={selectedMarket.name} height={chartHeight} />
             </div>
           )}
