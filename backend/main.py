@@ -40,3 +40,23 @@ app.include_router(bots.router,     prefix="/bots",    tags=["bots"])
 @app.get("/health", tags=["health"])
 async def health() -> dict:
     return {"status": "ok", "service": "hypersofttrade-api"}
+
+
+# ---------------------------------------------------------------------------
+# Admin routes
+# ---------------------------------------------------------------------------
+@app.get("/admin/bots", tags=["admin"])
+async def admin_list_all_bots():
+    """Admin route — returns ALL bots across all users with wallet_address joined."""
+    from supabase import create_client
+    import os
+    from backend.services.bot_manager import bot_manager
+    db = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+    bots = db.table("bots").select("*, users(wallet_address)").order("created_at", desc=True).execute()
+    result = []
+    for b in bots.data:
+        wallet = (b.pop("users", None) or {}).get("wallet_address", "")
+        b["wallet_address"] = wallet
+        b["is_running"] = bot_manager.is_running(b["id"])
+        result.append(b)
+    return {"bots": result}
