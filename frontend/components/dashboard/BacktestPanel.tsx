@@ -74,8 +74,20 @@ interface BacktestResult {
 const fmt = (n: number, dec = 2) => n.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: Math.max(dec, 4) })
 
 function EquityChart({ data, allocation, color }: { data: { time: number; value: number }[], allocation: number, color: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(720)
+
+  useEffect(() => {
+    const measure = () => {
+      if (containerRef.current) setWidth(containerRef.current.offsetWidth)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+
   if (!data.length) return null
-  const W = 720, H = 260, pad = { top: 16, right: 16, bottom: 36, left: 72 }
+  const W = width, H = 260, pad = { top: 16, right: 16, bottom: 36, left: 72 }
   const iW = W - pad.left - pad.right
   const iH = H - pad.top - pad.bottom
   const values = data.map(d => d.value)
@@ -98,8 +110,8 @@ function EquityChart({ data, allocation, color }: { data: { time: number; value:
     return { y: yS(v), label: `$${v.toFixed(0)}` }
   })
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg width={W} height={H} style={{ display: 'block', maxWidth: '100%' }}>
+    <div ref={containerRef} style={{ width: '100%' }}>
+      <svg width={W} height={H} style={{ display: 'block', width: '100%' }}>
         <g transform={`translate(${pad.left},${pad.top})`}>
           {yLabels.map((l, i) => (
             <line key={i} x1={0} y1={l.y} x2={iW} y2={l.y} stroke="#1a1a2e" strokeWidth={1} />
