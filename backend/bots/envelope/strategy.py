@@ -65,6 +65,7 @@ class EnvelopeBot:
         stop_loss_pct: float,
         sz_decimals: int,
         dex: Optional[str] = None,
+        leverage: int = 1,
         log_callback=None,
     ):
         self.private_key = private_key
@@ -76,6 +77,7 @@ class EnvelopeBot:
         self.stop_loss_pct = stop_loss_pct
         self.sz_decimals = sz_decimals
         self.dex = dex
+        self.leverage = leverage
         self.log = log_callback or (lambda level, msg: None)
         self._running = False
         self._positions: list[dict] = []  # {level, entry_price, size, order_id}
@@ -95,6 +97,15 @@ class EnvelopeBot:
             account_address=self.master_address,
             perp_dexs=dex_list if dex_list else None,
         )
+
+    async def _set_leverage(self):
+        if self.leverage <= 1:
+            return
+        try:
+            await asyncio.to_thread(self._exchange.update_leverage, self.leverage, self.coin, False)
+            self.log("info", f"Leverage set to {self.leverage}x for {self.coin}")
+        except Exception as e:
+            self.log("warning", f"Failed to set leverage: {e}")
 
     async def _fetch_candles(self, limit: int = 200) -> list[dict]:
         interval_ms = 4 * 3600 * 1000  # 4h default
@@ -174,7 +185,8 @@ class EnvelopeBot:
         """Main bot loop — runs indefinitely until cancelled."""
         self._running = True
         self._init_exchange()
-        self.log("info", f"Envelope Bot started — {self.coin} | MA={self.ma_period} | Envelopes={self.envelopes} | Allocation=${self.allocated_usdc}")
+        await self._set_leverage()
+        self.log("info", f"Envelope Bot started — {self.coin} | MA={self.ma_period} | Envelopes={self.envelopes} | Allocation=${self.allocated_usdc} | Leverage={self.leverage}x")
 
         per_level = self.allocated_usdc / len(self.envelopes)
 

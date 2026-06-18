@@ -139,9 +139,21 @@ class BotManager:
 
         self._add_log(bot_id, "info", f"Grid engine starting — {symbol_full} {levels} levels ±{range_pct}% allocation=${allocated_usdc}")
 
+        leverage = int(config.get("leverage", 1))
         engine = TradingEngine(engine_config)
         if not await engine.initialize():
             raise RuntimeError("TradingEngine failed to initialize")
+        if leverage > 1:
+            try:
+                from hyperliquid.exchange import Exchange
+                import eth_account
+                from hyperliquid.utils import constants
+                account = eth_account.Account.from_key(private_key)
+                ex = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
+                await asyncio.to_thread(ex.update_leverage, leverage, symbol_full, False)
+                self._add_log(bot_id, "info", f"Leverage set to {leverage}x for {symbol_full}")
+            except Exception as e:
+                self._add_log(bot_id, "warning", f"Failed to set leverage: {e}")
         await engine.start()
 
 
@@ -160,6 +172,7 @@ class BotManager:
         ]
         stop_loss_pct = float(config.get("stop_loss_pct", 10))
         sz_decimals = int(config.get("sz_decimals", 5))
+        leverage = int(config.get("leverage", 1))
 
         def log_callback(level: str, message: str):
             self._add_log(bot_id, level, message)
@@ -174,6 +187,7 @@ class BotManager:
             stop_loss_pct=stop_loss_pct,
             sz_decimals=sz_decimals,
             dex=dex,
+            leverage=leverage,
             log_callback=log_callback,
         )
 

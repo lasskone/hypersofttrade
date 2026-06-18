@@ -226,7 +226,8 @@ export default function BotsPanel({ walletAddress }: Props) {
                       bot.bot_type === 'grid' ? { label: 'Levels', value: `${bot.config?.levels ?? '—'}` } : null,
                       bot.bot_type === 'grid' ? { label: 'Range', value: `±${bot.config?.range_pct ?? '—'}%` } : null,
                       { label: 'Stop Loss', value: `${bot.config?.stop_loss_pct ?? '—'}%` },
-                      { label: 'Take Profit', value: `${bot.config?.take_profit_pct ?? '—'}%` },
+                      bot.bot_type === 'grid' ? { label: 'Take Profit', value: `${bot.config?.take_profit_pct ?? '—'}%` } : null,
+                      { label: 'Leverage', value: `${bot.config?.leverage ?? 1}x` },
                     ].filter(Boolean).map((item: any) => (
                       <span key={item.label} className="text-xs">
                         <span className="text-gray-600">{item.label}: </span>
@@ -325,6 +326,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [envelope1, setEnvelope1] = useState('7')
   const [envelope2, setEnvelope2] = useState('10')
   const [envelope3, setEnvelope3] = useState('15')
+  const [leverage, setLeverage] = useState('1')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -348,6 +350,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             stop_loss_pct: parseFloat(stopLossPct),
             take_profit_pct: parseFloat(takeProfitPct),
             allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
           } : {
             dex,
             ma_period: parseInt(maPeriod),
@@ -356,6 +359,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             envelope_3_pct: parseFloat(envelope3),
             stop_loss_pct: parseFloat(stopLossPct),
             allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
           }
         })
       })
@@ -426,6 +430,19 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 </div>
               </div>
               <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#00d4aa' : '#1a1a2e', backgroundColor: leverage === lev ? '#00d4aa18' : '#0d0d14', color: leverage === lev ? '#00d4aa' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
                 <label style={labelStyle}>Stop Loss %</label>
                 <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
@@ -454,6 +471,19 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                   <input style={inputStyle} type="number" value={envelope3} onChange={e => setEnvelope3(e.target.value)} />
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
                 </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#8b5cf6' : '#1a1a2e', backgroundColor: leverage === lev ? '#8b5cf618' : '#0d0d14', color: leverage === lev ? '#8b5cf6' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
               </div>
               <div>
                 <label style={labelStyle}>Stop Loss %</label>
