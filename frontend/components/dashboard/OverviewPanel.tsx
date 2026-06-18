@@ -305,6 +305,7 @@ export function OverviewPanel({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [managingPos, setManagingPos] = useState<any>(null);
+  const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
 
   // ── Fetch portfolio (extracted so it can be called from onAction) ─────────────
   const fetchPortfolio = async () => {
@@ -322,6 +323,24 @@ export function OverviewPanel({
       setStatus('error');
     }
   };
+
+  const handleCancelSelected = async () => {
+    if (!walletAddress || selectedOrders.size === 0) return
+    const ordersToCancel = (data?.open_orders ?? []).filter((o: any) => selectedOrders.has(o?.order_id))
+    try {
+      await Promise.all(ordersToCancel.map((o: any) =>
+        fetch(`${API_URL}/orders/cancel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ wallet_address: walletAddress, coin: o?.coin, order_id: o?.order_id }),
+        })
+      ))
+      setSelectedOrders(new Set())
+      fetchPortfolio()
+    } catch (e: any) {
+      console.error('Cancel selected failed:', e)
+    }
+  }
 
   const handleCancelOrder = async (coin: string, orderId: number) => {
     if (!walletAddress) return
@@ -508,7 +527,7 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Mark Price</TH><TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
+                  <TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
                 </tr>
               </thead>
               <tbody>
@@ -537,7 +556,6 @@ export function OverviewPanel({
                       </td>
                       <TD>{fmt(pos?.size, 4)}</TD>
                       <TD>${fmt(pos?.entry_price)}</TD>
-                      <TD>${fmt(pos?.mark_price ?? 0)}</TD>
                       <TD>${fmt(pos?.position_value)}</TD>
                       <TD color={posPos ? '#10b981' : '#ef4444'}>{fmtPnl(upnl)}</TD>
                       <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
@@ -562,11 +580,38 @@ export function OverviewPanel({
       {/* Open Orders */}
       {openOrders.length > 0 && (
         <Section title={`Open Orders (${openOrders.length})`}>
+          {openOrders.length > 0 && (
+            <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: '#1a1a2e' }}>
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-500">
+                <input
+                  type="checkbox"
+                  checked={selectedOrders.size === openOrders.length && openOrders.length > 0}
+                  onChange={e => {
+                    if (e.target.checked) {
+                      setSelectedOrders(new Set(openOrders.map((o: any) => o?.order_id)))
+                    } else {
+                      setSelectedOrders(new Set())
+                    }
+                  }}
+                  style={{ accentColor: '#00d4aa', width: 14, height: 14 }}
+                />
+                Select all
+              </label>
+              {selectedOrders.size > 0 && (
+                <button
+                  onClick={handleCancelSelected}
+                  className="text-xs px-3 py-1.5 rounded font-semibold"
+                  style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                  Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}
+                </button>
+              )}
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                  <TH>Coin</TH><TH>Side</TH><TH>Type</TH><TH>Price</TH><TH>Size</TH><TH>Time</TH><TH>Source</TH><TH>Action</TH>
+                  <TH></TH><TH>Coin</TH><TH>Side</TH><TH>Type</TH><TH>Price</TH><TH>Size</TH><TH>Time</TH><TH>Source</TH><TH>Action</TH>
                 </tr>
               </thead>
               <tbody>
@@ -578,6 +623,19 @@ export function OverviewPanel({
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedOrders.has(o?.order_id)}
+                          onChange={e => {
+                            const next = new Set(selectedOrders)
+                            if (e.target.checked) next.add(o?.order_id)
+                            else next.delete(o?.order_id)
+                            setSelectedOrders(next)
+                          }}
+                          style={{ accentColor: '#00d4aa', width: 14, height: 14 }}
+                        />
+                      </td>
                       <td className="px-5 py-3 font-semibold text-white text-sm">{o?.coin ?? '—'}</td>
                       <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
                       <td className="px-5 py-3">
