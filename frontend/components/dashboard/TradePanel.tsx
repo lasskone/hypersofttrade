@@ -55,6 +55,7 @@ export function TradePanel({ walletAddress }: Props) {
   const [chartHeight, setChartHeight] = useState(420)
   const [isResizing, setIsResizing] = useState(false)
   const resizeRef = useRef<HTMLDivElement>(null)
+  const marketSelectorRef = useRef<HTMLDivElement>(null)
 
   // Load all markets on mount
   useEffect(() => {
@@ -375,7 +376,7 @@ export function TradePanel({ walletAddress }: Props) {
               )}
             </div>
 
-            <div style={{ position: 'relative' }}>
+            <div ref={marketSelectorRef} style={{ position: 'relative' }}>
               {/* Display vs search toggle */}
               {showSearch ? (
                 <input
@@ -412,9 +413,12 @@ export function TradePanel({ walletAddress }: Props) {
 
               {/* Dropdown */}
               {showSearch && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0,
+                <div style={{ position: 'fixed',
+                  top: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().bottom + 4 : 0,
+                  left: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().left : 0,
+                  width: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().width : 320,
                   background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
-                  maxHeight: '300px', overflowY: 'auto', zIndex: 200, marginTop: '4px' }}>
+                  maxHeight: '300px', overflowY: 'auto', zIndex: 9999, marginTop: '0px' }}>
                   {dexGroups.map(dexName => {
                     const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
                     if (dexMarkets.length === 0) return null
