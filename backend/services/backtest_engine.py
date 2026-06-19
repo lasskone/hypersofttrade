@@ -341,23 +341,24 @@ def run_bbrsi_backtest(
             if pnl_pct < -stop_loss_pct:
                 pnl = (close - entry) * position["size"] if position["side"] == "long" else (entry - close) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] / leverage + pnl - fee
+                cash = allocation + pnl - fee
                 trades.append({"type": "stop_loss", "pnl": pnl - fee})
                 position = None
 
         if position is None:
+            # margin required = allocation (full capital as margin), size in asset units
             size = (allocation * leverage) / close
+            margin = allocation  # full allocation used as margin
+            fee = close * size * fee_rate
             if prev_close <= lower_bb or rsi < rsi_oversold:
                 print(f"[bbrsi_debug] LONG SIGNAL: prev_close={prev_close:.2f} lower_bb={lower_bb:.2f} rsi={rsi:.2f} size={size:.6f} cost={close * size / leverage:.2f} cash={cash:.2f}")
-                fee = close * size * fee_rate
-                if cash >= close * size / leverage + fee:
-                    cash -= close * size / leverage + fee
+                if cash >= margin * 0.99:  # allow 1% tolerance for fees
+                    cash -= fee
                     position = {"side": "long", "size": size, "entry_price": close}
                     trades.append({"type": "buy", "price": close})
             elif prev_close >= upper_bb or rsi > rsi_overbought:
-                fee = close * size * fee_rate
-                if cash >= close * size / leverage + fee:
-                    cash -= close * size / leverage + fee
+                if cash >= margin * 0.99:
+                    cash -= fee
                     position = {"side": "short", "size": size, "entry_price": close}
                     trades.append({"type": "sell_short", "price": close})
         else:
@@ -365,13 +366,13 @@ def run_bbrsi_backtest(
             if position["side"] == "long" and prev_close >= mid:
                 pnl = (close - entry) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] / leverage + pnl - fee
+                cash = allocation + pnl - fee  # return margin + pnl
                 trades.append({"type": "close_long", "pnl": pnl - fee})
                 position = None
             elif position["side"] == "short" and prev_close <= mid:
                 pnl = (entry - close) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] / leverage + pnl - fee
+                cash = allocation + pnl - fee  # return margin + pnl
                 trades.append({"type": "close_short", "pnl": pnl - fee})
                 position = None
 
@@ -460,19 +461,19 @@ def run_emacross_backtest(
             if pnl_pct < -stop_loss_pct:
                 pnl = (close - entry) * position["size"] if position["side"] == "long" else (entry - close) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] / leverage + pnl - fee
+                cash = allocation + pnl - fee
                 trades.append({"type": "stop_loss", "pnl": pnl - fee})
                 position = None
 
         if position is None:
             size = (allocation * leverage) / close
             fee = close * size * fee_rate
-            if golden_cross and cash >= close * size / leverage + fee:
-                cash -= close * size / leverage + fee
+            if golden_cross and cash >= allocation * 0.99:
+                cash -= fee
                 position = {"side": "long", "size": size, "entry_price": close}
                 trades.append({"type": "buy", "price": close})
-            elif death_cross and cash >= close * size / leverage + fee:
-                cash -= close * size / leverage + fee
+            elif death_cross and cash >= allocation * 0.99:
+                cash -= fee
                 position = {"side": "short", "size": size, "entry_price": close}
                 trades.append({"type": "sell_short", "price": close})
         else:
@@ -480,13 +481,13 @@ def run_emacross_backtest(
             if position["side"] == "long" and death_cross:
                 pnl = (close - entry) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] / leverage + pnl - fee
+                cash = allocation + pnl - fee
                 trades.append({"type": "close_long", "pnl": pnl - fee})
                 position = None
             elif position["side"] == "short" and golden_cross:
                 pnl = (entry - close) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] / leverage + pnl - fee
+                cash = allocation + pnl - fee
                 trades.append({"type": "close_short", "pnl": pnl - fee})
                 position = None
 
