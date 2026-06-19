@@ -431,9 +431,10 @@ export default function HLChart({ symbol, height = 420, positions = [] }: Props)
 
       if (!entryPrice || entryPrice <= 0) return
 
+      const pnlColor = pnl >= 0 ? '#10b981' : '#ef4444'
       const pl = candleSeriesRef.current.createPriceLine({
         price: entryPrice,
-        color: isLong ? '#00d4aa' : '#ef4444',
+        color: pnlColor,
         lineWidth: 1,
         lineStyle: 1,
         axisLabelVisible: true,
