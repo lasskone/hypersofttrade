@@ -217,6 +217,7 @@ class BotManager:
             exit_threshold_pct=float(config.get("exit_threshold_pct", 0.005)),
             sz_decimals=int(config.get("sz_decimals", 5)),
             min_hold_hours=int(config.get("min_hold_hours", 4)),
+            scan_all_pairs=bool(config.get("scan_all_pairs", False)),
             dex=dex,
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
         )

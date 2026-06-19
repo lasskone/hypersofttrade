@@ -59,6 +59,7 @@ class FundingRateBot:
         min_hold_hours: int,          # minimum hours to hold before checking exit
         dex: Optional[str] = None,
         log_callback=None,
+        scan_all_pairs: bool = False,  # if True, scan all pairs and pick best opportunity
     ):
         self.private_key = private_key
         self.master_address = master_address
@@ -71,6 +72,7 @@ class FundingRateBot:
         self.min_hold_hours = min_hold_hours
         self.dex = dex
         self.log = log_callback or (lambda level, msg: None)
+        self.scan_all_pairs = scan_all_pairs
         self._exchange = None
         self._position: Optional[dict] = None  # {side, size, entry_price, entry_time, funding_collected}
         self._running = False
@@ -112,6 +114,40 @@ class FundingRateBot:
             return None
         except Exception as e:
             self.log("warning", f"Failed to fetch funding rate: {e}")
+            return None
+
+    async def _get_best_funding_opportunity(self) -> Optional[dict]:
+        """Scan all perp pairs and return the best funding rate opportunity."""
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(INFO_ENDPOINT, json={"type": "metaAndAssetCtxs"})
+                data = resp.json()
+            meta_list = data[0]["universe"]
+            ctxs_list = data[1]
+
+            opportunities = []
+            for i, m in enumerate(meta_list):
+                name = m.get("name", "")
+                funding = float(ctxs_list[i].get("funding", 0))
+                mark_px = float(ctxs_list[i].get("markPx", 0))
+                if mark_px <= 0 or abs(funding) < self.entry_threshold:
+                    continue
+                opportunities.append({
+                    "coin": name,
+                    "funding": funding,
+                    "abs_funding": abs(funding),
+                    "mark_price": mark_px,
+                    "side": "short" if funding > 0 else "long",
+                })
+
+            if not opportunities:
+                return None
+
+            # Return the pair with highest absolute funding rate
+            best = max(opportunities, key=lambda x: x["abs_funding"])
+            return best
+        except Exception as e:
+            self.log("warning", f"Failed to scan pairs: {e}")
             return None
 
     async def _get_mark_price(self) -> Optional[float]:
@@ -208,17 +244,29 @@ class FundingRateBot:
                 self.log("info", f"Funding rate: {funding_pct_hr:.4f}%/hr ({funding_daily:.2f}%/day) | Price=${mark_price}")
 
                 if self._position is None:
-                    # Look for entry opportunity
-                    if funding_rate > self.entry_threshold:
-                        # Positive funding — go SHORT to collect
-                        self.log("info", f"Entry signal: funding={funding_pct_hr:.4f}%/hr > threshold={self.entry_threshold*100:.4f}%/hr → opening SHORT")
-                        await self._open_position(is_short=True, mark_price=mark_price)
-                    elif funding_rate < -self.entry_threshold:
-                        # Negative funding — go LONG to collect
-                        self.log("info", f"Entry signal: funding={funding_pct_hr:.4f}%/hr < -{self.entry_threshold*100:.4f}%/hr → opening LONG")
-                        await self._open_position(is_short=False, mark_price=mark_price)
+                    if self.scan_all_pairs:
+                        # Scanner mode — find best opportunity across all pairs
+                        opportunity = await self._get_best_funding_opportunity()
+                        if opportunity:
+                            self.coin = opportunity["coin"]
+                            mark_price = opportunity["mark_price"]
+                            funding_rate = opportunity["funding"]
+                            funding_pct_hr = funding_rate * 100
+                            self.log("info", f"Scanner found best opportunity: {self.coin} funding={funding_pct_hr:.4f}%/hr ({funding_rate*24*100:.2f}%/day)")
+                            is_short = opportunity["side"] == "short"
+                            await self._open_position(is_short=is_short, mark_price=mark_price)
+                        else:
+                            self.log("info", f"Scanner: no opportunity found above threshold ±{self.entry_threshold*100:.4f}%/hr across all pairs")
                     else:
-                        self.log("info", f"No entry signal — funding {funding_pct_hr:.4f}%/hr within threshold ±{self.entry_threshold*100:.4f}%/hr")
+                        # Single pair mode — original logic
+                        if funding_rate > self.entry_threshold:
+                            self.log("info", f"Entry signal: funding={funding_pct_hr:.4f}%/hr > threshold={self.entry_threshold*100:.4f}%/hr → opening SHORT")
+                            await self._open_position(is_short=True, mark_price=mark_price)
+                        elif funding_rate < -self.entry_threshold:
+                            self.log("info", f"Entry signal: funding={funding_pct_hr:.4f}%/hr < -{self.entry_threshold*100:.4f}%/hr → opening LONG")
+                            await self._open_position(is_short=False, mark_price=mark_price)
+                        else:
+                            self.log("info", f"No entry signal — funding {funding_pct_hr:.4f}%/hr within threshold ±{self.entry_threshold*100:.4f}%/hr")
 
                 else:
                     # Check exit conditions
