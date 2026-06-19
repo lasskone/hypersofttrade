@@ -72,6 +72,30 @@ const BOT_TYPES = {
     minAllocation: 50,
     color: '#f59e0b',
   },
+  bb_rsi: {
+    name: 'BB + RSI Bot',
+    emoji: '📊',
+    tagline: 'Buy oversold dips, sell overbought peaks with precision',
+    description: 'Combines Bollinger Bands and RSI to identify high-probability mean reversion setups. Enters long when price touches the lower band AND RSI confirms oversold. Shorts when price touches the upper band AND RSI is overbought.',
+    howItWorks: [
+      'Calculates Bollinger Bands (20 period, 2 std dev) and RSI (14 period)',
+      'LONG: price below lower BB + RSI < 30 (oversold confluence)',
+      'SHORT: price above upper BB + RSI > 70 (overbought confluence)',
+      'Exits when price returns to the middle BB (20 SMA)',
+    ],
+    bestFor: 'Ranging markets with clear overbought/oversold cycles',
+    risk: 'Medium',
+    riskColor: '#f59e0b',
+    params: {
+      bb_period: { label: 'BB Period', hint: 'Bollinger Band period. Default 20.' },
+      bb_std: { label: 'BB Std Dev', hint: 'Standard deviation multiplier. 2.0 = standard, higher = fewer signals.' },
+      rsi_period: { label: 'RSI Period', hint: 'RSI calculation period. Default 14.' },
+      rsi_oversold: { label: 'RSI Oversold', hint: 'RSI below this triggers long entry. Default 30.' },
+      rsi_overbought: { label: 'RSI Overbought', hint: 'RSI above this triggers short entry. Default 70.' },
+    },
+    minAllocation: 50,
+    color: '#3b82f6',
+  },
 }
 
 interface Bot {
@@ -354,6 +378,12 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [entryThreshold, setEntryThreshold] = useState('0.01')
   const [exitThreshold, setExitThreshold] = useState('0.005')
   const [minHoldHours, setMinHoldHours] = useState('4')
+  const [bbPeriod, setBbPeriod] = useState('20')
+  const [bbStd, setBbStd] = useState('2.0')
+  const [rsiPeriod, setRsiPeriod] = useState('14')
+  const [rsiOversold, setRsiOversold] = useState('30')
+  const [rsiOverbought, setRsiOverbought] = useState('70')
+  const [btInterval, setBtInterval] = useState('4h')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -387,11 +417,22 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             stop_loss_pct: parseFloat(stopLossPct),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
-          } : {
+          } : botType === 'funding_rate' ? {
             dex,
             entry_threshold_pct: parseFloat(entryThreshold),
             exit_threshold_pct: parseFloat(exitThreshold),
             min_hold_hours: parseInt(minHoldHours),
+            allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
+          } : {
+            dex,
+            bb_period: parseInt(bbPeriod),
+            bb_std: parseFloat(bbStd),
+            rsi_period: parseInt(rsiPeriod),
+            rsi_oversold: parseFloat(rsiOversold),
+            rsi_overbought: parseFloat(rsiOverbought),
+            stop_loss_pct: parseFloat(stopLossPct),
+            interval: btInterval,
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
           }
@@ -525,7 +566,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if portfolio drops by this %. 0 = disabled</p>
               </div>
             </>
-          ) : (
+          ) : botType === 'funding_rate' ? (
             <>
               <div>
                 <label style={labelStyle}>Entry Threshold %/hr</label>
@@ -559,6 +600,69 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 <label style={labelStyle}>Stop Loss %</label>
                 <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if price moves against position by this %. 0 = disabled.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['1h', '4h', '8h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setBtInterval(iv)}
+                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: btInterval === iv ? '#3b82f622' : '#13131f',
+                        color: btInterval === iv ? '#3b82f6' : '#6b7280',
+                        outline: btInterval === iv ? '1px solid #3b82f644' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for signal detection</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>BB Period</label>
+                  <input style={inputStyle} type="number" value={bbPeriod} onChange={e => setBbPeriod(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 20</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>BB Std Dev</label>
+                  <input style={inputStyle} type="number" step="0.1" value={bbStd} onChange={e => setBbStd(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 2.0</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label style={labelStyle}>RSI Period</label>
+                  <input style={inputStyle} type="number" value={rsiPeriod} onChange={e => setRsiPeriod(e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>RSI Oversold</label>
+                  <input style={inputStyle} type="number" value={rsiOversold} onChange={e => setRsiOversold(e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>RSI Overbought</label>
+                  <input style={inputStyle} type="number" value={rsiOverbought} onChange={e => setRsiOverbought(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#3b82f6' : '#1a1a2e', backgroundColor: leverage === lev ? '#3b82f618' : '#0d0d14', color: leverage === lev ? '#3b82f6' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if position drops by this %. 0 = disabled.</p>
               </div>
             </>
           )}
