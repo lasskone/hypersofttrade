@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ||
   'https://hypersofttrade-backend-production.up.railway.app'
@@ -34,6 +35,10 @@ export default function HLChart({ symbol, height = 420 }: Props) {
   const [showEMA, setShowEMA]                       = useState(true)
   const [emaPeriod, setEmaPeriod]                   = useState(20)
   const [showPeriodInput, setShowPeriodInput]       = useState(false)
+  const emaBtnRef = useRef<HTMLDivElement>(null)
+  const rsiBtnRef = useRef<HTMLDivElement>(null)
+  const [emaBtnRect, setEmaBtnRect] = useState<DOMRect | null>(null)
+  const [rsiBtnRect, setRsiBtnRect] = useState<DOMRect | null>(null)
   const [showVolume, setShowVolume]                 = useState(true)
   const [showRSI, setShowRSI]                       = useState(false)
   const [rsiPeriod, setRsiPeriod]                   = useState(14)
@@ -346,8 +351,11 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
 
           {/* EMA with period dropdown */}
-          <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
-            <button onClick={() => setShowPeriodInput(v => !v)} style={{
+          <div ref={emaBtnRef} style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
+            <button onClick={() => {
+              if (emaBtnRef.current) setEmaBtnRect(emaBtnRef.current.getBoundingClientRect())
+              setShowPeriodInput(v => !v)
+            }} style={{
               padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
               background: showEMA ? 'rgba(245,158,11,0.15)' : 'transparent',
               color: showEMA ? '#f59e0b' : '#6b7280',
@@ -364,36 +372,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
                 borderRadius: '3px', padding: '0 4px', fontSize: '10px', fontWeight: '700',
               }}>{emaPeriod}</span>
             </button>
-            {showPeriodInput && (
-              <div style={{
-                position: 'absolute', top: '100%', right: 0, zIndex: 100, marginTop: '4px',
-                background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
-                padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '140px',
-              }}>
-                <span style={{ fontSize: '11px', color: '#6b7280' }}>EMA Period</span>
-                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                  {EMA_PRESETS.map(p => (
-                    <button key={p} onClick={() => { setEmaPeriod(p); setShowPeriodInput(false) }} style={{
-                      padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                      background: emaPeriod === p ? '#f59e0b' : '#1a1a2e',
-                      color: emaPeriod === p ? '#0a0a0f' : '#9ca3af',
-                      border: 'none', borderRadius: '4px',
-                    }}>{p}</button>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                  <input type="number" min="2" max="500" value={emaPeriod}
-                    onChange={e => setEmaPeriod(parseInt(e.target.value) || 20)}
-                    style={{ width: '60px', background: '#0a0a0f', border: '1px solid #1a1a2e',
-                      borderRadius: '4px', color: 'white', padding: '3px 6px', fontSize: '12px', outline: 'none' }}
-                  />
-                  <button onClick={() => setShowPeriodInput(false)} style={{
-                    padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                    background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
-                  }}>OK</button>
-                </div>
-              </div>
-            )}
+            {null}
           </div>
 
           {/* VOL toggle */}
@@ -483,6 +462,61 @@ export default function HLChart({ symbol, height = 420 }: Props) {
           </div>
           <div ref={rsiContainerRef} style={{ width: '100%', height: `${RSI_HEIGHT}px` }} />
         </div>
+      )}
+
+      {/* ── EMA period portal ─────────────────────────────────────────── */}
+      {showPeriodInput && emaBtnRect && createPortal(
+        <div
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: emaBtnRect.bottom + 4,
+            left: emaBtnRect.left,
+            zIndex: 99999,
+            background: '#0d0d14',
+            border: '1px solid #1a1a2e',
+            borderRadius: '6px',
+            padding: '8px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            minWidth: '160px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          }}>
+          <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>EMA Period</span>
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+            {EMA_PRESETS.map(p => (
+              <button key={p}
+                onMouseDown={e => e.stopPropagation()}
+                onClick={() => { setEmaPeriod(p); setShowPeriodInput(false) }}
+                style={{
+                  padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
+                  background: emaPeriod === p ? '#f59e0b' : '#1a1a2e',
+                  color: emaPeriod === p ? '#0a0a0f' : '#9ca3af',
+                  border: 'none', borderRadius: '4px',
+                }}>{p}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <input
+              type="number" min="2" max="500" value={emaPeriod}
+              onMouseDown={e => e.stopPropagation()}
+              onChange={e => setEmaPeriod(parseInt(e.target.value) || 20)}
+              style={{
+                width: '60px', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                borderRadius: '4px', color: 'white', padding: '3px 6px', fontSize: '12px', outline: 'none',
+              }}
+            />
+            <button
+              onMouseDown={e => e.stopPropagation()}
+              onClick={() => setShowPeriodInput(false)}
+              style={{
+                padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
+                background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
+              }}>OK</button>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )
