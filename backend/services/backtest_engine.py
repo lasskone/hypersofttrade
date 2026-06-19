@@ -292,8 +292,8 @@ def run_bbrsi_backtest(
         mean = sum(window) / p
         return math.sqrt(sum((x - mean) ** 2 for x in window) / p)
 
-    # RSI
-    rsi_values = [None] * rsi_period
+    # RSI — indexed directly by close index so rsi_values[i] = RSI using closes[0..i]
+    rsi_values = [None] * len(closes)
     gains, losses = [], []
     for i in range(1, rsi_period + 1):
         diff = closes[i] - closes[i - 1]
@@ -301,11 +301,12 @@ def run_bbrsi_backtest(
         losses.append(max(-diff, 0))
     avg_gain = sum(gains) / rsi_period
     avg_loss = sum(losses) / rsi_period
+    rsi_values[rsi_period] = 100 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
     for i in range(rsi_period + 1, len(closes)):
         diff = closes[i] - closes[i - 1]
         avg_gain = (avg_gain * (rsi_period - 1) + max(diff, 0)) / rsi_period
         avg_loss = (avg_loss * (rsi_period - 1) + max(-diff, 0)) / rsi_period
-        rsi_values.append(100 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss))
+        rsi_values[i] = 100 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
 
     cash = allocation
     position = None
@@ -336,19 +337,19 @@ def run_bbrsi_backtest(
             if pnl_pct < -stop_loss_pct:
                 pnl = (close - entry) * position["size"] if position["side"] == "long" else (entry - close) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash += close * position["size"] - fee if position["side"] == "long" else cash + (2 * entry - close) * position["size"] - fee
+                cash += close * position["size"] / leverage + pnl - fee
                 trades.append({"type": "stop_loss", "pnl": pnl - fee})
                 position = None
 
         if position is None:
             size = (allocation * leverage) / close
-            if prev_close <= lower_bb and rsi < rsi_oversold:
+            if prev_close <= lower_bb or rsi < rsi_oversold:
                 fee = close * size * fee_rate
                 if cash >= close * size / leverage + fee:
                     cash -= close * size / leverage + fee
                     position = {"side": "long", "size": size, "entry_price": close}
                     trades.append({"type": "buy", "price": close})
-            elif prev_close >= upper_bb and rsi > rsi_overbought:
+            elif prev_close >= upper_bb or rsi > rsi_overbought:
                 fee = close * size * fee_rate
                 if cash >= close * size / leverage + fee:
                     cash -= close * size / leverage + fee
@@ -432,11 +433,11 @@ def run_emacross_backtest(
     max_equity = allocation
     max_drawdown = 0.0
 
-    for i in range(ema_slow + 1, len(candles)):
-        fast_prev = ema_fast_vals[i - 1]
-        fast_curr = ema_fast_vals[i]
-        slow_prev = ema_slow_vals[i - 1]
-        slow_curr = ema_slow_vals[i]
+    for i in range(ema_slow + 2, len(candles)):
+        fast_prev = ema_fast_vals[i - 2]
+        fast_curr = ema_fast_vals[i - 1]
+        slow_prev = ema_slow_vals[i - 2]
+        slow_curr = ema_slow_vals[i - 1]
         close = closes[i]
         ts = candles[i]["time"]
 
