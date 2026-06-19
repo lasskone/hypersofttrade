@@ -97,6 +97,8 @@ class BotManager:
             await self._run_funding_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "bb_rsi":
             await self._run_bbrsi_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "ema_cross":
+            await self._run_emacross_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -244,6 +246,30 @@ class BotManager:
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
         )
         self._add_log(bot_id, "info", f"BB+RSI Bot initializing — {coin}")
+        await bot.run()
+
+    async def _run_emacross_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.emacross.strategy import EMACrossBot
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "") or None
+        coin = f"{dex}:{symbol}" if dex else symbol
+        bot = EMACrossBot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=float(config.get("allocated_usdc", 100)),
+            leverage=int(config.get("leverage", 1)),
+            ema_fast=int(config.get("ema_fast", 9)),
+            ema_slow=int(config.get("ema_slow", 21)),
+            stop_loss_pct=float(config.get("stop_loss_pct", 5)),
+            use_atr_stop=bool(config.get("use_atr_stop", False)),
+            atr_multiplier=float(config.get("atr_multiplier", 2.0)),
+            sz_decimals=int(config.get("sz_decimals", 5)),
+            interval=config.get("interval", "4h"),
+            dex=dex,
+            log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+        )
+        self._add_log(bot_id, "info", f"EMA Cross Bot initializing — {coin}")
         await bot.run()
 
 
