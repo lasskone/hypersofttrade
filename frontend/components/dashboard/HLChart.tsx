@@ -445,7 +445,8 @@ export default function HLChart({ symbol, height = 420 }: Props) {
           style={{
             position: 'fixed',
             top: emaBtnRect.bottom + 4,
-            left: emaBtnRect.left,
+            right: typeof window !== 'undefined' ? window.innerWidth - emaBtnRect.right : 0,
+            left: 'auto',
             zIndex: 99999,
             background: '#0d0d14',
             border: '1px solid #1a1a2e',
@@ -500,7 +501,8 @@ export default function HLChart({ symbol, height = 420 }: Props) {
           style={{
             position: 'fixed',
             top: rsiBtnRect.bottom + 4,
-            left: rsiBtnRect.left,
+            right: typeof window !== 'undefined' ? window.innerWidth - rsiBtnRect.right : 0,
+            left: 'auto',
             zIndex: 99999,
             background: '#0d0d14',
             border: '1px solid #1a1a2e',
