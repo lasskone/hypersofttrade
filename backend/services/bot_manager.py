@@ -95,6 +95,8 @@ class BotManager:
             await self._run_envelope_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "funding_rate":
             await self._run_funding_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "bb_rsi":
+            await self._run_bbrsi_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -217,6 +219,31 @@ class BotManager:
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
         )
         self._add_log(bot_id, "info", f"Funding Rate Bot initializing — {coin}")
+        await bot.run()
+
+    async def _run_bbrsi_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.bbrsi.strategy import BBRSIBot
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "") or None
+        coin = f"{dex}:{symbol}" if dex else symbol
+        bot = BBRSIBot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=float(config.get("allocated_usdc", 100)),
+            leverage=int(config.get("leverage", 1)),
+            bb_period=int(config.get("bb_period", 20)),
+            bb_std=float(config.get("bb_std", 2.0)),
+            rsi_period=int(config.get("rsi_period", 14)),
+            rsi_oversold=float(config.get("rsi_oversold", 30)),
+            rsi_overbought=float(config.get("rsi_overbought", 70)),
+            stop_loss_pct=float(config.get("stop_loss_pct", 5)),
+            sz_decimals=int(config.get("sz_decimals", 5)),
+            interval=config.get("interval", "4h"),
+            dex=dex,
+            log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+        )
+        self._add_log(bot_id, "info", f"BB+RSI Bot initializing — {coin}")
         await bot.run()
 
 
