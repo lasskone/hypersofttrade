@@ -30,6 +30,11 @@ export default function HLChart({ symbol, height = 420 }: Props) {
   const rsiContainerRef = useRef<HTMLDivElement>(null)
   const rsiChartRef     = useRef<any>(null)
   const loadingRef      = useRef(false)
+  const candleSeriesRef = useRef<any>(null)
+  const emaSeriesRef    = useRef<any>(null)
+  const volSeriesRef    = useRef<any>(null)
+  const rsiSeriesRef    = useRef<any>(null)
+  const candleDataRef   = useRef<any[]>([])
 
   const [selectedInterval, setSelectedInterval]     = useState('15m')
   const [showEMA, setShowEMA]                       = useState(true)
@@ -125,7 +130,6 @@ export default function HLChart({ symbol, height = 420 }: Props) {
           createChart,
           CandlestickSeries,
           LineSeries,
-          HistogramSeries,
           ColorType,
           CrosshairMode,
         } = await import('lightweight-charts')
@@ -146,6 +150,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         }
 
         setOhlc(candles[candles.length - 1])
+        candleDataRef.current = candles
 
         // ── Main chart ────────────────────────────────────────────────
         const chart = createChart(containerRef.current, {
@@ -178,29 +183,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         candleSeries.setData(candles.map(c => ({
           time: c.time as any, open: c.open, high: c.high, low: c.low, close: c.close,
         })))
-
-        // Volume histogram
-        if (showVolume) {
-          const volSeries = chart.addSeries(HistogramSeries, {
-            color: 'rgba(0,212,170,0.3)',
-            priceFormat: { type: 'volume' as const },
-            priceScaleId: 'vol',
-          })
-          chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } })
-          volSeries.setData(candles.map(c => ({
-            time: c.time as any,
-            value: c.volume,
-            color: c.close >= c.open ? 'rgba(0,212,170,0.3)' : 'rgba(239,68,68,0.3)',
-          })))
-        }
-
-        // EMA
-        if (showEMA) {
-          const emaSeries = chart.addSeries(LineSeries, {
-            color: '#f59e0b', lineWidth: 1 as const, priceLineVisible: false,
-          })
-          emaSeries.setData(calcEMA(candles, emaPeriod))
-        }
+        candleSeriesRef.current = candleSeries
 
         // Crosshair OHLC
         chart.subscribeCrosshairMove((param: any) => {
@@ -240,6 +223,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
             color: '#a78bfa', lineWidth: 1 as const, priceLineVisible: false,
           })
           rsiSeries.setData(calcRSI(candles, rsiPeriod))
+          rsiSeriesRef.current = rsiSeries
 
           // Overbought (70)
           const ob = rsiChart.addSeries(LineSeries, {
@@ -302,7 +286,109 @@ export default function HLChart({ symbol, height = 420 }: Props) {
       }
       loadingRef.current = false
     }
-  }, [symbol, selectedInterval, showEMA, emaPeriod, showVolume, showRSI, rsiPeriod, mainChartH])
+  }, [symbol, selectedInterval])
+
+  // EMA series — add/remove without rebuilding chart
+  useEffect(() => {
+    if (!chartRef.current || !candleDataRef.current.length) return
+
+    if (emaSeriesRef.current) {
+      try { chartRef.current.removeSeries(emaSeriesRef.current) } catch {}
+      emaSeriesRef.current = null
+    }
+
+    if (showEMA) {
+      import('lightweight-charts').then(({ LineSeries }) => {
+        if (!chartRef.current) return
+        const s = chartRef.current.addSeries(LineSeries, {
+          color: '#f59e0b', lineWidth: 1, priceLineVisible: false,
+        })
+        s.setData(calcEMA(candleDataRef.current, emaPeriod))
+        emaSeriesRef.current = s
+      })
+    }
+  }, [showEMA, emaPeriod])
+
+  // Volume series — add/remove without rebuilding chart
+  useEffect(() => {
+    if (!chartRef.current || !candleDataRef.current.length) return
+
+    if (volSeriesRef.current) {
+      try { chartRef.current.removeSeries(volSeriesRef.current) } catch {}
+      volSeriesRef.current = null
+    }
+
+    if (showVolume) {
+      import('lightweight-charts').then(({ HistogramSeries }) => {
+        if (!chartRef.current) return
+        const s = chartRef.current.addSeries(HistogramSeries, {
+          color: 'rgba(0,212,170,0.3)',
+          priceFormat: { type: 'volume' },
+          priceScaleId: 'vol',
+        })
+        chartRef.current.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } })
+        s.setData(candleDataRef.current.map((c: any) => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open ? 'rgba(0,212,170,0.3)' : 'rgba(239,68,68,0.3)',
+        })))
+        volSeriesRef.current = s
+      })
+    }
+  }, [showVolume])
+
+  // RSI period — update data without rebuilding
+  useEffect(() => {
+    if (!rsiChartRef.current || !candleDataRef.current.length || !rsiSeriesRef.current) return
+    rsiSeriesRef.current.setData(calcRSI(candleDataRef.current, rsiPeriod))
+  }, [rsiPeriod])
+
+  // Height — resize without rebuilding
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.applyOptions({ height: mainChartH })
+    }
+  }, [mainChartH])
+
+  // showRSI — create/destroy RSI chart without rebuilding main chart
+  useEffect(() => {
+    if (!chartRef.current) return
+    if (candleDataRef.current.length > 0) {
+      if (rsiChartRef.current) {
+        try { rsiChartRef.current.remove() } catch {}
+        rsiChartRef.current = null
+        rsiSeriesRef.current = null
+      }
+      if (showRSI && rsiContainerRef.current) {
+        import('lightweight-charts').then(({ createChart, LineSeries, ColorType, CrosshairMode }) => {
+          if (!rsiContainerRef.current || !chartRef.current) return
+          const rsiChart = createChart(rsiContainerRef.current, {
+            width: rsiContainerRef.current.clientWidth,
+            height: RSI_HEIGHT,
+            layout: { background: { type: ColorType.Solid, color: '#0a0a0f' }, textColor: '#9ca3af' },
+            grid: { vertLines: { color: 'rgba(26,26,46,0.4)' }, horzLines: { color: 'rgba(26,26,46,0.4)' } },
+            rightPriceScale: { borderColor: '#1a1a2e', scaleMargins: { top: 0.1, bottom: 0.1 } },
+            timeScale: { borderColor: '#1a1a2e', visible: false },
+            crosshair: { mode: CrosshairMode.Normal },
+          })
+          rsiChartRef.current = rsiChart
+          const s = rsiChart.addSeries(LineSeries, { color: '#a78bfa', lineWidth: 1, priceLineVisible: false })
+          s.setData(calcRSI(candleDataRef.current, rsiPeriod))
+          rsiSeriesRef.current = s
+          const ob = rsiChart.addSeries(LineSeries, { color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false })
+          ob.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 70 })))
+          const os = rsiChart.addSeries(LineSeries, { color: 'rgba(0,212,170,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false })
+          os.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 30 })))
+          chartRef.current.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
+            if (range) rsiChart.timeScale().setVisibleLogicalRange(range)
+          })
+          rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
+            if (range && chartRef.current) chartRef.current.timeScale().setVisibleLogicalRange(range)
+          })
+        })
+      }
+    }
+  }, [showRSI])
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
