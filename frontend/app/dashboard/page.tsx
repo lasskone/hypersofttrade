@@ -33,6 +33,23 @@ function DashboardLayout({
   section: string;
   onNavigate: (s: string) => void;
 }) {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+  const [openPositions, setOpenPositions] = useState<any[]>([])
+
+  useEffect(() => {
+    if (!address) return
+    const fetchPositions = async () => {
+      try {
+        const res = await fetch(`${API_URL}/account/${address}/portfolio`)
+        const data = await res.json()
+        setOpenPositions(data.open_positions ?? [])
+      } catch {}
+    }
+    fetchPositions()
+    const interval = setInterval(fetchPositions, 10000)
+    return () => clearInterval(interval)
+  }, [address])
+
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: '#0a0a0f' }}>
       <Sidebar active={section} onNavigate={onNavigate} walletAddress={address} />
@@ -40,7 +57,7 @@ function DashboardLayout({
         <TopBar section={section} />
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} />}
-          {section === 'trade' && <TradePanel walletAddress={address} openPositions={[]} />}
+          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} />}
           {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
           {section === 'backtest' && <BacktestPanel />}
           {section === 'history' && (
