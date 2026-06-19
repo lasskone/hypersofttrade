@@ -107,6 +107,29 @@ async def run_backtest(body: dict):
                 envelope_3_pct=float(body.get("envelope_3_pct", 15.0)),
                 stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
             )
+        elif bot_type == "bb_rsi":
+            from services.backtest_engine import run_bbrsi_backtest
+            result = run_bbrsi_backtest(
+                candles=candles,
+                allocation=allocation,
+                bb_period=int(body.get("bb_period", 20)),
+                bb_std=float(body.get("bb_std", 2.0)),
+                rsi_period=int(body.get("rsi_period", 14)),
+                rsi_oversold=float(body.get("rsi_oversold", 30)),
+                rsi_overbought=float(body.get("rsi_overbought", 70)),
+                stop_loss_pct=float(body.get("stop_loss_pct", 5)),
+                leverage=int(body.get("leverage", 1)),
+            )
+        elif bot_type == "ema_cross":
+            from services.backtest_engine import run_emacross_backtest
+            result = run_emacross_backtest(
+                candles=candles,
+                allocation=allocation,
+                ema_fast=int(body.get("ema_fast", 9)),
+                ema_slow=int(body.get("ema_slow", 21)),
+                stop_loss_pct=float(body.get("stop_loss_pct", 5)),
+                leverage=int(body.get("leverage", 1)),
+            )
         else:
             raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
     except ValueError as exc:
