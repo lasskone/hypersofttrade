@@ -43,6 +43,7 @@ export default function HLChart({ symbol, height = 420, positions = [] }: Props)
   const volSeriesRef    = useRef<any>(null)
   const rsiSeriesRef    = useRef<any>(null)
   const candleDataRef   = useRef<any[]>([])
+  const priceLineRefs   = useRef<any[]>([])
 
   const [selectedInterval, setSelectedInterval]     = useState('15m')
   const [showEMA, setShowEMA]                       = useState(true)
@@ -403,38 +404,42 @@ export default function HLChart({ symbol, height = 420, positions = [] }: Props)
 
   // ── Position lines ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!chartReady || !candleSeriesRef.current) return
-    const series = candleSeriesRef.current
-    // Remove all existing price lines before re-drawing
-    series.removeAllPriceLines?.()
+    if (!chartReady || !chartRef.current || !candleSeriesRef.current) return
 
-    const matchingPositions = positions.filter(p =>
-      p.symbol === symbol ||
-      p.symbol?.endsWith(`:${symbol}`) ||
-      symbol?.endsWith(`:${p.symbol}`)
-    )
+    // Remove ALL existing price lines
+    priceLineRefs.current.forEach(pl => {
+      try { candleSeriesRef.current?.removePriceLine(pl) } catch {}
+    })
+    priceLineRefs.current = []
+
+    if (!positions || positions.length === 0) return
+
+    // Filter positions matching current symbol (handle both "BTC" and "xyz:XYZ100")
+    const matchingPositions = positions.filter(p => {
+      const posSymbol = String(p.symbol ?? '')
+      const chartSymbol = String(symbol ?? '')
+      return posSymbol === chartSymbol ||
+        posSymbol.split(':').pop() === chartSymbol ||
+        chartSymbol.split(':').pop() === posSymbol
+    })
 
     matchingPositions.forEach(pos => {
-      const size = parseFloat(String(pos.size))
+      const isLong = parseFloat(String(pos.size)) > 0
       const entryPrice = parseFloat(String(pos.entry_price))
-      const pnl = parseFloat(String(pos.unrealized_pnl))
-      if (!entryPrice) return
+      const pnl = parseFloat(String(pos.unrealized_pnl ?? 0))
+      const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
 
-      const isLong = size > 0
-      const pnlSign = pnl >= 0 ? '+' : '-'
-      const pnlAbs = Math.abs(pnl).toFixed(2)
-      const notional = entryPrice * Math.abs(size)
-      const pnlPct = notional > 0 ? ((pnl / notional) * 100).toFixed(2) : '0.00'
-      const pnlPctSign = parseFloat(pnlPct) >= 0 ? '+' : ''
+      if (!entryPrice || entryPrice <= 0) return
 
-      series.createPriceLine({
+      const pl = candleSeriesRef.current.createPriceLine({
         price: entryPrice,
         color: isLong ? '#00d4aa' : '#ef4444',
         lineWidth: 1,
-        lineStyle: 1, // dashed
+        lineStyle: 1,
         axisLabelVisible: true,
-        title: `${isLong ? '▲ LONG' : '▼ SHORT'} ${pnlSign}${pnlAbs} (${pnlPctSign}${pnlPct}%)`,
+        title: `${isLong ? '▲ LONG' : '▼ SHORT'} ${pnlStr}`,
       })
+      priceLineRefs.current.push(pl)
     })
   }, [chartReady, positions, symbol])
 
