@@ -54,11 +54,11 @@ const BOT_TYPES = {
     name: 'Funding Rate Bot',
     emoji: '💰',
     tagline: 'Earn passive income from funding payments — market neutral',
-    description: 'Monitors Hyperliquid funding rates 24/7. When rates are high, opens a position on the paying side to collect funding payments every hour. Completely market-neutral — profits regardless of price direction.',
+    description: 'Monitors Hyperliquid funding rates 24/7. Two modes: Single Pair (monitors one asset) or Scanner (scans ALL 300+ pairs automatically and enters the best opportunity). Completely market-neutral — profits regardless of price direction.',
     howItWorks: [
-      'Monitors funding rates across all perp pairs every hour',
-      'When funding > threshold, opens SHORT to collect payments from longs',
-      'When funding is negative, opens LONG to collect from shorts',
+      'Single Pair mode: monitors one asset\'s funding rate every hour',
+      'Scanner mode: scans ALL 300+ perp pairs, picks highest funding rate',
+      'When funding > threshold, opens SHORT to collect from longs',
       'Exits automatically when funding normalizes or flips',
     ],
     bestFor: 'Passive income, market-neutral strategy',
@@ -401,6 +401,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [entryThreshold, setEntryThreshold] = useState('0.01')
   const [exitThreshold, setExitThreshold] = useState('0.005')
   const [minHoldHours, setMinHoldHours] = useState('4')
+  const [scanAllPairs, setScanAllPairs] = useState(false)
   const [bbPeriod, setBbPeriod] = useState('20')
   const [bbStd, setBbStd] = useState('2.0')
   const [rsiPeriod, setRsiPeriod] = useState('14')
@@ -450,6 +451,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             entry_threshold_pct: parseFloat(entryThreshold),
             exit_threshold_pct: parseFloat(exitThreshold),
             min_hold_hours: parseInt(minHoldHours),
+            scan_all_pairs: scanAllPairs,
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
           } : botType === 'bb_rsi' ? {
@@ -606,6 +608,23 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             </>
           ) : botType === 'funding_rate' ? (
             <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e', marginBottom: 4 }}>
+                <input type="checkbox" id="scan-pairs" checked={scanAllPairs} onChange={e => setScanAllPairs(e.target.checked)}
+                  style={{ accentColor: '#f59e0b', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="scan-pairs" style={{ fontSize: 12, color: '#f59e0b', fontWeight: 700, cursor: 'pointer', display: 'block' }}>
+                    Scanner Mode — All Pairs
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Automatically scan ALL perp pairs and enter the best funding opportunity</p>
+                </div>
+              </div>
+
+              {!scanAllPairs && (
+                <div style={{ padding: '8px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e', marginBottom: 4 }}>
+                  <p style={{ fontSize: 10, color: '#6b7280' }}>Single pair mode — bot monitors only the symbol above</p>
+                </div>
+              )}
+
               <div>
                 <label style={labelStyle}>Entry Threshold %/hr</label>
                 <input style={inputStyle} type="number" step="0.001" value={entryThreshold} onChange={e => setEntryThreshold(e.target.value)} />
