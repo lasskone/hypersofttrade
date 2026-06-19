@@ -22,9 +22,17 @@ interface Candle {
 interface Props {
   symbol: string
   height?: number
+  positions?: Array<{
+    symbol: string
+    side: string
+    entry_price: number
+    size: number
+    unrealized_pnl: number
+    mark_price: number
+  }>
 }
 
-export default function HLChart({ symbol, height = 420 }: Props) {
+export default function HLChart({ symbol, height = 420, positions = [] }: Props) {
   const containerRef    = useRef<HTMLDivElement>(null)
   const chartRef        = useRef<any>(null)
   const rsiContainerRef = useRef<HTMLDivElement>(null)
@@ -392,6 +400,43 @@ export default function HLChart({ symbol, height = 420 }: Props) {
       }
     }
   }, [showRSI, chartReady])
+
+  // ── Position lines ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!chartReady || !candleSeriesRef.current) return
+    const series = candleSeriesRef.current
+    // Remove all existing price lines before re-drawing
+    series.removeAllPriceLines?.()
+
+    const matchingPositions = positions.filter(p =>
+      p.symbol === symbol ||
+      p.symbol?.endsWith(`:${symbol}`) ||
+      symbol?.endsWith(`:${p.symbol}`)
+    )
+
+    matchingPositions.forEach(pos => {
+      const size = parseFloat(String(pos.size))
+      const entryPrice = parseFloat(String(pos.entry_price))
+      const pnl = parseFloat(String(pos.unrealized_pnl))
+      if (!entryPrice) return
+
+      const isLong = size > 0
+      const pnlSign = pnl >= 0 ? '+' : '-'
+      const pnlAbs = Math.abs(pnl).toFixed(2)
+      const notional = entryPrice * Math.abs(size)
+      const pnlPct = notional > 0 ? ((pnl / notional) * 100).toFixed(2) : '0.00'
+      const pnlPctSign = parseFloat(pnlPct) >= 0 ? '+' : ''
+
+      series.createPriceLine({
+        price: entryPrice,
+        color: isLong ? '#00d4aa' : '#ef4444',
+        lineWidth: 1,
+        lineStyle: 1, // dashed
+        axisLabelVisible: true,
+        title: `${isLong ? '▲ LONG' : '▼ SHORT'} ${pnlSign}${pnlAbs} (${pnlPctSign}${pnlPct}%)`,
+      })
+    })
+  }, [chartReady, positions, symbol])
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'

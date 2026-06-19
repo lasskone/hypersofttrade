@@ -40,7 +40,7 @@ function DashboardLayout({
         <TopBar section={section} />
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} />}
-          {section === 'trade' && <TradePanel walletAddress={address} />}
+          {section === 'trade' && <TradePanel walletAddress={address} openPositions={[]} />}
           {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
           {section === 'backtest' && <BacktestPanel />}
           {section === 'history' && (
