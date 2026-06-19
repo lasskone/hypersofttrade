@@ -384,8 +384,11 @@ export default function HLChart({ symbol, height = 420 }: Props) {
           }}>VOL</button>
 
           {/* RSI with period dropdown */}
-          <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
-            <button onClick={() => setShowRSIPeriodInput(v => !v)} style={{
+          <div ref={rsiBtnRef} style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
+            <button onClick={() => {
+              if (rsiBtnRef.current) setRsiBtnRect(rsiBtnRef.current.getBoundingClientRect())
+              setShowRSIPeriodInput(v => !v)
+            }} style={{
               padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
               background: showRSI ? 'rgba(167,139,250,0.15)' : 'transparent',
               color: showRSI ? '#a78bfa' : '#6b7280',
@@ -402,36 +405,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
                 borderRadius: '3px', padding: '0 4px', fontSize: '10px', fontWeight: '700',
               }}>{rsiPeriod}</span>
             </button>
-            {showRSIPeriodInput && (
-              <div style={{
-                position: 'absolute', top: '100%', right: 0, zIndex: 100, marginTop: '4px',
-                background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
-                padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '140px',
-              }}>
-                <span style={{ fontSize: '11px', color: '#6b7280' }}>RSI Period</span>
-                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                  {RSI_PRESETS.map(p => (
-                    <button key={p} onClick={() => { setRsiPeriod(p); setShowRSIPeriodInput(false) }} style={{
-                      padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                      background: rsiPeriod === p ? '#a78bfa' : '#1a1a2e',
-                      color: rsiPeriod === p ? '#0a0a0f' : '#9ca3af',
-                      border: 'none', borderRadius: '4px',
-                    }}>{p}</button>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                  <input type="number" min="2" max="100" value={rsiPeriod}
-                    onChange={e => setRsiPeriod(parseInt(e.target.value) || 14)}
-                    style={{ width: '60px', background: '#0a0a0f', border: '1px solid #1a1a2e',
-                      borderRadius: '4px', color: 'white', padding: '3px 6px', fontSize: '12px', outline: 'none' }}
-                  />
-                  <button onClick={() => setShowRSIPeriodInput(false)} style={{
-                    padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                    background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
-                  }}>OK</button>
-                </div>
-              </div>
-            )}
+            {null}
           </div>
         </div>
       </div>
@@ -513,6 +487,61 @@ export default function HLChart({ symbol, height = 420 }: Props) {
               style={{
                 padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
                 background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
+              }}>OK</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── RSI period portal ─────────────────────────────────────────── */}
+      {showRSIPeriodInput && rsiBtnRect && createPortal(
+        <div
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: rsiBtnRect.bottom + 4,
+            left: rsiBtnRect.left,
+            zIndex: 99999,
+            background: '#0d0d14',
+            border: '1px solid #1a1a2e',
+            borderRadius: '6px',
+            padding: '8px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            minWidth: '160px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          }}>
+          <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>RSI Period</span>
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+            {RSI_PRESETS.map(p => (
+              <button key={p}
+                onMouseDown={e => e.stopPropagation()}
+                onClick={() => { setRsiPeriod(p); setShowRSIPeriodInput(false) }}
+                style={{
+                  padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
+                  background: rsiPeriod === p ? '#a78bfa' : '#1a1a2e',
+                  color: rsiPeriod === p ? '#0a0a0f' : '#9ca3af',
+                  border: 'none', borderRadius: '4px',
+                }}>{p}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <input
+              type="number" min="2" max="100" value={rsiPeriod}
+              onMouseDown={e => e.stopPropagation()}
+              onChange={e => setRsiPeriod(parseInt(e.target.value) || 14)}
+              style={{
+                width: '60px', background: '#0a0a0f', border: '1px solid #1a1a2e',
+                borderRadius: '4px', color: 'white', padding: '3px 6px', fontSize: '12px', outline: 'none',
+              }}
+            />
+            <button
+              onMouseDown={e => e.stopPropagation()}
+              onClick={() => setShowRSIPeriodInput(false)}
+              style={{
+                padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
+                background: '#a78bfa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
               }}>OK</button>
           </div>
         </div>,
