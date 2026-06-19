@@ -50,6 +50,28 @@ const BOT_TYPES = {
     minAllocation: 100,
     color: '#8b5cf6',
   },
+  funding_rate: {
+    name: 'Funding Rate Bot',
+    emoji: '💰',
+    tagline: 'Earn passive income from funding payments — market neutral',
+    description: 'Monitors Hyperliquid funding rates 24/7. When rates are high, opens a position on the paying side to collect funding payments every hour. Completely market-neutral — profits regardless of price direction.',
+    howItWorks: [
+      'Monitors funding rates across all perp pairs every hour',
+      'When funding > threshold, opens SHORT to collect payments from longs',
+      'When funding is negative, opens LONG to collect from shorts',
+      'Exits automatically when funding normalizes or flips',
+    ],
+    bestFor: 'Passive income, market-neutral strategy',
+    risk: 'Low',
+    riskColor: '#10b981',
+    params: {
+      entry_threshold_pct: { label: 'Entry Threshold %/hr', hint: 'Enter when |funding| exceeds this. e.g. 0.01 = 0.01%/hr (~2.4%/day)' },
+      exit_threshold_pct: { label: 'Exit Threshold %/hr', hint: 'Exit when |funding| drops below this. e.g. 0.005 = 0.005%/hr' },
+      min_hold_hours: { label: 'Min Hold Hours', hint: 'Minimum hours to hold before checking exit. Prevents rapid in/out.' },
+    },
+    minAllocation: 50,
+    color: '#f59e0b',
+  },
 }
 
 interface Bot {
@@ -225,8 +247,10 @@ export default function BotsPanel({ walletAddress }: Props) {
                       { label: 'Allocation', value: `$${bot.allocated_usdc}` },
                       bot.bot_type === 'grid' ? { label: 'Levels', value: `${bot.config?.levels ?? '—'}` } : null,
                       bot.bot_type === 'grid' ? { label: 'Range', value: `±${bot.config?.range_pct ?? '—'}%` } : null,
-                      { label: 'Stop Loss', value: `${bot.config?.stop_loss_pct ?? '—'}%` },
+                      bot.bot_type !== 'funding_rate' ? { label: 'Stop Loss', value: `${bot.config?.stop_loss_pct ?? '—'}%` } : null,
                       bot.bot_type === 'grid' ? { label: 'Take Profit', value: `${bot.config?.take_profit_pct ?? '—'}%` } : null,
+                      bot.bot_type === 'funding_rate' ? { label: 'Entry', value: `>${bot.config?.entry_threshold_pct ?? '—'}%/hr` } : null,
+                      bot.bot_type === 'funding_rate' ? { label: 'Exit', value: `<${bot.config?.exit_threshold_pct ?? '—'}%/hr` } : null,
                       { label: 'Leverage', value: `${bot.config?.leverage ?? 1}x` },
                     ].filter(Boolean).map((item: any) => (
                       <span key={item.label} className="text-xs">
@@ -327,6 +351,9 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [envelope2, setEnvelope2] = useState('10')
   const [envelope3, setEnvelope3] = useState('15')
   const [leverage, setLeverage] = useState('1')
+  const [entryThreshold, setEntryThreshold] = useState('0.01')
+  const [exitThreshold, setExitThreshold] = useState('0.005')
+  const [minHoldHours, setMinHoldHours] = useState('4')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -351,13 +378,20 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             take_profit_pct: parseFloat(takeProfitPct),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
-          } : {
+          } : botType === 'envelope_dca' ? {
             dex,
             ma_period: parseInt(maPeriod),
             envelope_1_pct: parseFloat(envelope1),
             envelope_2_pct: parseFloat(envelope2),
             envelope_3_pct: parseFloat(envelope3),
             stop_loss_pct: parseFloat(stopLossPct),
+            allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
+          } : {
+            dex,
+            entry_threshold_pct: parseFloat(entryThreshold),
+            exit_threshold_pct: parseFloat(exitThreshold),
+            min_hold_hours: parseInt(minHoldHours),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
           }
@@ -448,7 +482,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
               </div>
             </>
-          ) : (
+          ) : botType === 'envelope_dca' ? (
             <>
               <div>
                 <label style={labelStyle}>MA Period</label>
@@ -489,6 +523,42 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 <label style={labelStyle}>Stop Loss %</label>
                 <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if portfolio drops by this %. 0 = disabled</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Entry Threshold %/hr</label>
+                <input style={inputStyle} type="number" step="0.001" value={entryThreshold} onChange={e => setEntryThreshold(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Enter when |funding rate| exceeds this. 0.01 = 0.01%/hr ≈ 2.4%/day</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Exit Threshold %/hr</label>
+                <input style={inputStyle} type="number" step="0.001" value={exitThreshold} onChange={e => setExitThreshold(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit when |funding rate| drops below this. Should be lower than entry.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Min Hold Hours</label>
+                <input style={inputStyle} type="number" value={minHoldHours} onChange={e => setMinHoldHours(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Minimum hours before checking exit condition. Prevents rapid trades.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#f59e0b' : '#1a1a2e', backgroundColor: leverage === lev ? '#f59e0b18' : '#0d0d14', color: leverage === lev ? '#f59e0b' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if price moves against position by this %. 0 = disabled.</p>
               </div>
             </>
           )}
