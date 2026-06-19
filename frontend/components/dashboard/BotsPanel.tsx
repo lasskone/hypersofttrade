@@ -96,6 +96,29 @@ const BOT_TYPES = {
     minAllocation: 50,
     color: '#3b82f6',
   },
+  ema_cross: {
+    name: 'EMA Cross Bot',
+    emoji: '📈',
+    tagline: 'Ride strong trends with golden & death cross signals',
+    description: 'Detects EMA crossovers to enter trending markets early. Opens LONG on golden cross (fast EMA above slow) and SHORT on death cross. Uses ATR-based dynamic stops to protect profits. Best for trending markets.',
+    howItWorks: [
+      'Monitors fast EMA (9) and slow EMA (21) on every candle close',
+      'Golden Cross (fast above slow) → opens LONG position',
+      'Death Cross (fast below slow) → opens SHORT or closes LONG',
+      'Dynamic ATR stop loss adjusts to market volatility',
+    ],
+    bestFor: 'Trending markets (bull or bear)',
+    risk: 'Medium',
+    riskColor: '#f59e0b',
+    params: {
+      ema_fast: { label: 'Fast EMA', hint: 'Fast EMA period. Default 9. Shorter = more signals.' },
+      ema_slow: { label: 'Slow EMA', hint: 'Slow EMA period. Default 21. Must be > Fast EMA.' },
+      use_atr_stop: { label: 'ATR Stop Loss', hint: 'Use dynamic ATR-based stop instead of fixed %.' },
+      atr_multiplier: { label: 'ATR Multiplier', hint: 'Stop = entry ± ATR × multiplier. Default 2.0.' },
+    },
+    minAllocation: 50,
+    color: '#10b981',
+  },
 }
 
 interface Bot {
@@ -384,6 +407,11 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [rsiOversold, setRsiOversold] = useState('30')
   const [rsiOverbought, setRsiOverbought] = useState('70')
   const [btInterval, setBtInterval] = useState('4h')
+  const [emaFast, setEmaFast] = useState('9')
+  const [emaSlow, setEmaSlow] = useState('21')
+  const [useAtrStop, setUseAtrStop] = useState(false)
+  const [atrMultiplier, setAtrMultiplier] = useState('2.0')
+  const [emaInterval, setEmaInterval] = useState('4h')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -424,7 +452,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             min_hold_hours: parseInt(minHoldHours),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
-          } : {
+          } : botType === 'bb_rsi' ? {
             dex,
             bb_period: parseInt(bbPeriod),
             bb_std: parseFloat(bbStd),
@@ -433,6 +461,16 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             rsi_overbought: parseFloat(rsiOverbought),
             stop_loss_pct: parseFloat(stopLossPct),
             interval: btInterval,
+            allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
+          } : {
+            dex,
+            ema_fast: parseInt(emaFast),
+            ema_slow: parseInt(emaSlow),
+            stop_loss_pct: parseFloat(stopLossPct),
+            use_atr_stop: useAtrStop,
+            atr_multiplier: parseFloat(atrMultiplier),
+            interval: emaInterval,
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
           }
@@ -602,7 +640,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if price moves against position by this %. 0 = disabled.</p>
               </div>
             </>
-          ) : (
+          ) : botType === 'bb_rsi' ? (
             <>
               <div>
                 <label style={labelStyle}>Interval</label>
@@ -663,6 +701,73 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
                 <label style={labelStyle}>Stop Loss %</label>
                 <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if position drops by this %. 0 = disabled.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['15m', '1h', '4h', '8h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setEmaInterval(iv)}
+                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: emaInterval === iv ? '#10b98122' : '#13131f',
+                        color: emaInterval === iv ? '#10b981' : '#6b7280',
+                        outline: emaInterval === iv ? '1px solid #10b98144' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for EMA calculation</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Fast EMA Period</label>
+                  <input style={inputStyle} type="number" value={emaFast} onChange={e => setEmaFast(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 9</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Slow EMA Period</label>
+                  <input style={inputStyle} type="number" value={emaSlow} onChange={e => setEmaSlow(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 21 (must be &gt; fast)</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e' }}>
+                <input type="checkbox" id="atr-stop" checked={useAtrStop} onChange={e => setUseAtrStop(e.target.checked)}
+                  style={{ accentColor: '#10b981', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="atr-stop" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer', color: '#9ca3af' }}>
+                    Use ATR Dynamic Stop Loss
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Adjusts stop based on market volatility instead of fixed %</p>
+                </div>
+              </div>
+              {useAtrStop ? (
+                <div>
+                  <label style={labelStyle}>ATR Multiplier</label>
+                  <input style={inputStyle} type="number" step="0.1" value={atrMultiplier} onChange={e => setAtrMultiplier(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Stop = entry ± ATR × multiplier. Higher = wider stop.</p>
+                </div>
+              ) : (
+                <div>
+                  <label style={labelStyle}>Stop Loss %</label>
+                  <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Fixed stop loss %. 0 = disabled.</p>
+                </div>
+              )}
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#10b981' : '#1a1a2e', backgroundColor: leverage === lev ? '#10b98118' : '#0d0d14', color: leverage === lev ? '#10b981' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
               </div>
             </>
           )}
