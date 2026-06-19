@@ -470,7 +470,7 @@ export function TradePanel({ walletAddress }: Props) {
           <div style={{ display: 'flex', background: '#0d0d14',
             border: '1px solid #1a1a2e', borderRadius: '8px', overflow: 'hidden' }}>
             {(['market', 'limit'] as const).map(type => (
-              <button key={type} onClick={() => setOrderType(type)} style={{
+              <button key={type} onClick={() => { setShowSearch(false); setMarketSearch(''); setOrderType(type) }} style={{
                 flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
                 background: orderType === type ? '#1a1a2e' : 'transparent',
                 color: orderType === type ? '#00d4aa' : '#6b7280',
@@ -483,7 +483,7 @@ export function TradePanel({ walletAddress }: Props) {
 
           {/* Side */}
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => setSide('buy')} style={{
+            <button onClick={() => { setShowSearch(false); setMarketSearch(''); setSide('buy') }} style={{
               flex: 1, padding: '12px', cursor: 'pointer',
               borderRadius: '8px', fontWeight: '700', fontSize: '14px',
               background: side === 'buy' ? '#00d4aa' : '#0d0d14',
@@ -492,7 +492,7 @@ export function TradePanel({ walletAddress }: Props) {
             }}>
               Buy / Long
             </button>
-            <button onClick={() => setSide('sell')} style={{
+            <button onClick={() => { setShowSearch(false); setMarketSearch(''); setSide('sell') }} style={{
               flex: 1, padding: '12px', cursor: 'pointer',
               borderRadius: '8px', fontWeight: '700', fontSize: '14px',
               background: side === 'sell' ? '#ef4444' : '#0d0d14',
