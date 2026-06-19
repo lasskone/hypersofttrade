@@ -358,7 +358,7 @@ export function TradePanel({ walletAddress }: Props) {
 
         {/* ── LEFT COLUMN — Order Form (320px) ─────────────────────────── */}
         <div style={{ width: '320px', flexShrink: 0, display: 'flex',
-          flexDirection: 'column', gap: '12px', overflowY: 'auto' }}>
+          flexDirection: 'column', gap: '12px', overflowY: 'auto', paddingBottom: '20px' }}>
 
           {/* Market Selector */}
           <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
@@ -472,9 +472,10 @@ export function TradePanel({ walletAddress }: Props) {
 
           {/* Order Type */}
           <div style={{ display: 'flex', background: '#0d0d14',
-            border: '1px solid #1a1a2e', borderRadius: '8px', overflow: 'hidden' }}>
+            border: '1px solid #1a1a2e', borderRadius: '8px', overflow: 'hidden',
+            position: 'relative', zIndex: 1, flexShrink: 0 }}>
             {(['market', 'limit'] as const).map(type => (
-              <button key={type} onClick={() => { setShowSearch(false); setMarketSearch(''); setOrderType(type) }} style={{
+              <button key={type} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSearch(false); setMarketSearch(''); setOrderType(type) }} style={{
                 flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
                 background: orderType === type ? '#1a1a2e' : 'transparent',
                 color: orderType === type ? '#00d4aa' : '#6b7280',
