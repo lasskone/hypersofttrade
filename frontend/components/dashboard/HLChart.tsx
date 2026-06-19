@@ -50,6 +50,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
   const [showRSIPeriodInput, setShowRSIPeriodInput] = useState(false)
   const [loading, setLoading]                       = useState(true)
   const [ohlc, setOhlc]                             = useState<Candle | null>(null)
+  const [chartReady, setChartReady]                 = useState(false)
 
   // Close EMA period dropdown on outside click
   useEffect(() => {
@@ -267,6 +268,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
       } catch (e) {
         console.error('HLChart error:', e)
       } finally {
+        setChartReady(true)
         setLoading(false)
         loadingRef.current = false
       }
@@ -276,6 +278,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
 
     return () => {
       cancelled = true
+      setChartReady(false)
       if (chartRef.current) {
         try { chartRef.current.remove() } catch {}
         chartRef.current = null
@@ -290,7 +293,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
 
   // EMA series — add/remove without rebuilding chart
   useEffect(() => {
-    if (!chartRef.current || !candleDataRef.current.length) return
+    if (!chartReady || !chartRef.current || !candleDataRef.current.length) return
 
     if (emaSeriesRef.current) {
       try { chartRef.current.removeSeries(emaSeriesRef.current) } catch {}
@@ -307,11 +310,11 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         emaSeriesRef.current = s
       })
     }
-  }, [showEMA, emaPeriod])
+  }, [showEMA, emaPeriod, chartReady])
 
   // Volume series — add/remove without rebuilding chart
   useEffect(() => {
-    if (!chartRef.current || !candleDataRef.current.length) return
+    if (!chartReady || !chartRef.current || !candleDataRef.current.length) return
 
     if (volSeriesRef.current) {
       try { chartRef.current.removeSeries(volSeriesRef.current) } catch {}
@@ -335,13 +338,13 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         volSeriesRef.current = s
       })
     }
-  }, [showVolume])
+  }, [showVolume, chartReady])
 
   // RSI period — update data without rebuilding
   useEffect(() => {
     if (!rsiChartRef.current || !candleDataRef.current.length || !rsiSeriesRef.current) return
     rsiSeriesRef.current.setData(calcRSI(candleDataRef.current, rsiPeriod))
-  }, [rsiPeriod])
+  }, [rsiPeriod, chartReady])
 
   // Height — resize without rebuilding
   useEffect(() => {
@@ -352,7 +355,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
 
   // showRSI — create/destroy RSI chart without rebuilding main chart
   useEffect(() => {
-    if (!chartRef.current) return
+    if (!chartReady || !chartRef.current) return
     if (candleDataRef.current.length > 0) {
       if (rsiChartRef.current) {
         try { rsiChartRef.current.remove() } catch {}
@@ -388,7 +391,7 @@ export default function HLChart({ symbol, height = 420 }: Props) {
         })
       }
     }
-  }, [showRSI])
+  }, [showRSI, chartReady])
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
