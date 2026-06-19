@@ -330,6 +330,10 @@ def run_bbrsi_backtest(
         upper_bb = mid + bb_std * s
         lower_bb = mid - bb_std * s
 
+        # Debug first 5 valid candles
+        if len(equity_curve) < 5:
+            print(f"[bbrsi_debug] i={i} close={close:.2f} lower_bb={lower_bb:.2f} upper_bb={upper_bb:.2f} rsi={rsi:.2f} cash={cash:.2f} position={position}")
+
         # Stop loss
         if position and stop_loss_pct > 0:
             entry = position["entry_price"]
@@ -344,6 +348,7 @@ def run_bbrsi_backtest(
         if position is None:
             size = (allocation * leverage) / close
             if prev_close <= lower_bb or rsi < rsi_oversold:
+                print(f"[bbrsi_debug] LONG SIGNAL: prev_close={prev_close:.2f} lower_bb={lower_bb:.2f} rsi={rsi:.2f} size={size:.6f} cost={close * size / leverage:.2f} cash={cash:.2f}")
                 fee = close * size * fee_rate
                 if cash >= close * size / leverage + fee:
                     cash -= close * size / leverage + fee
