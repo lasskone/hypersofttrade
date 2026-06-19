@@ -93,6 +93,8 @@ class BotManager:
             await self._run_grid_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "envelope_dca":
             await self._run_envelope_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "funding_rate":
+            await self._run_funding_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -192,6 +194,29 @@ class BotManager:
         )
 
         self._add_log(bot_id, "info", f"Envelope Bot initializing — {coin} MA={ma_period} envelopes={envelopes} allocation=${allocated_usdc}")
+        await bot.run()
+
+    async def _run_funding_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.funding.strategy import FundingRateBot
+
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "") or None
+        coin = f"{dex}:{symbol}" if dex else symbol
+
+        bot = FundingRateBot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=float(config.get("allocated_usdc", 100)),
+            leverage=int(config.get("leverage", 1)),
+            entry_threshold_pct=float(config.get("entry_threshold_pct", 0.01)),
+            exit_threshold_pct=float(config.get("exit_threshold_pct", 0.005)),
+            sz_decimals=int(config.get("sz_decimals", 5)),
+            min_hold_hours=int(config.get("min_hold_hours", 4)),
+            dex=dex,
+            log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+        )
+        self._add_log(bot_id, "info", f"Funding Rate Bot initializing — {coin}")
         await bot.run()
 
 
