@@ -54,6 +54,29 @@ const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key:
       { key: 'stop_loss_pct', label: 'Stop Loss %', default: 10, hint: 'Exit all positions if portfolio drops by this %. Set 0 to disable.' },
     ],
   },
+  bb_rsi: {
+    label: 'BB + RSI Bot',
+    color: '#3b82f6',
+    fields: [
+      { key: 'bb_period', label: 'BB Period', default: 20, hint: 'Bollinger Band period' },
+      { key: 'bb_std', label: 'BB Std Dev', default: 2.0, hint: '2.0 = standard bands' },
+      { key: 'rsi_period', label: 'RSI Period', default: 14, hint: 'RSI calculation period' },
+      { key: 'rsi_oversold', label: 'RSI Oversold', default: 30, hint: 'Long entry below this' },
+      { key: 'rsi_overbought', label: 'RSI Overbought', default: 70, hint: 'Short entry above this' },
+      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 5, hint: '0 = disabled' },
+      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage' },
+    ],
+  },
+  ema_cross: {
+    label: 'EMA Cross Bot',
+    color: '#10b981',
+    fields: [
+      { key: 'ema_fast', label: 'Fast EMA', default: 9, hint: 'Fast EMA period' },
+      { key: 'ema_slow', label: 'Slow EMA', default: 21, hint: 'Slow EMA period (must be > fast)' },
+      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 5, hint: '0 = disabled' },
+      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage' },
+    ],
+  },
 }
 
 interface BacktestResult {
@@ -266,7 +289,7 @@ export default function BacktestPanel() {
           {/* Strategy selector */}
           <div>
             <label style={s.label}>STRATEGY</label>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {Object.entries(BOT_CONFIGS).map(([k, v]) => (
                 <button key={k} onClick={() => { setBotType(k); setResult(null) }}
                   style={{ flex: 1, padding: '8px 4px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', transition: 'all 0.15s',
