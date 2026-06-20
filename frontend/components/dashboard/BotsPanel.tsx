@@ -203,6 +203,7 @@ export default function BotsPanel({ walletAddress }: Props) {
   const [logs, setLogs] = useState<any[]>([])
   const logsRequestIdRef = useRef<string | null>(null)
   const [editingBot, setEditingBot] = useState<any>(null)
+  const [selectedBots, setSelectedBots] = useState<Set<string>>(new Set())
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -233,6 +234,23 @@ export default function BotsPanel({ walletAddress }: Props) {
       }
       fetchBots()
     } catch { showToast('Action failed') }
+  }
+
+  const handleDeleteSelected = async () => {
+    if (selectedBots.size === 0) return
+    if (!confirm(`Delete ${selectedBots.size} bot${selectedBots.size > 1 ? 's' : ''}? This cannot be undone.`)) return
+    try {
+      await Promise.all(
+        Array.from(selectedBots).map(botId =>
+          fetch(`${API_URL}/bots/${botId}`, { method: 'DELETE' })
+        )
+      )
+      showToast(`${selectedBots.size} bot(s) deleted`)
+      setSelectedBots(new Set())
+      fetchBots()
+    } catch {
+      showToast('Failed to delete some bots')
+    }
   }
 
   const fetchLogs = async (bot: Bot) => {
@@ -324,6 +342,30 @@ export default function BotsPanel({ walletAddress }: Props) {
 
       {/* My Bots */}
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">My Active Bots</p>
+      {bots.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: '8px 4px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: '#6b7280' }}>
+            <input
+              type="checkbox"
+              checked={selectedBots.size === bots.length && bots.length > 0}
+              onChange={e => {
+                if (e.target.checked) setSelectedBots(new Set(bots.map(b => b.id)))
+                else setSelectedBots(new Set())
+              }}
+              style={{ accentColor: '#00d4aa', width: 14, height: 14 }}
+            />
+            Select all
+          </label>
+          {selectedBots.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, fontWeight: 700, cursor: 'pointer',
+                background: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+              Delete {selectedBots.size} bot{selectedBots.size > 1 ? 's' : ''}
+            </button>
+          )}
+        </div>
+      )}
       {loading ? (
         <div className="flex justify-center py-16">
           <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
@@ -337,6 +379,17 @@ export default function BotsPanel({ walletAddress }: Props) {
           {bots.map(bot => (
             <div key={bot.id} className="rounded-xl border p-5" style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}>
               <div className="flex items-start justify-between">
+                <input
+                  type="checkbox"
+                  checked={selectedBots.has(bot.id)}
+                  onChange={e => {
+                    const next = new Set(selectedBots)
+                    if (e.target.checked) next.add(bot.id)
+                    else next.delete(bot.id)
+                    setSelectedBots(next)
+                  }}
+                  style={{ accentColor: '#00d4aa', width: 16, height: 16, cursor: 'pointer', marginRight: 12, flexShrink: 0 }}
+                />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-bold text-white">{bot.name}</span>
