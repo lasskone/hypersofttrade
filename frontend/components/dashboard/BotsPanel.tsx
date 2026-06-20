@@ -294,6 +294,7 @@ export default function BotsPanel({ walletAddress }: Props) {
                       { label: 'Allocation', value: `$${bot.allocated_usdc}` },
                       bot.bot_type === 'grid' ? { label: 'Levels', value: `${bot.config?.levels ?? '—'}` } : null,
                       bot.bot_type === 'grid' ? { label: 'Range', value: `±${bot.config?.range_pct ?? '—'}%` } : null,
+                      bot.bot_type === 'envelope_dca' ? { label: 'Interval', value: bot.config?.interval ?? '4h' } : null,
                       bot.bot_type !== 'funding_rate' ? { label: 'Stop Loss', value: `${bot.config?.stop_loss_pct ?? '—'}%` } : null,
                       bot.bot_type === 'grid' ? { label: 'Take Profit', value: `${bot.config?.take_profit_pct ?? '—'}%` } : null,
                       bot.bot_type === 'funding_rate' ? { label: 'Entry', value: `>${bot.config?.entry_threshold_pct ?? '—'}%/hr` } : null,
@@ -397,6 +398,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [envelope1, setEnvelope1] = useState('7')
   const [envelope2, setEnvelope2] = useState('10')
   const [envelope3, setEnvelope3] = useState('15')
+  const [envelopeInterval, setEnvelopeInterval] = useState('4h')
   const [leverage, setLeverage] = useState('1')
   const [entryThreshold, setEntryThreshold] = useState('0.01')
   const [exitThreshold, setExitThreshold] = useState('0.005')
@@ -446,6 +448,7 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             stop_loss_pct: parseFloat(stopLossPct),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
+            interval: envelopeInterval,
           } : botType === 'funding_rate' ? {
             dex,
             entry_threshold_pct: parseFloat(entryThreshold),
@@ -565,6 +568,22 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             </>
           ) : botType === 'envelope_dca' ? (
             <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['15m', '30m', '1h', '4h', '8h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setEnvelopeInterval(iv)}
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: envelopeInterval === iv ? '#a78bfa22' : '#13131f',
+                        color: envelopeInterval === iv ? '#a78bfa' : '#6b7280',
+                        outline: envelopeInterval === iv ? '1px solid #a78bfa44' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for MA calculation. Shorter = more frequent checks.</p>
+              </div>
               <div>
                 <label style={labelStyle}>MA Period</label>
                 <input style={inputStyle} type="number" value={maPeriod} onChange={e => setMaPeriod(e.target.value)} />

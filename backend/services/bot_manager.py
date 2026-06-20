@@ -179,6 +179,7 @@ class BotManager:
         stop_loss_pct = float(config.get("stop_loss_pct", 10))
         sz_decimals = int(config.get("sz_decimals", 5))
         leverage = int(config.get("leverage", 1))
+        interval = config.get("interval", "4h")
 
         def log_callback(level: str, message: str):
             self._add_log(bot_id, level, message)
@@ -192,8 +193,9 @@ class BotManager:
             envelopes=envelopes,
             stop_loss_pct=stop_loss_pct,
             sz_decimals=sz_decimals,
-            dex=dex,
             leverage=leverage,
+            interval=interval,
+            dex=dex,
             log_callback=log_callback,
         )
 

@@ -64,8 +64,9 @@ class EnvelopeBot:
         envelopes: list[float],  # e.g. [0.07, 0.10, 0.15]
         stop_loss_pct: float,
         sz_decimals: int,
-        dex: Optional[str] = None,
         leverage: int = 1,
+        interval: str = "4h",
+        dex: Optional[str] = None,
         log_callback=None,
     ):
         self.private_key = private_key
@@ -76,8 +77,15 @@ class EnvelopeBot:
         self.envelopes = [e for e in envelopes if e > 0]
         self.stop_loss_pct = stop_loss_pct
         self.sz_decimals = sz_decimals
-        self.dex = dex
         self.leverage = leverage
+        self.interval = interval
+        interval_ms_map = {
+            "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000,
+            "4h": 14_400_000, "8h": 28_800_000, "1d": 86_400_000,
+        }
+        self._interval_ms = interval_ms_map.get(interval, 14_400_000)
+        self._sleep_seconds = self._interval_ms // 1000
+        self.dex = dex
         self.log = log_callback or (lambda level, msg: None)
         self._running = False
         self._positions: list[dict] = []  # {level, entry_price, size, order_id}
@@ -108,13 +116,12 @@ class EnvelopeBot:
             self.log("warning", f"Failed to set leverage: {e}")
 
     async def _fetch_candles(self, limit: int = 200) -> list[dict]:
-        interval_ms = 4 * 3600 * 1000  # 4h default
         end_time = int(time.time() * 1000)
-        start_time = end_time - interval_ms * limit
+        start_time = end_time - self._interval_ms * limit
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(INFO_ENDPOINT, json={
                 "type": "candleSnapshot",
-                "req": {"coin": self.coin, "interval": "4h", "startTime": start_time, "endTime": end_time}
+                "req": {"coin": self.coin, "interval": self.interval, "startTime": start_time, "endTime": end_time}
             })
             candles = resp.json()
         return [{"time": int(c["t"]) // 1000, "open": float(c["o"]), "high": float(c["h"]),
@@ -186,7 +193,7 @@ class EnvelopeBot:
         self._running = True
         self._init_exchange()
         await self._set_leverage()
-        self.log("info", f"Envelope Bot started — {self.coin} | MA={self.ma_period} | Envelopes={self.envelopes} | Allocation=${self.allocated_usdc} | Leverage={self.leverage}x")
+        self.log("info", f"Envelope Bot started — {self.coin} | {self.interval} | MA={self.ma_period} | Envelopes={self.envelopes} | Allocation=${self.allocated_usdc} | Leverage={self.leverage}x")
 
         per_level = self.allocated_usdc / len(self.envelopes)
 
@@ -259,8 +266,8 @@ class EnvelopeBot:
             except Exception as e:
                 self.log("error", f"Bot loop error: {e}")
 
-            # Wait 4 hours (same as candle interval)
-            await asyncio.sleep(4 * 3600)
+            # Wait for next candle interval
+            await asyncio.sleep(self._sleep_seconds)
 
         self._running = False
         self.log("info", "Envelope Bot stopped.")
