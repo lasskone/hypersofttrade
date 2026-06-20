@@ -121,6 +121,56 @@ const BOT_TYPES = {
   },
 }
 
+const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
+  grid: {
+    levels: 10,
+    range_pct: 5,
+    stop_loss_pct: 10,
+    take_profit_pct: 30,
+    allocated_usdc: 100,
+    leverage: 1,
+  },
+  envelope_dca: {
+    ma_period: 5,
+    envelope_1_pct: 7,
+    envelope_2_pct: 10,
+    envelope_3_pct: 15,
+    stop_loss_pct: 10,
+    allocated_usdc: 100,
+    leverage: 1,
+    interval: '4h',
+  },
+  funding_rate: {
+    entry_threshold_pct: 0.01,
+    exit_threshold_pct: 0.005,
+    min_hold_hours: 4,
+    allocated_usdc: 100,
+    leverage: 1,
+    scan_all_pairs: false,
+  },
+  bb_rsi: {
+    bb_period: 20,
+    bb_std: 2.0,
+    rsi_period: 14,
+    rsi_oversold: 30,
+    rsi_overbought: 70,
+    stop_loss_pct: 5,
+    interval: '4h',
+    allocated_usdc: 100,
+    leverage: 1,
+  },
+  ema_cross: {
+    ema_fast: 9,
+    ema_slow: 21,
+    stop_loss_pct: 5,
+    use_atr_stop: false,
+    atr_multiplier: 2.0,
+    interval: '4h',
+    allocated_usdc: 100,
+    leverage: 1,
+  },
+}
+
 interface Bot {
   id: string
   name: string
@@ -852,7 +902,8 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
 }
 
 function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, walletAddress: string, onClose: () => void, onUpdated: () => void }) {
-  const [config, setConfig] = useState<Record<string, any>>(bot.config ?? {})
+  const defaults = BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}
+  const [config, setConfig] = useState<Record<string, any>>({ ...defaults, ...(bot.config ?? {}) })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -907,12 +958,24 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               <label style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 }}>
                 {key.replace(/_/g, ' ')}
               </label>
-              <input
-                type="text"
-                value={String(value)}
-                onChange={e => handleChange(key, e.target.value)}
-                style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-              />
+              {typeof value === 'boolean' ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={value}
+                    onChange={e => setConfig((prev: Record<string, any>) => ({ ...prev, [key]: e.target.checked }))}
+                    style={{ accentColor: '#00d4aa', width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: 12, color: '#9ca3af' }}>{value ? 'Enabled' : 'Disabled'}</span>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={String(value)}
+                  onChange={e => handleChange(key, e.target.value)}
+                  style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                />
+              )}
             </div>
           ))}
         </div>
