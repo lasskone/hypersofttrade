@@ -1,7 +1,8 @@
 """
 Shared utility for fetching Hyperliquid per-coin metadata (szDecimals, maxLeverage, etc.)
-dynamically instead of hardcoding values. Cached in-memory for 5 minutes to avoid
-excessive API calls while still staying correct if Hyperliquid changes listings.
+dynamically instead of hardcoding values. Supports both the standard universe and
+HIP-3 dex-specific universes (e.g. "xyz:TSLA"). Cached in-memory per dex for 5 minutes
+to avoid excessive API calls while staying correct if Hyperliquid changes listings.
 """
 from __future__ import annotations
 import time
@@ -9,52 +10,68 @@ import httpx
 
 INFO_ENDPOINT = "https://api.hyperliquid.xyz/info"
 
-_cache: dict | None = None
-_cache_time: float = 0
+# Cache keyed by dex name ("" = standard universe, "xyz" = HIP-3 dex, etc.)
+_cache: dict[str, list[dict]] = {}
+_cache_time: dict[str, float] = {}
 _CACHE_TTL = 300  # 5 minutes
 
 
-async def _get_universe() -> list[dict]:
-    global _cache, _cache_time
+async def _get_universe(dex: str = "") -> list[dict]:
     now = time.time()
-    if _cache is not None and (now - _cache_time) < _CACHE_TTL:
-        return _cache
+    if dex in _cache and (now - _cache_time.get(dex, 0)) < _CACHE_TTL:
+        return _cache[dex]
+
+    payload: dict = {"type": "meta"}
+    if dex:
+        payload["dex"] = dex
+
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(INFO_ENDPOINT, json={"type": "meta"})
+        resp = await client.post(INFO_ENDPOINT, json=payload)
         data = resp.json()
+
     universe = data.get("universe", [])
-    _cache = universe
-    _cache_time = now
+    _cache[dex] = universe
+    _cache_time[dex] = now
     return universe
+
+
+def _split_coin(coin: str) -> tuple[str, str]:
+    """
+    Splits a coin identifier into (dex, symbol).
+    "BTC" -> ("", "BTC")
+    "xyz:TSLA" -> ("xyz", "TSLA")
+    """
+    if ":" in coin:
+        dex, symbol = coin.split(":", 1)
+        return dex, symbol
+    return "", coin
 
 
 async def get_coin_meta(coin: str) -> dict:
     """
     Returns the Hyperliquid meta dict for a coin, e.g.
-    {"name": "BTC", "szDecimals": 5, "maxLeverage": 40, "marginTableId": 56}
-    Handles HIP-3 prefixed coins like "xyz:XYZ100" by matching on the base symbol
-    if the full prefixed name isn't found in the main universe.
+    {"name": "TSLA", "szDecimals": 3, "maxLeverage": 20, ...}
+    Correctly resolves HIP-3 dex-specific coins like "xyz:TSLA" by querying
+    that dex's own universe (NOT the standard universe).
     Raises ValueError if the coin cannot be found.
     """
-    universe = await _get_universe()
-    # Try exact match first
+    dex, symbol = _split_coin(coin)
+    universe = await _get_universe(dex)
+
     for c in universe:
-        if c.get("name") == coin:
+        if c.get("name") == symbol:
             return c
-    # Try matching just the symbol part after ':' for HIP-3 coins
-    base_symbol = coin.split(":")[-1] if ":" in coin else coin
-    for c in universe:
-        if c.get("name") == base_symbol:
-            return c
-    raise ValueError(f"Coin '{coin}' not found in Hyperliquid universe metadata")
+
+    # If not found and we queried a specific dex, do not silently fall back
+    # to the standard universe — dex-specific symbols are not crypto perps
+    # and a fallback would return wrong metadata.
+    raise ValueError(f"Coin '{symbol}' not found in Hyperliquid universe (dex='{dex or 'standard'}')")
 
 
 async def get_sz_decimals(coin: str, fallback: int = 4) -> int:
     """
-    Returns szDecimals for a coin. Falls back to `fallback` only if the coin
-    cannot be resolved at all (e.g. a HIP-3 perp not in the standard universe —
-    in that case the per-DEX meta endpoint should be used instead, which callers
-    handling HIP-3 dexes should query separately).
+    Returns szDecimals for a coin (handles both standard and HIP-3 dex coins).
+    Falls back to `fallback` only if the coin cannot be resolved at all.
     """
     try:
         meta = await get_coin_meta(coin)
