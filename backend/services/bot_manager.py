@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 
 from supabase import create_client
 
+from services.hyperliquid_meta import get_sz_decimals
+
 def _supabase():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
@@ -177,7 +179,7 @@ class BotManager:
             float(config.get("envelope_3_pct", 15)) / 100,
         ]
         stop_loss_pct = float(config.get("stop_loss_pct", 10))
-        sz_decimals = int(config.get("sz_decimals", 5))
+        sz_decimals = await get_sz_decimals(coin)
         leverage = int(config.get("leverage", 1))
         interval = config.get("interval", "4h")
 
@@ -217,7 +219,7 @@ class BotManager:
             leverage=int(config.get("leverage", 1)),
             entry_threshold_pct=float(config.get("entry_threshold_pct", 0.01)),
             exit_threshold_pct=float(config.get("exit_threshold_pct", 0.005)),
-            sz_decimals=int(config.get("sz_decimals", 5)),
+            sz_decimals=await get_sz_decimals(coin),
             min_hold_hours=int(config.get("min_hold_hours", 4)),
             scan_all_pairs=bool(config.get("scan_all_pairs", False)),
             dex=dex,
@@ -243,7 +245,7 @@ class BotManager:
             rsi_oversold=float(config.get("rsi_oversold", 30)),
             rsi_overbought=float(config.get("rsi_overbought", 70)),
             stop_loss_pct=float(config.get("stop_loss_pct", 5)),
-            sz_decimals=int(config.get("sz_decimals", 5)),
+            sz_decimals=await get_sz_decimals(coin),
             interval=config.get("interval", "4h"),
             dex=dex,
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
@@ -267,7 +269,7 @@ class BotManager:
             stop_loss_pct=float(config.get("stop_loss_pct", 5)),
             use_atr_stop=bool(config.get("use_atr_stop", False)),
             atr_multiplier=float(config.get("atr_multiplier", 2.0)),
-            sz_decimals=int(config.get("sz_decimals", 5)),
+            sz_decimals=await get_sz_decimals(coin),
             interval=config.get("interval", "4h"),
             dex=dex,
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
