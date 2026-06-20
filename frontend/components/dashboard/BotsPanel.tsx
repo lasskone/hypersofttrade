@@ -190,6 +190,15 @@ interface Props {
   walletAddress: string
 }
 
+interface Market {
+  name: string
+  display_name: string
+  dex: string
+  mark_price: number
+  sz_decimals: number
+  max_leverage: number
+}
+
 const statusColor = (b: Bot) => b.is_running ? '#00d4aa' : b.status === 'error' ? '#ef4444' : '#6b7280'
 const statusLabel = (b: Bot) => b.is_running ? 'Running' : b.status === 'error' ? 'Error' : 'Stopped'
 
@@ -574,8 +583,34 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
   const [useAtrStop, setUseAtrStop] = useState(false)
   const [atrMultiplier, setAtrMultiplier] = useState('2.0')
   const [emaInterval, setEmaInterval] = useState('4h')
+  const [markets, setMarkets] = useState<Market[]>([])
+  const [marketsLoading, setMarketsLoading] = useState(true)
+  const [showSearch, setShowSearch] = useState(false)
+  const [marketSearch, setMarketSearch] = useState('')
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch(`${API_URL}/market/all`)
+      .then(r => r.json())
+      .then((data: Market[]) => {
+        setMarkets(data)
+        setMarketsLoading(false)
+      })
+      .catch(() => setMarketsLoading(false))
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowSearch(false)
+        setMarketSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const handleCreate = async () => {
     setLoading(true)
@@ -673,14 +708,69 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={labelStyle}>Symbol (e.g. BTC)</label>
-              <input style={inputStyle} value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} />
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <label style={labelStyle}>MARKET</label>
+              {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
             </div>
-            <div>
-              <label style={labelStyle}>DEX (blank = main)</label>
-              <input style={inputStyle} placeholder="xyz, flx..." value={dex} onChange={e => setDex(e.target.value.toLowerCase())} />
+            <div ref={dropdownRef} style={{ position: 'relative' }}>
+              {showSearch ? (
+                <input autoFocus type="text" value={marketSearch}
+                  onChange={e => setMarketSearch(e.target.value)}
+                  placeholder="Search markets…"
+                  style={{ ...inputStyle, border: '1px solid #00d4aa' }}
+                />
+              ) : (
+                <div onClick={() => setShowSearch(true)}
+                  style={{ ...inputStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
+                      {marketsLoading ? 'Loading…' : (symbol || 'Select Market')}
+                    </span>
+                    {symbol && dex && (
+                      <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
+                        {dex.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
+                </div>
+              )}
+              {showSearch && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
+                  {[...new Set(markets.map(m => m.dex))].map(dexName => {
+                    const dexMarkets = markets.filter(m => m.dex === dexName && (
+                      m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
+                      m.display_name?.toLowerCase().includes(marketSearch.toLowerCase())
+                    ))
+                    if (!dexMarkets.length) return null
+                    return (
+                      <div key={dexName}>
+                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1 }}>
+                          {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
+                        </div>
+                        {dexMarkets.map(m => (
+                          <div key={m.name} onClick={() => {
+                              setSymbol(m.name)
+                              setDex(m.dex === 'main' ? '' : m.dex)
+                              setShowSearch(false)
+                              setMarketSearch('')
+                            }}
+                            style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: symbol === m.name ? '#1a1a2e' : 'transparent' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                            onMouseLeave={e => (e.currentTarget.style.background = symbol === m.name ? '#1a1a2e' : 'transparent')}>
+                            <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                            <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                  {!markets.filter(m => m.name.toLowerCase().includes(marketSearch.toLowerCase())).length && (
+                    <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div>
@@ -987,6 +1077,8 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
 function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, walletAddress: string, onClose: () => void, onUpdated: () => void }) {
   const merged = { ...(BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}), ...(bot.config ?? {}) }
   const [name, setName] = useState(bot.name ?? '')
+  const [symbol, setSymbol] = useState<string>(String(merged.symbol ?? bot.symbol ?? ''))
+  const [dex, setDex] = useState<string>(String(merged.dex ?? ''))
   const [levels, setLevels] = useState(String(merged.levels ?? 10))
   const [rangePct, setRangePct] = useState(String(merged.range_pct ?? 5))
   const [stopLossPct, setStopLossPct] = useState(String(merged.stop_loss_pct ?? 10))
@@ -1012,8 +1104,34 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [useAtrStop, setUseAtrStop] = useState(Boolean(merged.use_atr_stop ?? false))
   const [atrMultiplier, setAtrMultiplier] = useState(String(merged.atr_multiplier ?? 2.0))
   const [emaInterval, setEmaInterval] = useState(String(merged.interval ?? '4h'))
+  const [markets, setMarkets] = useState<Market[]>([])
+  const [marketsLoading, setMarketsLoading] = useState(true)
+  const [showSearch, setShowSearch] = useState(false)
+  const [marketSearch, setMarketSearch] = useState('')
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch(`${API_URL}/market/all`)
+      .then(r => r.json())
+      .then((data: Market[]) => {
+        setMarkets(data)
+        setMarketsLoading(false)
+      })
+      .catch(() => setMarketsLoading(false))
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowSearch(false)
+        setMarketSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const inputStyle = { width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }
   const labelStyle = { fontSize: 11, color: '#6b7280', marginBottom: 4, display: 'block' as const }
@@ -1024,7 +1142,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
       const config = bot.bot_type === 'grid' ? {
-        dex: merged.dex ?? '',
+        symbol: symbol,
+        dex: dex,
         levels: parseInt(levels),
         range_pct: parseFloat(rangePct),
         stop_loss_pct: parseFloat(stopLossPct),
@@ -1032,7 +1151,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
       } : bot.bot_type === 'envelope_dca' ? {
-        dex: merged.dex ?? '',
+        symbol: symbol,
+        dex: dex,
         ma_period: parseInt(maPeriod),
         envelope_1_pct: parseFloat(envelope1),
         envelope_2_pct: parseFloat(envelope2),
@@ -1042,7 +1162,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         leverage: parseInt(leverage),
         interval: envelopeInterval,
       } : bot.bot_type === 'funding_rate' ? {
-        dex: merged.dex ?? '',
+        symbol: symbol,
+        dex: dex,
         entry_threshold_pct: parseFloat(entryThreshold),
         exit_threshold_pct: parseFloat(exitThreshold),
         min_hold_hours: parseInt(minHoldHours),
@@ -1050,7 +1171,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         leverage: parseInt(leverage),
         scan_all_pairs: scanAllPairs,
       } : bot.bot_type === 'bb_rsi' ? {
-        dex: merged.dex ?? '',
+        symbol: symbol,
+        dex: dex,
         bb_period: parseInt(bbPeriod),
         bb_std: parseFloat(bbStd),
         rsi_period: parseInt(rsiPeriod),
@@ -1061,7 +1183,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
       } : {
-        dex: merged.dex ?? '',
+        symbol: symbol,
+        dex: dex,
         ema_fast: parseInt(emaFast),
         ema_slow: parseInt(emaSlow),
         stop_loss_pct: parseFloat(stopLossPct),
@@ -1109,6 +1232,72 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
           <div>
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <label style={labelStyle}>MARKET</label>
+              {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
+            </div>
+            <div ref={dropdownRef} style={{ position: 'relative' }}>
+              {showSearch ? (
+                <input autoFocus type="text" value={marketSearch}
+                  onChange={e => setMarketSearch(e.target.value)}
+                  placeholder="Search markets…"
+                  style={{ ...inputStyle, border: '1px solid #00d4aa' }}
+                />
+              ) : (
+                <div onClick={() => setShowSearch(true)}
+                  style={{ ...inputStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
+                      {marketsLoading ? 'Loading…' : (symbol || 'Select Market')}
+                    </span>
+                    {symbol && dex && (
+                      <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
+                        {dex.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
+                </div>
+              )}
+              {showSearch && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
+                  {[...new Set(markets.map(m => m.dex))].map(dexName => {
+                    const dexMarkets = markets.filter(m => m.dex === dexName && (
+                      m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
+                      m.display_name?.toLowerCase().includes(marketSearch.toLowerCase())
+                    ))
+                    if (!dexMarkets.length) return null
+                    return (
+                      <div key={dexName}>
+                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1 }}>
+                          {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
+                        </div>
+                        {dexMarkets.map(m => (
+                          <div key={m.name} onClick={() => {
+                              setSymbol(m.name)
+                              setDex(m.dex === 'main' ? '' : m.dex)
+                              setShowSearch(false)
+                              setMarketSearch('')
+                            }}
+                            style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: symbol === m.name ? '#1a1a2e' : 'transparent' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                            onMouseLeave={e => (e.currentTarget.style.background = symbol === m.name ? '#1a1a2e' : 'transparent')}>
+                            <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                            <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                  {!markets.filter(m => m.name.toLowerCase().includes(marketSearch.toLowerCase())).length && (
+                    <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {bot.bot_type === 'grid' ? (
