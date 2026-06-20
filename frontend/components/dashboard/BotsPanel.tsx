@@ -902,30 +902,96 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
 }
 
 function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, walletAddress: string, onClose: () => void, onUpdated: () => void }) {
-  const defaults = BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}
-  const [config, setConfig] = useState<Record<string, any>>({ ...defaults, ...(bot.config ?? {}) })
+  const merged = { ...(BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}), ...(bot.config ?? {}) }
+  const [name, setName] = useState(bot.name ?? '')
+  const [levels, setLevels] = useState(String(merged.levels ?? 10))
+  const [rangePct, setRangePct] = useState(String(merged.range_pct ?? 5))
+  const [stopLossPct, setStopLossPct] = useState(String(merged.stop_loss_pct ?? 10))
+  const [takeProfitPct, setTakeProfitPct] = useState(String(merged.take_profit_pct ?? 30))
+  const [leverage, setLeverage] = useState(String(merged.leverage ?? 1))
+  const [maPeriod, setMaPeriod] = useState(String(merged.ma_period ?? 5))
+  const [envelope1, setEnvelope1] = useState(String(merged.envelope_1_pct ?? 7))
+  const [envelope2, setEnvelope2] = useState(String(merged.envelope_2_pct ?? 10))
+  const [envelope3, setEnvelope3] = useState(String(merged.envelope_3_pct ?? 15))
+  const [envelopeInterval, setEnvelopeInterval] = useState(String(merged.interval ?? '4h'))
+  const [entryThreshold, setEntryThreshold] = useState(String(merged.entry_threshold_pct ?? 0.01))
+  const [exitThreshold, setExitThreshold] = useState(String(merged.exit_threshold_pct ?? 0.005))
+  const [minHoldHours, setMinHoldHours] = useState(String(merged.min_hold_hours ?? 4))
+  const [scanAllPairs, setScanAllPairs] = useState(Boolean(merged.scan_all_pairs ?? false))
+  const [bbPeriod, setBbPeriod] = useState(String(merged.bb_period ?? 20))
+  const [bbStd, setBbStd] = useState(String(merged.bb_std ?? 2.0))
+  const [rsiPeriod, setRsiPeriod] = useState(String(merged.rsi_period ?? 14))
+  const [rsiOversold, setRsiOversold] = useState(String(merged.rsi_oversold ?? 30))
+  const [rsiOverbought, setRsiOverbought] = useState(String(merged.rsi_overbought ?? 70))
+  const [btInterval, setBtInterval] = useState(String(merged.interval ?? '4h'))
+  const [emaFast, setEmaFast] = useState(String(merged.ema_fast ?? 9))
+  const [emaSlow, setEmaSlow] = useState(String(merged.ema_slow ?? 21))
+  const [useAtrStop, setUseAtrStop] = useState(Boolean(merged.use_atr_stop ?? false))
+  const [atrMultiplier, setAtrMultiplier] = useState(String(merged.atr_multiplier ?? 2.0))
+  const [emaInterval, setEmaInterval] = useState(String(merged.interval ?? '4h'))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const handleChange = (key: string, value: string) => {
-    setConfig((prev: Record<string, any>) => ({ ...prev, [key]: value }))
-  }
+  const inputStyle = { width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }
+  const labelStyle = { fontSize: 11, color: '#6b7280', marginBottom: 4, display: 'block' as const }
 
-  const handleSave = async () => {
+  const handleUpdate = async () => {
     setSaving(true)
     setError('')
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
-      const parsedConfig: Record<string, any> = {}
-      Object.entries(config).forEach(([k, v]) => {
-        if (typeof v === 'boolean') { parsedConfig[k] = v; return }
-        const numVal = parseFloat(String(v))
-        parsedConfig[k] = !isNaN(numVal) && String(v).trim() !== '' ? numVal : v
-      })
+      const config = bot.bot_type === 'grid' ? {
+        dex: merged.dex ?? '',
+        levels: parseInt(levels),
+        range_pct: parseFloat(rangePct),
+        stop_loss_pct: parseFloat(stopLossPct),
+        take_profit_pct: parseFloat(takeProfitPct),
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+      } : bot.bot_type === 'envelope_dca' ? {
+        dex: merged.dex ?? '',
+        ma_period: parseInt(maPeriod),
+        envelope_1_pct: parseFloat(envelope1),
+        envelope_2_pct: parseFloat(envelope2),
+        envelope_3_pct: parseFloat(envelope3),
+        stop_loss_pct: parseFloat(stopLossPct),
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+        interval: envelopeInterval,
+      } : bot.bot_type === 'funding_rate' ? {
+        dex: merged.dex ?? '',
+        entry_threshold_pct: parseFloat(entryThreshold),
+        exit_threshold_pct: parseFloat(exitThreshold),
+        min_hold_hours: parseInt(minHoldHours),
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+        scan_all_pairs: scanAllPairs,
+      } : bot.bot_type === 'bb_rsi' ? {
+        dex: merged.dex ?? '',
+        bb_period: parseInt(bbPeriod),
+        bb_std: parseFloat(bbStd),
+        rsi_period: parseInt(rsiPeriod),
+        rsi_oversold: parseFloat(rsiOversold),
+        rsi_overbought: parseFloat(rsiOverbought),
+        stop_loss_pct: parseFloat(stopLossPct),
+        interval: btInterval,
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+      } : {
+        dex: merged.dex ?? '',
+        ema_fast: parseInt(emaFast),
+        ema_slow: parseInt(emaSlow),
+        stop_loss_pct: parseFloat(stopLossPct),
+        use_atr_stop: useAtrStop,
+        atr_multiplier: parseFloat(atrMultiplier),
+        interval: emaInterval,
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+      }
       const res = await fetch(`${API_URL}/bots/${bot.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wallet_address: walletAddress, config: parsedConfig }),
+        body: JSON.stringify({ wallet_address: walletAddress, config, name }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail ?? 'Update failed')
@@ -938,56 +1004,320 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
     }
   }
 
-  const editableFields = Object.entries(config).filter(([k]) => k !== 'dex')
-
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 24, width: 420, maxHeight: '85vh', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ color: 'white', fontSize: 16, fontWeight: 700 }}>Edit {bot.name}</h3>
-          <button onClick={onClose} style={{ color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>×</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+      onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl border p-6 overflow-y-auto max-h-[90vh]"
+        style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
+        onClick={e => e.stopPropagation()}>
+
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="font-bold text-white text-lg">
+            {BOT_TYPES[bot.bot_type as keyof typeof BOT_TYPES]?.name ?? bot.bot_type} — Update Configuration
+          </h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">×</button>
         </div>
 
         <div style={{ padding: '8px 12px', background: '#f59e0b18', border: '1px solid #f59e0b44', borderRadius: 6, marginBottom: 16 }}>
           <p style={{ fontSize: 11, color: '#f59e0b' }}>Bot must remain stopped while editing. Start it again after saving.</p>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {editableFields.map(([key, value]) => (
-            <div key={key}>
-              <label style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 }}>
-                {key.replace(/_/g, ' ')}
-              </label>
-              {typeof value === 'boolean' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={value}
-                    onChange={e => setConfig((prev: Record<string, any>) => ({ ...prev, [key]: e.target.checked }))}
-                    style={{ accentColor: '#00d4aa', width: 16, height: 16, cursor: 'pointer' }}
-                  />
-                  <span style={{ fontSize: 12, color: '#9ca3af' }}>{value ? 'Enabled' : 'Disabled'}</span>
+        <div className="space-y-4">
+          <div>
+            <label style={labelStyle}>Bot Name</label>
+            <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
+          </div>
+
+          {bot.bot_type === 'grid' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Grid Levels</label>
+                <input style={inputStyle} type="number" value={levels} onChange={e => setLevels(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Number of buy/sell order pairs</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Price Range %</label>
+                  <input style={inputStyle} type="number" value={rangePct} onChange={e => setRangePct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Total range around current price</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Take Profit %</label>
+                  <input style={inputStyle} type="number" value={takeProfitPct} onChange={e => setTakeProfitPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#00d4aa' : '#1a1a2e', backgroundColor: leverage === lev ? '#00d4aa18' : '#0d0d14', color: leverage === lev ? '#00d4aa' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+              </div>
+            </>
+          ) : bot.bot_type === 'envelope_dca' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['15m', '30m', '1h', '4h', '8h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setEnvelopeInterval(iv)}
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: envelopeInterval === iv ? '#a78bfa22' : '#13131f',
+                        color: envelopeInterval === iv ? '#a78bfa' : '#6b7280',
+                        outline: envelopeInterval === iv ? '1px solid #a78bfa44' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for MA calculation. Shorter = more frequent checks.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>MA Period</label>
+                <input style={inputStyle} type="number" value={maPeriod} onChange={e => setMaPeriod(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Moving average window (recommended: 5–20)</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Envelope 1 % (required)</label>
+                <input style={inputStyle} type="number" value={envelope1} onChange={e => setEnvelope1(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First buy level below MA. e.g. 7 = buy at MA -7%</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Envelope 2 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope2} onChange={e => setEnvelope2(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Envelope 3 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope3} onChange={e => setEnvelope3(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#8b5cf6' : '#1a1a2e', backgroundColor: leverage === lev ? '#8b5cf618' : '#0d0d14', color: leverage === lev ? '#8b5cf6' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if portfolio drops by this %. 0 = disabled</p>
+              </div>
+            </>
+          ) : bot.bot_type === 'funding_rate' ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e', marginBottom: 4 }}>
+                <input type="checkbox" id="scan-pairs-edit" checked={scanAllPairs} onChange={e => setScanAllPairs(e.target.checked)}
+                  style={{ accentColor: '#f59e0b', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="scan-pairs-edit" style={{ fontSize: 12, color: '#f59e0b', fontWeight: 700, cursor: 'pointer', display: 'block' }}>
+                    Scanner Mode — All Pairs
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Automatically scan ALL perp pairs and enter the best funding opportunity</p>
+                </div>
+              </div>
+
+              {!scanAllPairs && (
+                <div style={{ padding: '8px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e', marginBottom: 4 }}>
+                  <p style={{ fontSize: 10, color: '#6b7280' }}>Single pair mode — bot monitors only the symbol above</p>
+                </div>
+              )}
+
+              <div>
+                <label style={labelStyle}>Entry Threshold %/hr</label>
+                <input style={inputStyle} type="number" step="0.001" value={entryThreshold} onChange={e => setEntryThreshold(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Enter when |funding rate| exceeds this. 0.01 = 0.01%/hr ≈ 2.4%/day</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Exit Threshold %/hr</label>
+                <input style={inputStyle} type="number" step="0.001" value={exitThreshold} onChange={e => setExitThreshold(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit when |funding rate| drops below this. Should be lower than entry.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Min Hold Hours</label>
+                <input style={inputStyle} type="number" value={minHoldHours} onChange={e => setMinHoldHours(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Minimum hours before checking exit condition. Prevents rapid trades.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#f59e0b' : '#1a1a2e', backgroundColor: leverage === lev ? '#f59e0b18' : '#0d0d14', color: leverage === lev ? '#f59e0b' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if price moves against position by this %. 0 = disabled.</p>
+              </div>
+            </>
+          ) : bot.bot_type === 'bb_rsi' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['1h', '4h', '8h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setBtInterval(iv)}
+                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: btInterval === iv ? '#3b82f622' : '#13131f',
+                        color: btInterval === iv ? '#3b82f6' : '#6b7280',
+                        outline: btInterval === iv ? '1px solid #3b82f644' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for signal detection</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>BB Period</label>
+                  <input style={inputStyle} type="number" value={bbPeriod} onChange={e => setBbPeriod(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 20</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>BB Std Dev</label>
+                  <input style={inputStyle} type="number" step="0.1" value={bbStd} onChange={e => setBbStd(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 2.0</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label style={labelStyle}>RSI Period</label>
+                  <input style={inputStyle} type="number" value={rsiPeriod} onChange={e => setRsiPeriod(e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>RSI Oversold</label>
+                  <input style={inputStyle} type="number" value={rsiOversold} onChange={e => setRsiOversold(e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>RSI Overbought</label>
+                  <input style={inputStyle} type="number" value={rsiOverbought} onChange={e => setRsiOverbought(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#3b82f6' : '#1a1a2e', backgroundColor: leverage === lev ? '#3b82f618' : '#0d0d14', color: leverage === lev ? '#3b82f6' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if position drops by this %. 0 = disabled.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['15m', '1h', '4h', '8h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setEmaInterval(iv)}
+                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: emaInterval === iv ? '#10b98122' : '#13131f',
+                        color: emaInterval === iv ? '#10b981' : '#6b7280',
+                        outline: emaInterval === iv ? '1px solid #10b98144' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for EMA calculation</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Fast EMA Period</label>
+                  <input style={inputStyle} type="number" value={emaFast} onChange={e => setEmaFast(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 9</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Slow EMA Period</label>
+                  <input style={inputStyle} type="number" value={emaSlow} onChange={e => setEmaSlow(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Default: 21 (must be &gt; fast)</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e' }}>
+                <input type="checkbox" id="atr-stop-edit" checked={useAtrStop} onChange={e => setUseAtrStop(e.target.checked)}
+                  style={{ accentColor: '#10b981', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="atr-stop-edit" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer', color: '#9ca3af' }}>
+                    Use ATR Dynamic Stop Loss
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Adjusts stop based on market volatility instead of fixed %</p>
+                </div>
+              </div>
+              {useAtrStop ? (
+                <div>
+                  <label style={labelStyle}>ATR Multiplier</label>
+                  <input style={inputStyle} type="number" step="0.1" value={atrMultiplier} onChange={e => setAtrMultiplier(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Stop = entry ± ATR × multiplier. Higher = wider stop.</p>
                 </div>
               ) : (
-                <input
-                  type="text"
-                  value={String(value)}
-                  onChange={e => handleChange(key, e.target.value)}
-                  style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-                />
+                <div>
+                  <label style={labelStyle}>Stop Loss %</label>
+                  <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Fixed stop loss %. 0 = disabled.</p>
+                </div>
               )}
-            </div>
-          ))}
-        </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#10b981' : '#1a1a2e', backgroundColor: leverage === lev ? '#10b98118' : '#0d0d14', color: leverage === lev ? '#10b981' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+            </>
+          )}
 
-        {error && <p style={{ color: '#ef4444', fontSize: 12, marginTop: 12 }}>{error}</p>}
+          {error && <p className="text-xs text-red-400">{error}</p>}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '10px', borderRadius: 8, background: '#13131f', color: '#9ca3af', border: '1px solid #1a1a2e', cursor: 'pointer', fontWeight: 600 }}>
-            Cancel
-          </button>
-          <button onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '10px', borderRadius: 8, background: '#00d4aa', color: '#0a0a0f', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Saving...' : 'Save Changes'}
+          <button
+            onClick={handleUpdate}
+            disabled={saving}
+            className="w-full py-3 rounded-lg font-bold text-sm disabled:opacity-50"
+            style={{ backgroundColor: BOT_TYPES[bot.bot_type as keyof typeof BOT_TYPES]?.color ?? '#00d4aa', color: '#000' }}>
+            {saving ? 'Updating...' : 'Update Bot'}
           </button>
         </div>
       </div>

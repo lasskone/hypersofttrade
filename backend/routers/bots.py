@@ -120,7 +120,11 @@ async def update_bot(bot_id: str, body: dict):
     if bot_manager.is_running(bot_id):
         raise HTTPException(status_code=400, detail="Stop the bot before editing its configuration")
 
-    result = db.table("bots").update({"config": new_config, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
+    update_data: dict = {"config": new_config, "updated_at": datetime.now(timezone.utc).isoformat()}
+    new_name = body.get("name")
+    if new_name:
+        update_data["name"] = new_name
+    result = db.table("bots").update(update_data).eq("id", bot_id).execute()
     return result.data[0] if result.data else {"success": True}
 
 
