@@ -20,6 +20,8 @@ interface Market {
 interface Props {
   walletAddress: string
   openPositions?: any[]
+  initialMarket?: { symbol: string, dex: string } | null
+  initialInterval?: string
 }
 
 const fmt = (n: number, dec = 2) =>
@@ -27,7 +29,7 @@ const fmt = (n: number, dec = 2) =>
 
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
-export function TradePanel({ walletAddress, openPositions = [] }: Props) {
+export function TradePanel({ walletAddress, openPositions = [], initialMarket = null, initialInterval }: Props) {
   // Markets
   const [markets, setMarkets] = useState<Market[]>([])
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null)
@@ -65,11 +67,24 @@ export function TradePanel({ walletAddress, openPositions = [] }: Props) {
         const res = await fetch(`${API_URL}/market/all`)
         const data: Market[] = await res.json()
         setMarkets(data)
-        const btc = data.find(m => m.name === 'BTC')
-        if (btc) {
-          setSelectedMarket(btc)
-          setMarkPrice(btc.mark_price)
-          setLeverage(Math.min(10, btc.max_leverage))
+        if (initialMarket) {
+          const match = data.find((m: Market) =>
+            m.name === initialMarket.symbol &&
+            (m.dex === initialMarket.dex || (!initialMarket.dex && m.dex === 'main'))
+          )
+          if (match) {
+            handleSelectMarket(match)
+          } else {
+            const btc = data.find((m: Market) => m.name === 'BTC')
+            if (btc) { setSelectedMarket(btc); setMarkPrice(btc.mark_price); setLeverage(Math.min(10, btc.max_leverage)) }
+          }
+        } else {
+          const btc = data.find((m: Market) => m.name === 'BTC')
+          if (btc) {
+            setSelectedMarket(btc)
+            setMarkPrice(btc.mark_price)
+            setLeverage(Math.min(10, btc.max_leverage))
+          }
         }
       } catch (e) {
         console.error('Failed to load markets:', e)
@@ -699,7 +714,7 @@ export function TradePanel({ walletAddress, openPositions = [] }: Props) {
             <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
               borderRadius: '8px', overflow: 'hidden', flexShrink: 0,
               height: chartHeight }}>
-              <HLChart symbol={selectedMarket.name} height={chartHeight} positions={openPositions} />
+              <HLChart symbol={selectedMarket.name} height={chartHeight} positions={openPositions} initialInterval={initialInterval} />
             </div>
           )}
 

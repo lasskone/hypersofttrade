@@ -22,6 +22,7 @@ interface Candle {
 interface Props {
   symbol: string
   height?: number
+  initialInterval?: string
   positions?: Array<{
     symbol: string
     side: string
@@ -32,7 +33,7 @@ interface Props {
   }>
 }
 
-export default function HLChart({ symbol, height = 420, positions = [] }: Props) {
+export default function HLChart({ symbol, height = 420, initialInterval, positions = [] }: Props) {
   const containerRef    = useRef<HTMLDivElement>(null)
   const chartRef        = useRef<any>(null)
   const rsiContainerRef = useRef<HTMLDivElement>(null)
@@ -45,7 +46,7 @@ export default function HLChart({ symbol, height = 420, positions = [] }: Props)
   const candleDataRef   = useRef<any[]>([])
   const priceLineRefs   = useRef<any[]>([])
 
-  const [selectedInterval, setSelectedInterval]     = useState('15m')
+  const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
   const [showEMA, setShowEMA]                       = useState(true)
   const [emaPeriod, setEmaPeriod]                   = useState(20)
   const [showPeriodInput, setShowPeriodInput]       = useState(false)

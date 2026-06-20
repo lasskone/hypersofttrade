@@ -302,9 +302,11 @@ function PositionModal({ pos, walletAddress, onClose, onAction }: {
 export function OverviewPanel({
   walletAddress,
   onNavigate,
+  onSelectMarket,
 }: {
   walletAddress: string;
   onNavigate?: (section: string) => void;
+  onSelectMarket?: (symbol: string, dex: string) => void;
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [data, setData] = useState<any>(null);
@@ -536,7 +538,7 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Pos. Value</TH><TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
+                  <TH>Mark Price</TH><TH>Pos. Value</TH><TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
                   <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
                 </tr>
               </thead>
@@ -549,8 +551,13 @@ export function OverviewPanel({
                   const tpPx   = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null;
                   const slPx   = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null;
                   return (
-                    <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                      style={{ borderColor: '#1a1a2e' }}>
+                    <tr key={i}
+                      className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                      style={{ borderColor: '#1a1a2e', cursor: onSelectMarket ? 'pointer' : undefined }}
+                      onClick={() => {
+                        if (onSelectMarket) onSelectMarket(pos?.symbol ?? '', pos?.dex === 'main' ? '' : (pos?.dex ?? ''))
+                        if (onNavigate) onNavigate('trade')
+                      }}>
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
                           style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>
@@ -569,6 +576,7 @@ export function OverviewPanel({
                       </td>
                       <TD>{fmt(pos?.size, 4)}</TD>
                       <TD>${fmt(pos?.entry_price)}</TD>
+                      <TD>${fmt(pos?.mark_price ?? 0)}</TD>
                       <TD>${fmt(pos?.position_value)}</TD>
                       <td className="px-5 py-3">
                         <p className="text-sm" style={{ color: posPos ? '#10b981' : '#ef4444' }}>{fmtPnl(upnl)}</p>
@@ -592,7 +600,7 @@ export function OverviewPanel({
                       </td>
                       <td className="px-5 py-3">
                         <button
-                          onClick={() => setManagingPos(pos)}
+                          onClick={(e) => { e.stopPropagation(); setManagingPos(pos); }}
                           className="text-xs font-semibold px-3 py-1 rounded-lg transition-opacity hover:opacity-80"
                           style={{ backgroundColor: '#00d4aa18', color: '#00d4aa', border: '1px solid #00d4aa44' }}>
                           Manage
