@@ -22,6 +22,7 @@ interface Props {
   openPositions?: any[]
   initialMarket?: { symbol: string, dex: string } | null
   initialInterval?: string
+  onMarketConsumed?: () => void
 }
 
 const fmt = (n: number, dec = 2) =>
@@ -29,7 +30,7 @@ const fmt = (n: number, dec = 2) =>
 
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
-export function TradePanel({ walletAddress, openPositions = [], initialMarket = null, initialInterval }: Props) {
+export function TradePanel({ walletAddress, openPositions = [], initialMarket = null, initialInterval, onMarketConsumed }: Props) {
   // Markets
   const [markets, setMarkets] = useState<Market[]>([])
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null)
@@ -78,6 +79,7 @@ export function TradePanel({ walletAddress, openPositions = [], initialMarket = 
             const btc = data.find((m: Market) => m.name === 'BTC')
             if (btc) { setSelectedMarket(btc); setMarkPrice(btc.mark_price); setLeverage(Math.min(10, btc.max_leverage)) }
           }
+          onMarketConsumed?.()
         } else {
           const btc = data.find((m: Market) => m.name === 'BTC')
           if (btc) {

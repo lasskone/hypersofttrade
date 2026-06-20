@@ -58,7 +58,7 @@ function DashboardLayout({
         <TopBar section={section} />
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} onSelectMarket={(symbol, dex) => setPendingMarket({ symbol, dex })} />}
-          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} initialMarket={pendingMarket} initialInterval="30m" />}
+          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} initialMarket={pendingMarket} initialInterval="30m" onMarketConsumed={() => setPendingMarket(null)} />}
           {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
           {section === 'backtest' && <BacktestPanel />}
           {section === 'history' && (
