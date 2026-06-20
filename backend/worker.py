@@ -71,7 +71,9 @@ async def reconcile_loop():
                         continue
                     print(f"[worker] Starting bot {bot_id} ({bot.get('name')}) for wallet {wallet_address[:8]}...", flush=True)
                     try:
-                        await bot_manager.start(bot_id, bot.get("config", {}), wallet_address)
+                        cfg = bot.get("config", {})
+                        print(f"[worker] DEBUG bot_id={bot_id} bot_type_in_config={cfg.get('bot_type')} full_config_keys={list(cfg.keys())}", flush=True)
+                        await bot_manager.start(bot_id, cfg, wallet_address)
                         db.table("bots").update({
                             "status": "running",
                             "last_heartbeat": datetime.now(timezone.utc).isoformat(),
