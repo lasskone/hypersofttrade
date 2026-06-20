@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -201,6 +201,7 @@ export default function BotsPanel({ walletAddress }: Props) {
   const [toast, setToast] = useState('')
   const [logsBot, setLogsBot] = useState<Bot | null>(null)
   const [logs, setLogs] = useState<any[]>([])
+  const logsRequestIdRef = useRef<string | null>(null)
   const [editingBot, setEditingBot] = useState<any>(null)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
@@ -236,11 +237,18 @@ export default function BotsPanel({ walletAddress }: Props) {
 
   const fetchLogs = async (bot: Bot) => {
     setLogsBot(bot)
+    setLogs([])
+    logsRequestIdRef.current = bot.id
     try {
       const res = await fetch(`${API_URL}/bots/${bot.id}/logs?limit=50`)
       const data = await res.json()
-      setLogs(data.logs ?? [])
-    } catch { setLogs([]) }
+      // Ignore stale response if user already switched to a different bot
+      if (logsRequestIdRef.current === bot.id) {
+        setLogs(data.logs ?? [])
+      }
+    } catch {
+      if (logsRequestIdRef.current === bot.id) setLogs([])
+    }
   }
 
   return (
