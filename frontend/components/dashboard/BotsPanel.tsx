@@ -1194,10 +1194,11 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
       }
+      const finalConfig = { ...config, bot_type: bot.bot_type }
       const res = await fetch(`${API_URL}/bots/${bot.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wallet_address: walletAddress, config, name }),
+        body: JSON.stringify({ wallet_address: walletAddress, config: finalConfig, name }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail ?? 'Update failed')

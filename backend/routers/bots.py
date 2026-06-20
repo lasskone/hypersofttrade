@@ -120,6 +120,10 @@ async def update_bot(bot_id: str, body: dict):
     if bot_manager.is_running(bot_id):
         raise HTTPException(status_code=400, detail="Stop the bot before editing its configuration")
 
+    # Always preserve bot_type — never trust the client payload to include it correctly;
+    # this is the field that determines which strategy actually runs.
+    new_config = {**new_config, "bot_type": bot.get("bot_type")}
+
     update_data: dict = {"config": new_config, "updated_at": datetime.now(timezone.utc).isoformat()}
     new_name = body.get("name")
     if new_name:

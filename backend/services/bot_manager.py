@@ -76,7 +76,12 @@ class BotManager:
 
     async def _run_bot(self, bot_id: str, config: dict, wallet_address: str) -> None:
         from cryptography.fernet import Fernet
-        bot_type = config.get("bot_type", "grid")
+        bot_type = config.get("bot_type")
+        if not bot_type:
+            self._add_log(bot_id, "error", f"Bot {bot_id} has no bot_type in its config — refusing to start to avoid running the wrong strategy. Config keys: {list(config.keys())}")
+            db = _supabase()
+            db.table("bots").update({"status": "error", "desired_status": "stopped"}).eq("id", bot_id).execute()
+            return
         self._add_log(bot_id, "info", f"Bot {bot_id} starting — type={bot_type} symbol={config.get('symbol')}")
 
         # Get user API key
