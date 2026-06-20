@@ -32,6 +32,13 @@ const fmtTime = (val: unknown): string => {
   });
 };
 
+const fmtOpened = (val: unknown): string => {
+  if (!val) return '—';
+  const d = new Date(String(val));
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
 const isBuySide = (side: unknown): boolean => {
   const s = String(side ?? '').toUpperCase();
   return s === 'B' || s === 'BUY';
@@ -376,11 +383,12 @@ export function OverviewPanel({
         if (json?.error) return;
         setData((prev: any) => ({
           ...prev,
-          unrealized_pnl:  json.unrealized_pnl,
-          open_positions:  json.open_positions,
+          unrealized_pnl:       json.unrealized_pnl,
+          open_positions:       json.open_positions,
           open_positions_count: json.open_positions_count,
-          account_value:   json.account_value,
-          usdc_spot_balance: json.usdc_spot_balance,
+          account_value:        json.account_value,
+          usdc_spot_balance:    json.usdc_spot_balance,
+          available_to_trade:   json.available_to_trade,
         }));
       } catch {
         // silently ignore poll errors
@@ -439,14 +447,15 @@ export function OverviewPanel({
   }
 
   // ── Loaded — safely destructure with defaults ─────────────────────────────────
-  const accountValue     = data?.account_value ?? 0;
-  const unrealizedPnl    = data?.unrealized_pnl ?? 0;
-  const usdcSpot         = data?.usdc_spot_balance ?? 0;
-  const openPositions    = data?.open_positions ?? [];
-  const openPositionsCnt = data?.open_positions_count ?? openPositions.length;
-  const spotBalances     = data?.spot_balances ?? [];
-  const recentFills      = data?.recent_fills ?? [];
-  const openOrders       = data?.open_orders ?? [];
+  const accountValue      = data?.account_value ?? 0;
+  const unrealizedPnl     = data?.unrealized_pnl ?? 0;
+  const usdcSpot          = data?.usdc_spot_balance ?? 0;
+  const availableToTrade  = data?.available_to_trade ?? 0;
+  const openPositions     = data?.open_positions ?? [];
+  const openPositionsCnt  = data?.open_positions_count ?? openPositions.length;
+  const spotBalances      = data?.spot_balances ?? [];
+  const recentFills       = data?.recent_fills ?? [];
+  const openOrders        = data?.open_orders ?? [];
 
   const pnlPos = parseFloat(String(unrealizedPnl)) >= 0;
 
@@ -459,9 +468,9 @@ export function OverviewPanel({
       live: false,
     },
     {
-      label: 'Available USDC',
-      subtitle: 'Spot wallet balance',
-      value: `$${fmt(usdcSpot)}`,
+      label: 'Available to Trade',
+      subtitle: 'Withdrawable perp balance',
+      value: `$${fmt(availableToTrade)}`,
       color: '#ffffff',
       live: false,
     },
@@ -527,7 +536,8 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Position Value</TH><TH>PnL</TH><TH>Leverage</TH><TH>Liq. Price</TH><TH>Actions</TH>
+                  <TH>Pos. Value</TH><TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
+                  <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
                 </tr>
               </thead>
               <tbody>
@@ -535,6 +545,9 @@ export function OverviewPanel({
                   const upnl   = parseFloat(String(pos?.unrealized_pnl ?? 0));
                   const posPos = upnl >= 0;
                   const liqPx  = parseFloat(String(pos?.liquidation_price ?? 0));
+                  const roe    = parseFloat(String(pos?.roe_pct ?? 0));
+                  const tpPx   = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null;
+                  const slPx   = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null;
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
@@ -557,9 +570,26 @@ export function OverviewPanel({
                       <TD>{fmt(pos?.size, 4)}</TD>
                       <TD>${fmt(pos?.entry_price)}</TD>
                       <TD>${fmt(pos?.position_value)}</TD>
-                      <TD color={posPos ? '#10b981' : '#ef4444'}>{fmtPnl(upnl)}</TD>
+                      <td className="px-5 py-3">
+                        <p className="text-sm" style={{ color: posPos ? '#10b981' : '#ef4444' }}>{fmtPnl(upnl)}</p>
+                        <p className="text-xs mt-0.5" style={{ color: roe >= 0 ? '#10b981' : '#ef4444' }}>
+                          {roe >= 0 ? '+' : ''}{fmt(roe, 2)}%
+                        </p>
+                      </td>
+                      <td className="px-5 py-3">
+                        {tpPx ? (
+                          <p className="text-xs" style={{ color: '#10b981' }}>TP ${fmt(tpPx)}</p>
+                        ) : null}
+                        {slPx ? (
+                          <p className="text-xs mt-0.5" style={{ color: '#ef4444' }}>SL ${fmt(slPx)}</p>
+                        ) : null}
+                        {!tpPx && !slPx ? <span className="text-xs text-gray-600">—</span> : null}
+                      </td>
                       <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
                       <TD>{liqPx > 0 ? `$${fmt(liqPx)}` : '—'}</TD>
+                      <td className="px-5 py-3">
+                        <p className="text-xs text-gray-400">{fmtOpened(pos?.opened_at)}</p>
+                      </td>
                       <td className="px-5 py-3">
                         <button
                           onClick={() => setManagingPos(pos)}
@@ -619,7 +649,7 @@ export function OverviewPanel({
                   const buy = isBuySide(o?.side);
                   const orderTime = o?.time ? new Date(o.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—';
                   const orderDate = o?.time ? new Date(o.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-                  const isTrigger = o?.orderType === 'Trigger' || o?.tpsl;
+                  const isTrigger = o?.is_trigger || o?.is_position_tpsl;
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
@@ -641,7 +671,7 @@ export function OverviewPanel({
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
                           style={{ backgroundColor: isTrigger ? '#f59e0b18' : '#00d4aa18', color: isTrigger ? '#f59e0b' : '#00d4aa' }}>
-                          {isTrigger ? 'Trigger' : 'Limit'}
+                          {o?.order_type || (isTrigger ? 'Trigger' : 'Limit')}
                         </span>
                       </td>
                       <TD>${fmt(o?.price)}</TD>

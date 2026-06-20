@@ -5,12 +5,19 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException
+from supabase import create_client
 
 MAINNET_API_URL = "https://api.hyperliquid.xyz"
 INFO_ENDPOINT = f"{MAINNET_API_URL}/info"
+
+
+def _supabase():
+    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class HyperliquidService:
@@ -100,15 +107,57 @@ class HyperliquidService:
             return response.json()
 
     async def get_open_orders(self, wallet_address: str) -> list:
-        """Return all open orders for *wallet_address*."""
+        """Return all open orders for *wallet_address* (includes TP/SL metadata)."""
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(
                 INFO_ENDPOINT,
-                json={"type": "openOrders", "user": wallet_address},
+                json={"type": "frontendOpenOrders", "user": wallet_address},
                 headers={"Content-Type": "application/json"},
                 timeout=10.0,
             )
             return response.json()
+
+    async def _sync_position_opens(self, wallet_address: str, current_coins: set[str]) -> dict[str, str]:
+        """
+        Diff current open positions against the position_opens table.
+        Insert rows for newly opened positions, stamp closed_at for closed ones.
+        Returns {coin: opened_at_iso_string} for all currently open positions.
+        """
+        try:
+            db = _supabase()
+            res = (
+                db.table("position_opens")
+                .select("coin, opened_at")
+                .eq("wallet_address", wallet_address)
+                .is_("closed_at", "null")
+                .execute()
+            )
+            existing: dict[str, str] = {r["coin"]: r["opened_at"] for r in (res.data or [])}
+            existing_coins = set(existing.keys())
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            new_coins = current_coins - existing_coins
+            if new_coins:
+                db.table("position_opens").insert([
+                    {"wallet_address": wallet_address, "coin": coin, "opened_at": now_iso}
+                    for coin in new_coins
+                ]).execute()
+                for coin in new_coins:
+                    existing[coin] = now_iso
+
+            closed_coins = existing_coins - current_coins
+            for coin in closed_coins:
+                db.table("position_opens").update({"closed_at": now_iso}) \
+                    .eq("wallet_address", wallet_address) \
+                    .eq("coin", coin) \
+                    .is_("closed_at", "null") \
+                    .execute()
+
+            return {coin: existing[coin] for coin in current_coins if coin in existing}
+        except Exception as e:
+            print(f"[position_opens] sync error: {e}")
+            return {}
 
     # ------------------------------------------------------------------
     # Complete portfolio aggregation
@@ -157,7 +206,23 @@ class HyperliquidService:
                 if isinstance(asset, dict) and "name" in asset:
                     sz_decimals_map[asset["name"]] = asset.get("szDecimals", 5)
 
+        # Pre-process: build coin → {tp_price, sl_price} from position TP/SL orders
+        tpsl_by_coin: dict[str, dict] = {}
+        if not isinstance(open_orders, Exception) and isinstance(open_orders, list):
+            for order in open_orders:
+                if not isinstance(order, dict) or not order.get("isPositionTpsl"):
+                    continue
+                coin = order.get("coin", "")
+                tpsl = tpsl_by_coin.setdefault(coin, {})
+                otype = (order.get("orderType") or "").lower()
+                trigger_px = float(order.get("triggerPx", "0") or "0")
+                if "take profit" in otype or otype == "tp":
+                    tpsl["tp_price"] = trigger_px
+                elif "stop loss" in otype or otype == "sl":
+                    tpsl["sl_price"] = trigger_px
+
         # Step 3: aggregate perp positions across all DEXes
+        available_to_trade   = 0.0
         total_account_value  = 0.0
         total_unrealized_pnl = 0.0
         all_positions: list[dict] = []
@@ -175,6 +240,8 @@ class HyperliquidService:
             margin_summary = state.get("marginSummary") or {}
             acct_val       = float(margin_summary.get("accountValue", "0") or "0")
             total_account_value += acct_val
+            if dex_names[i] == "":
+                available_to_trade = float(state.get("withdrawable", 0) or 0)
             print(f"[portfolio] DEX={dex_label} accountValue={acct_val}")
 
             asset_positions = state.get("assetPositions") or []
@@ -189,19 +256,32 @@ class HyperliquidService:
                     continue
                 upnl = float(pos.get("unrealizedPnl", "0") or "0")
                 total_unrealized_pnl += upnl
+                coin_key  = pos.get("coin", "")
+                entry_px  = float(pos.get("entryPx", "0") or "0")
+                mark_px   = float(all_mids.get(coin_key, pos.get("entryPx", "0")) or "0")
+                lev_val   = float((pos.get("leverage") or {}).get("value", 1) or 1)
+                roe_pct   = 0.0
+                if entry_px > 0 and mark_px > 0:
+                    direction = 1 if szi > 0 else -1
+                    roe_pct = round(((mark_px / entry_px) - 1) * lev_val * 100 * direction, 2)
+                tpsl = tpsl_by_coin.get(coin_key, {})
                 all_positions.append({
                     "dex":               dex_label,
-                    "symbol":            pos.get("coin", ""),
+                    "symbol":            coin_key,
                     "size":              szi,
-                    "entry_price":       float(pos.get("entryPx", "0") or "0"),
+                    "entry_price":       entry_px,
                     "position_value":    float(pos.get("positionValue", "0") or "0"),
                     "unrealized_pnl":    upnl,
                     "leverage":          (pos.get("leverage") or {}).get("value", 1),
                     "leverage_type":     (pos.get("leverage") or {}).get("type", "cross"),
                     "liquidation_price": float(pos.get("liquidationPx", "0") or "0"),
                     "margin_used":       float(pos.get("marginUsed", "0") or "0"),
-                    "sz_decimals":       sz_decimals_map.get(pos.get("coin", ""), 5),
-                    "mark_price":        float(all_mids.get(pos.get("coin", ""), pos.get("entryPx", "0")) or "0"),
+                    "sz_decimals":       sz_decimals_map.get(coin_key, 5),
+                    "mark_price":        mark_px,
+                    "roe_pct":           roe_pct,
+                    "tp_price":          tpsl.get("tp_price"),
+                    "sl_price":          tpsl.get("sl_price"),
+                    "opened_at":         None,
                 })
 
         # Step 4: spot balances (also add USDC spot to account value)
@@ -238,30 +318,42 @@ class HyperliquidService:
                     "order_type": "liquidation" if fill.get("liquidation") else "trade",
                 })
 
-        # Step 6: open orders
+        # Step 6: open orders (frontendOpenOrders includes TP/SL metadata)
         orders: list[dict] = []
         if not isinstance(open_orders, Exception) and isinstance(open_orders, list):
             for order in open_orders:
                 if not isinstance(order, dict):
                     continue
+                raw_trigger = order.get("triggerPx")
                 orders.append({
-                    "coin":     order.get("coin", ""),
-                    "side":     order.get("side", ""),
-                    "price":    float(order.get("limitPx", "0") or "0"),
-                    "size":     float(order.get("sz", "0") or "0"),
-                    "order_id": order.get("oid", ""),
-                    "time":     order.get("timestamp", 0),
+                    "coin":             order.get("coin", ""),
+                    "side":             order.get("side", ""),
+                    "price":            float(order.get("limitPx", "0") or "0"),
+                    "size":             float(order.get("sz", "0") or "0"),
+                    "order_id":         order.get("oid", ""),
+                    "time":             order.get("timestamp", 0),
+                    "is_trigger":       bool(order.get("isTrigger", False)),
+                    "is_position_tpsl": bool(order.get("isPositionTpsl", False)),
+                    "order_type":       order.get("orderType", ""),
+                    "trigger_px":       float(raw_trigger or "0") if raw_trigger else None,
                 })
 
         usdc_spot = next(
             (b["total"] for b in spot_balances if b["coin"] == "USDC"), 0.0
         )
 
+        # Sync position open timestamps and merge into positions
+        current_coins = {p["symbol"] for p in all_positions}
+        opened_at_map = await self._sync_position_opens(wallet_address, current_coins)
+        for p in all_positions:
+            p["opened_at"] = opened_at_map.get(p["symbol"])
+
         return {
             "wallet_address":       wallet_address,
             "account_value":        round(total_account_value, 4),
             "unrealized_pnl":       round(total_unrealized_pnl, 4),
             "usdc_spot_balance":    round(usdc_spot, 4),
+            "available_to_trade":   round(available_to_trade, 4),
             "open_positions":       all_positions,
             "open_positions_count": len(all_positions),
             "spot_balances":        spot_balances,
