@@ -100,6 +100,30 @@ async def delete_bot(bot_id: str):
     return {"success": True}
 
 
+@router.put("/{bot_id}")
+async def update_bot(bot_id: str, body: dict):
+    wallet_address = body.get("wallet_address")
+    new_config = body.get("config")
+    if not wallet_address or not new_config:
+        raise HTTPException(status_code=400, detail="wallet_address and config required")
+
+    db = _supabase()
+    user = db.table("users").select("id").ilike("wallet_address", wallet_address).limit(1).execute()
+    if not user.data:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_id = user.data[0]["id"]
+
+    existing = db.table("bots").select("*").eq("id", bot_id).eq("user_id", user_id).limit(1).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    bot = existing.data[0]
+    if bot_manager.is_running(bot_id):
+        raise HTTPException(status_code=400, detail="Stop the bot before editing its configuration")
+
+    result = db.table("bots").update({"config": new_config, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
+    return result.data[0] if result.data else {"success": True}
+
+
 @router.get("/{bot_id}/logs")
 async def get_bot_logs(bot_id: str, limit: int = 50):
     db = _supabase()

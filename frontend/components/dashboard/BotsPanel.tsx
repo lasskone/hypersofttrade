@@ -151,6 +151,7 @@ export default function BotsPanel({ walletAddress }: Props) {
   const [toast, setToast] = useState('')
   const [logsBot, setLogsBot] = useState<Bot | null>(null)
   const [logs, setLogs] = useState<any[]>([])
+  const [editingBot, setEditingBot] = useState<any>(null)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -330,6 +331,21 @@ export default function BotsPanel({ walletAddress }: Props) {
                       Start
                     </button>
                   )}
+                  <button
+                    onClick={() => !bot.is_running && setEditingBot(bot)}
+                    disabled={bot.is_running}
+                    style={{
+                      padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                      cursor: bot.is_running ? 'not-allowed' : 'pointer',
+                      background: bot.is_running ? '#13131f' : '#3b82f618',
+                      color: bot.is_running ? '#374151' : '#3b82f6',
+                      border: `1px solid ${bot.is_running ? '#1a1a2e' : '#3b82f644'}`,
+                      opacity: bot.is_running ? 0.5 : 1,
+                    }}
+                    title={bot.is_running ? 'Stop the bot first to edit' : 'Edit bot configuration'}
+                  >
+                    Edit
+                  </button>
                   <button onClick={() => handleAction(bot, 'delete')}
                     className="text-xs px-3 py-1.5 rounded font-semibold"
                     style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
@@ -349,6 +365,16 @@ export default function BotsPanel({ walletAddress }: Props) {
           botType={createType}
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); fetchBots() }}
+        />
+      )}
+
+      {/* Edit Bot Modal */}
+      {editingBot && (
+        <EditBotModal
+          bot={editingBot}
+          walletAddress={walletAddress}
+          onClose={() => setEditingBot(null)}
+          onUpdated={() => fetchBots()}
         />
       )}
 
@@ -818,6 +844,87 @@ function CreateBotModal({ walletAddress, botType, onClose, onCreated }: { wallet
             className="w-full py-3 rounded-lg font-bold text-sm disabled:opacity-50"
             style={{ backgroundColor: BOT_TYPES[botType as keyof typeof BOT_TYPES]?.color ?? '#00d4aa', color: '#000' }}>
             {loading ? 'Creating...' : 'Create Bot'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, walletAddress: string, onClose: () => void, onUpdated: () => void }) {
+  const [config, setConfig] = useState<Record<string, any>>(bot.config ?? {})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleChange = (key: string, value: string) => {
+    setConfig((prev: Record<string, any>) => ({ ...prev, [key]: value }))
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+      const parsedConfig: Record<string, any> = {}
+      Object.entries(config).forEach(([k, v]) => {
+        if (typeof v === 'boolean') { parsedConfig[k] = v; return }
+        const numVal = parseFloat(String(v))
+        parsedConfig[k] = !isNaN(numVal) && String(v).trim() !== '' ? numVal : v
+      })
+      const res = await fetch(`${API_URL}/bots/${bot.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: walletAddress, config: parsedConfig }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail ?? 'Update failed')
+      onUpdated()
+      onClose()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to update bot')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const editableFields = Object.entries(config).filter(([k]) => k !== 'dex')
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 24, width: 420, maxHeight: '85vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ color: 'white', fontSize: 16, fontWeight: 700 }}>Edit {bot.name}</h3>
+          <button onClick={onClose} style={{ color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>×</button>
+        </div>
+
+        <div style={{ padding: '8px 12px', background: '#f59e0b18', border: '1px solid #f59e0b44', borderRadius: 6, marginBottom: 16 }}>
+          <p style={{ fontSize: 11, color: '#f59e0b' }}>Bot must remain stopped while editing. Start it again after saving.</p>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {editableFields.map(([key, value]) => (
+            <div key={key}>
+              <label style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 }}>
+                {key.replace(/_/g, ' ')}
+              </label>
+              <input
+                type="text"
+                value={String(value)}
+                onChange={e => handleChange(key, e.target.value)}
+                style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          ))}
+        </div>
+
+        {error && <p style={{ color: '#ef4444', fontSize: 12, marginTop: 12 }}>{error}</p>}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: '10px', borderRadius: 8, background: '#13131f', color: '#9ca3af', border: '1px solid #1a1a2e', cursor: 'pointer', fontWeight: 600 }}>
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '10px', borderRadius: 8, background: '#00d4aa', color: '#0a0a0f', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+            {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </div>
