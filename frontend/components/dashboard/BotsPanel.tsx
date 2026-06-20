@@ -204,6 +204,7 @@ export default function BotsPanel({ walletAddress }: Props) {
   const logsRequestIdRef = useRef<string | null>(null)
   const [editingBot, setEditingBot] = useState<any>(null)
   const [selectedBots, setSelectedBots] = useState<Set<string>>(new Set())
+  const [confirmAction, setConfirmAction] = useState<{ message: string, onConfirm: () => void } | null>(null)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -221,9 +222,16 @@ export default function BotsPanel({ walletAddress }: Props) {
   const handleAction = async (bot: Bot, action: 'start' | 'stop' | 'delete') => {
     try {
       if (action === 'delete') {
-        if (!confirm(`Delete bot "${bot.name}"?`)) return
-        await fetch(`${API_URL}/bots/${bot.id}`, { method: 'DELETE' })
-        showToast('Bot deleted')
+        setConfirmAction({
+          message: `Delete bot "${bot.name}"? This cannot be undone.`,
+          onConfirm: async () => {
+            await fetch(`${API_URL}/bots/${bot.id}`, { method: 'DELETE' })
+            showToast('Bot deleted')
+            fetchBots()
+            setConfirmAction(null)
+          },
+        })
+        return
       } else {
         await fetch(`${API_URL}/bots/${bot.id}/${action}`, {
           method: 'POST',
@@ -236,21 +244,26 @@ export default function BotsPanel({ walletAddress }: Props) {
     } catch { showToast('Action failed') }
   }
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
     if (selectedBots.size === 0) return
-    if (!confirm(`Delete ${selectedBots.size} bot${selectedBots.size > 1 ? 's' : ''}? This cannot be undone.`)) return
-    try {
-      await Promise.all(
-        Array.from(selectedBots).map(botId =>
-          fetch(`${API_URL}/bots/${botId}`, { method: 'DELETE' })
-        )
-      )
-      showToast(`${selectedBots.size} bot(s) deleted`)
-      setSelectedBots(new Set())
-      fetchBots()
-    } catch {
-      showToast('Failed to delete some bots')
-    }
+    setConfirmAction({
+      message: `Delete ${selectedBots.size} bot${selectedBots.size > 1 ? 's' : ''}? This cannot be undone.`,
+      onConfirm: async () => {
+        try {
+          await Promise.all(
+            Array.from(selectedBots).map(botId =>
+              fetch(`${API_URL}/bots/${botId}`, { method: 'DELETE' })
+            )
+          )
+          showToast(`${selectedBots.size} bot(s) deleted`)
+          setSelectedBots(new Set())
+          fetchBots()
+        } catch {
+          showToast('Failed to delete some bots')
+        }
+        setConfirmAction(null)
+      },
+    })
   }
 
   const fetchLogs = async (bot: Bot) => {
@@ -486,6 +499,15 @@ export default function BotsPanel({ walletAddress }: Props) {
           walletAddress={walletAddress}
           onClose={() => setEditingBot(null)}
           onUpdated={() => fetchBots()}
+        />
+      )}
+
+      {/* Confirm Modal */}
+      {confirmAction && (
+        <ConfirmModal
+          message={confirmAction.message}
+          onConfirm={confirmAction.onConfirm}
+          onCancel={() => setConfirmAction(null)}
         />
       )}
 
@@ -1379,6 +1401,30 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             className="w-full py-3 rounded-lg font-bold text-sm disabled:opacity-50"
             style={{ backgroundColor: BOT_TYPES[bot.bot_type as keyof typeof BOT_TYPES]?.color ?? '#00d4aa', color: '#000' }}>
             {saving ? 'Updating...' : 'Update Bot'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConfirmModal({ message, onConfirm, onCancel }: { message: string, onConfirm: () => void, onCancel: () => void }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 24, width: 380, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: '#ef444418', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <span style={{ color: '#ef4444', fontSize: 18, fontWeight: 700 }}>!</span>
+          </div>
+          <h3 style={{ color: 'white', fontSize: 15, fontWeight: 700 }}>Confirm Action</h3>
+        </div>
+        <p style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.5, marginBottom: 20 }}>{message}</p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '10px', borderRadius: 8, background: '#13131f', color: '#9ca3af', border: '1px solid #1a1a2e', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} style={{ flex: 1, padding: '10px', borderRadius: 8, background: '#ef4444', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
+            Delete
           </button>
         </div>
       </div>
