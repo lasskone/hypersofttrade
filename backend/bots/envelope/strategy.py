@@ -251,7 +251,9 @@ class EnvelopeBot:
                     buy_price = ma_base * (1 - env_pct)
                     # Check if current price already below this level
                     if last["low"] <= buy_price:
-                        size = per_level / buy_price
+                        size = (per_level * self.leverage) / buy_price
+                        order_value = per_level * self.leverage
+                        self.log("info", f"Placing level {i} buy: price={buy_price:.4f} size={size:.6f} notional={order_value:.2f} USDC (capital={per_level:.2f} × leverage={self.leverage})")
                         oid = await self._place_limit_order(True, size, buy_price)
                         if oid:
                             self._positions.append({"level": i, "entry_price": buy_price, "size": round_size(size, self.sz_decimals), "order_id": oid})
