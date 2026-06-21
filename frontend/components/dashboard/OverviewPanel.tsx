@@ -315,6 +315,8 @@ export function OverviewPanel({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [managingPos, setManagingPos] = useState<any>(null);
   const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [bots, setBots] = useState<any[]>([]);
 
   // ── Fetch portfolio (extracted so it can be called from onAction) ─────────────
   const fetchPortfolio = async () => {
@@ -366,6 +368,16 @@ export function OverviewPanel({
       console.error('Cancel order failed:', e.message)
     }
   }
+
+  // ── Fetch bots for allocation summary ────────────────────────────────────────
+  useEffect(() => {
+    if (!walletAddress) return;
+    fetch(`${API_URL}/bots/?wallet_address=${walletAddress}`)
+      .then(r => r.json())
+      .then(d => setBots(d.bots ?? []))
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress]);
 
   // ── Initial load ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -461,6 +473,10 @@ export function OverviewPanel({
 
   const pnlPos = parseFloat(String(unrealizedPnl)) >= 0;
 
+  const activeBots = bots.filter(b => b.desired_status === 'running' || b.status === 'running');
+  const totalAllocated = activeBots.reduce((sum, b) => sum + (parseFloat(String(b.allocated_usdc ?? 0))), 0);
+  const freeBalance = parseFloat(String(availableToTrade)) - totalAllocated;
+
   const stats = [
     {
       label: 'Account Value',
@@ -518,6 +534,69 @@ export function OverviewPanel({
         ))}
       </div>
 
+      {/* Bot Allocation Summary */}
+      {activeBots.length > 0 && (
+        <Section title={`Bot Allocations (${activeBots.length} active)`}>
+          {/* Summary strip */}
+          <div className="grid grid-cols-3 gap-px border-b" style={{ borderColor: '#1a1a2e', backgroundColor: '#1a1a2e' }}>
+            {[
+              { label: 'Total Allocated', value: `$${fmt(totalAllocated)}`, color: '#ffffff' },
+              {
+                label: 'Free / Unallocated',
+                value: `$${fmt(freeBalance)}`,
+                color: freeBalance < 0 ? '#ef4444' : freeBalance < totalAllocated * 0.2 ? '#f59e0b' : '#10b981',
+              },
+              { label: 'Available to Trade', value: `$${fmt(availableToTrade)}`, color: '#ffffff' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="px-5 py-3" style={{ backgroundColor: '#0d0d14' }}>
+                <p className="text-xs text-gray-500 mb-1">{label}</p>
+                <p className="text-sm font-bold" style={{ color }}>{value}</p>
+              </div>
+            ))}
+          </div>
+          {/* Per-bot table */}
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
+                  <TH>Bot</TH><TH>Symbol</TH><TH>Allocated</TH><TH>Leverage</TH><TH>Buying Power</TH><TH>Status</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {activeBots.map((b: any) => {
+                  const allocated = parseFloat(String(b.allocated_usdc ?? 0));
+                  const leverage  = parseFloat(String(b.config?.leverage ?? 1));
+                  const buyingPower = allocated * leverage;
+                  const isRunning = b.status === 'running';
+                  const isStopping = b.status === 'running' && b.desired_status === 'stopped';
+                  const statusColor = isStopping ? '#f59e0b' : isRunning ? '#00d4aa' : '#f59e0b';
+                  const statusText  = isStopping ? 'Stopping...' : isRunning ? 'Running' : 'Starting...';
+                  return (
+                    <tr key={b.id} className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                      style={{ borderColor: '#1a1a2e' }}>
+                      <td className="px-5 py-3">
+                        <p className="text-sm font-semibold text-white">{b.name}</p>
+                        <p className="text-xs text-gray-500">{b.bot_type}</p>
+                      </td>
+                      <TD>{b.symbol ?? '—'}</TD>
+                      <TD>${fmt(allocated)}</TD>
+                      <TD>{leverage > 1 ? `${fmt(leverage, 0)}x` : '—'}</TD>
+                      <TD color={leverage > 1 ? '#00d4aa' : undefined}>${fmt(buyingPower)}</TD>
+                      <td className="px-5 py-3">
+                        <span className="text-xs px-2 py-0.5 rounded font-medium"
+                          style={{ backgroundColor: `${statusColor}18`, color: statusColor }}>
+                          {statusText}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {/* Open Positions */}
       <Section title={`Open Positions (${openPositions.length})`}>
         {openPositions.length === 0 ? (
@@ -538,7 +617,7 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Mark Price</TH><TH>Pos. Value</TH><TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
+                  <TH>Mark Price</TH><TH>Notional</TH><TH>Margin</TH><TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
                   <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
                 </tr>
               </thead>
@@ -550,6 +629,9 @@ export function OverviewPanel({
                   const roe    = parseFloat(String(pos?.roe_pct ?? 0));
                   const tpPx   = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null;
                   const slPx   = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null;
+                  const notional = parseFloat(String(pos?.position_value ?? 0));
+                  const lev      = parseFloat(String(pos?.leverage ?? 1));
+                  const margin   = lev > 0 ? notional / lev : 0;
                   return (
                     <tr key={i}
                       className="border-b last:border-0 hover:bg-white/5 transition-colors"
@@ -577,7 +659,8 @@ export function OverviewPanel({
                       <TD>{fmt(pos?.size, 4)}</TD>
                       <TD>${fmt(pos?.entry_price)}</TD>
                       <TD>${fmt(pos?.mark_price ?? 0)}</TD>
-                      <TD>${fmt(pos?.position_value)}</TD>
+                      <TD>${fmt(notional)}</TD>
+                      <TD color="#9ca3af">${fmt(margin)}</TD>
                       <td className="px-5 py-3">
                         <p className="text-sm" style={{ color: posPos ? '#10b981' : '#ef4444' }}>{fmtPnl(upnl)}</p>
                         <p className="text-xs mt-0.5" style={{ color: roe >= 0 ? '#10b981' : '#ef4444' }}>
