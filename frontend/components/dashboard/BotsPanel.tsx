@@ -214,6 +214,8 @@ export default function BotsPanel({ walletAddress }: Props) {
   const [editingBot, setEditingBot] = useState<any>(null)
   const [selectedBots, setSelectedBots] = useState<Set<string>>(new Set())
   const [confirmAction, setConfirmAction] = useState<{ message: string, onConfirm: () => void } | null>(null)
+  const [orderErrorAlert, setOrderErrorAlert] = useState<{ botName: string, message: string } | null>(null)
+  const seenErrorIdsRef = useRef<Set<string>>(new Set())
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -227,6 +229,34 @@ export default function BotsPanel({ walletAddress }: Props) {
   }
 
   useEffect(() => { fetchBots() }, [walletAddress])
+
+  useEffect(() => {
+    if (!walletAddress || bots.length === 0) return
+    const checkForOrderErrors = async () => {
+      const runningBots = bots.filter(b => b.is_running)
+      for (const bot of runningBots) {
+        try {
+          const res = await fetch(`${API_URL}/bots/${bot.id}/logs?limit=10`)
+          const data = await res.json()
+          const errorLog = (data.logs ?? []).find((l: any) =>
+            l.level === 'error' &&
+            typeof l.message === 'string' &&
+            l.message.toLowerCase().includes('minimum value')
+          )
+          if (errorLog) {
+            const errorId = `${bot.id}-${errorLog.created_at}`
+            if (!seenErrorIdsRef.current.has(errorId)) {
+              seenErrorIdsRef.current.add(errorId)
+              setOrderErrorAlert({ botName: bot.name, message: errorLog.message })
+            }
+          }
+        } catch {}
+      }
+    }
+    checkForOrderErrors()
+    const interval = setInterval(checkForOrderErrors, 20000)
+    return () => clearInterval(interval)
+  }, [walletAddress, bots])
 
   const handleAction = async (bot: Bot, action: 'start' | 'stop' | 'delete') => {
     try {
@@ -508,6 +538,15 @@ export default function BotsPanel({ walletAddress }: Props) {
           walletAddress={walletAddress}
           onClose={() => setEditingBot(null)}
           onUpdated={() => fetchBots()}
+        />
+      )}
+
+      {/* Order Error Alert Modal */}
+      {orderErrorAlert && (
+        <OrderErrorAlertModal
+          botName={orderErrorAlert.botName}
+          message={orderErrorAlert.message}
+          onClose={() => setOrderErrorAlert(null)}
         />
       )}
 
@@ -1593,6 +1632,33 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             {saving ? 'Updating...' : 'Update Bot'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function OrderErrorAlertModal({ botName, message, onClose }: { botName: string, message: string, onClose: () => void }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 24, width: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: '#f59e0b18', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <span style={{ color: '#f59e0b', fontSize: 18, fontWeight: 700 }}>!</span>
+          </div>
+          <h3 style={{ color: 'white', fontSize: 15, fontWeight: 700 }}>Order Rejected — {botName}</h3>
+        </div>
+        <p style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>
+          Hyperliquid rejected an order from this bot:
+        </p>
+        <div style={{ padding: '10px 12px', background: '#f59e0b0d', border: '1px solid #f59e0b33', borderRadius: 6, marginBottom: 16 }}>
+          <p style={{ color: '#f59e0b', fontSize: 13, fontWeight: 600 }}>{message}</p>
+        </div>
+        <p style={{ color: '#6b7280', fontSize: 12, marginBottom: 20 }}>
+          Edit this bot and increase its allocation, or reduce the number of active levels, then restart it.
+        </p>
+        <button onClick={onClose} style={{ width: '100%', padding: '10px', borderRadius: 8, background: '#00d4aa', color: '#0a0a0f', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
+          Got it
+        </button>
       </div>
     </div>
   )
