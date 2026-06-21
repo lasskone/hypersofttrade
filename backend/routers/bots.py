@@ -11,8 +11,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 
-from services.bot_manager import bot_manager
-
 router = APIRouter()
 
 def _supabase():
@@ -42,7 +40,11 @@ async def list_bots(wallet_address: str):
     bots = db.table("bots").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
     result = []
     for b in bots.data:
-        b["is_running"] = bot_manager.is_running(b["id"])
+        # Derive is_running from the DB status field (written by the Worker).
+        # Never use bot_manager.is_running() here — the API and Worker run in
+        # separate processes, so the API's in-memory _tasks dict is always empty
+        # for bots managed by the Worker, making that check permanently wrong.
+        b["is_running"] = b.get("status") == "running"
         result.append(b)
     return {"bots": result}
 
@@ -65,6 +67,7 @@ async def create_bot(body: CreateBotRequest):
         "allocated_usdc": body.allocated_usdc,
         "config": config,
         "status": "stopped",
+        "desired_status": "stopped",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
@@ -74,27 +77,49 @@ async def create_bot(body: CreateBotRequest):
 @router.post("/{bot_id}/start")
 async def start_bot(bot_id: str, body: BotActionRequest):
     db = _supabase()
-    bot = db.table("bots").select("*").eq("id", bot_id).limit(1).execute()
+    bot = db.table("bots").select("id, desired_status").eq("id", bot_id).limit(1).execute()
     if not bot.data:
         raise HTTPException(status_code=404, detail="Bot not found")
-    b = bot.data[0]
-    if bot_manager.is_running(bot_id):
+    if bot.data[0].get("desired_status") == "running":
         return {"success": True, "message": "Already running"}
-    db.table("bots").update({"error_message": None, "status": "stopped", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
-    await bot_manager.start(bot_id, b["config"], body.wallet_address)
-    return {"success": True, "message": "Bot started"}
+    # Write desired_status='running' — the Worker polls this every POLL_INTERVAL
+    # seconds and will launch (or re-launch) the bot task.
+    # NEVER call bot_manager.start() here: the API and Worker are separate
+    # processes.  Starting a task in the API process would create a duplicate
+    # bot instance running alongside the Worker's copy.
+    db.table("bots").update({
+        "desired_status": "running",
+        "error_message": None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", bot_id).execute()
+    return {"success": True, "message": "Bot queued to start — the worker will launch it within seconds"}
 
 
 @router.post("/{bot_id}/stop")
 async def stop_bot(bot_id: str):
-    await bot_manager.stop(bot_id)
-    return {"success": True, "message": "Bot stopped"}
+    db = _supabase()
+    # Write desired_status='stopped' — the Worker will cancel the running task
+    # on its next reconciliation pass (within POLL_INTERVAL seconds).
+    # NEVER call bot_manager.stop() here: it would target the API process's
+    # in-memory task dict (always empty since bots run in the Worker), making
+    # the call a silent no-op that leaves the bot actually running.
+    db.table("bots").update({
+        "desired_status": "stopped",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", bot_id).execute()
+    return {"success": True, "message": "Bot queued to stop — the worker will stop it within seconds"}
 
 
 @router.delete("/{bot_id}")
 async def delete_bot(bot_id: str):
-    await bot_manager.stop(bot_id)
     db = _supabase()
+    # Signal the Worker to stop before deleting the record.  The Worker will
+    # cancel the task on its next cycle; we proceed with deletion immediately.
+    # (The Worker's heartbeat update for a deleted bot is a safe no-op.)
+    db.table("bots").update({
+        "desired_status": "stopped",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", bot_id).execute()
     db.table("bot_logs").delete().eq("bot_id", bot_id).execute()
     db.table("bots").delete().eq("id", bot_id).execute()
     return {"success": True}
@@ -117,7 +142,9 @@ async def update_bot(bot_id: str, body: dict):
     if not existing.data:
         raise HTTPException(status_code=404, detail="Bot not found")
     bot = existing.data[0]
-    if bot_manager.is_running(bot_id):
+    # Check DB status/desired_status — not bot_manager.is_running(), which is an
+    # API-process in-memory check and always returns False for Worker-managed bots.
+    if bot.get("status") == "running" or bot.get("desired_status") == "running":
         raise HTTPException(status_code=400, detail="Stop the bot before editing its configuration")
 
     # Always preserve bot_type — never trust the client payload to include it correctly;

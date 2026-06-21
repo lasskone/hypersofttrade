@@ -178,6 +178,7 @@ interface Bot {
   symbol: string
   allocated_usdc: number
   status: string
+  desired_status?: string
   is_running: boolean
   pnl: number
   total_trades: number
@@ -199,8 +200,21 @@ interface Market {
   max_leverage: number
 }
 
-const statusColor = (b: Bot) => b.is_running ? '#00d4aa' : b.status === 'error' ? '#ef4444' : '#6b7280'
-const statusLabel = (b: Bot) => b.is_running ? 'Running' : b.status === 'error' ? 'Error' : 'Stopped'
+const statusColor = (b: Bot) => {
+  if (b.status === 'running') return '#00d4aa'
+  if (b.status === 'error') return '#ef4444'
+  if (b.desired_status === 'running') return '#f59e0b'   // queued-to-start
+  if (b.desired_status === 'stopped' && b.status === 'running') return '#f59e0b'  // queued-to-stop
+  return '#6b7280'
+}
+const statusLabel = (b: Bot) => {
+  if (b.status === 'running') return 'Running'
+  if (b.status === 'error') return 'Error'
+  if (b.desired_status === 'running') return 'Starting...'
+  return 'Stopped'
+}
+// True if the bot is running OR queued to run — used to decide Stop vs Start button.
+const wantsRunning = (b: Bot) => b.status === 'running' || b.desired_status === 'running'
 
 export default function BotsPanel({ walletAddress }: Props) {
   const [bots, setBots] = useState<Bot[]>([])
@@ -233,7 +247,7 @@ export default function BotsPanel({ walletAddress }: Props) {
   useEffect(() => {
     if (!walletAddress || bots.length === 0) return
     const checkForOrderErrors = async () => {
-      const runningBots = bots.filter(b => b.is_running)
+      const runningBots = bots.filter(b => b.status === 'running')
       for (const bot of runningBots) {
         try {
           const res = await fetch(`${API_URL}/bots/${bot.id}/logs?limit=10`)
@@ -481,7 +495,7 @@ export default function BotsPanel({ walletAddress }: Props) {
                     style={{ backgroundColor: '#1a1a2e', color: '#6b7280' }}>
                     Logs
                   </button>
-                  {bot.is_running ? (
+                  {wantsRunning(bot) ? (
                     <button onClick={() => handleAction(bot, 'stop')}
                       className="text-xs px-3 py-1.5 rounded font-semibold"
                       style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
@@ -495,17 +509,17 @@ export default function BotsPanel({ walletAddress }: Props) {
                     </button>
                   )}
                   <button
-                    onClick={() => !bot.is_running && setEditingBot(bot)}
-                    disabled={bot.is_running}
+                    onClick={() => !wantsRunning(bot) && setEditingBot(bot)}
+                    disabled={wantsRunning(bot)}
                     style={{
                       padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700,
-                      cursor: bot.is_running ? 'not-allowed' : 'pointer',
-                      background: bot.is_running ? '#13131f' : '#3b82f618',
-                      color: bot.is_running ? '#374151' : '#3b82f6',
-                      border: `1px solid ${bot.is_running ? '#1a1a2e' : '#3b82f644'}`,
-                      opacity: bot.is_running ? 0.5 : 1,
+                      cursor: wantsRunning(bot) ? 'not-allowed' : 'pointer',
+                      background: wantsRunning(bot) ? '#13131f' : '#3b82f618',
+                      color: wantsRunning(bot) ? '#374151' : '#3b82f6',
+                      border: `1px solid ${wantsRunning(bot) ? '#1a1a2e' : '#3b82f644'}`,
+                      opacity: wantsRunning(bot) ? 0.5 : 1,
                     }}
-                    title={bot.is_running ? 'Stop the bot first to edit' : 'Edit bot configuration'}
+                    title={wantsRunning(bot) ? 'Stop the bot first to edit' : 'Edit bot configuration'}
                   >
                     Edit
                   </button>
