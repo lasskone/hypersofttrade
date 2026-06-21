@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { CreateBotModal } from '@/components/dashboard/BotsPanel'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -160,7 +161,7 @@ function EquityChart({ data, allocation, color }: { data: { time: number; value:
   )
 }
 
-export default function BacktestPanel() {
+export default function BacktestPanel({ walletAddress }: { walletAddress?: string }) {
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null)
@@ -184,6 +185,7 @@ export default function BacktestPanel() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [error, setError] = useState('')
+  const [showDeploy, setShowDeploy] = useState(false)
 
   const config = BOT_CONFIGS[botType]
 
@@ -494,6 +496,7 @@ export default function BacktestPanel() {
                   <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>Deploy this exact strategy with real capital on your account</p>
                 </div>
                 <button
+                  onClick={() => setShowDeploy(true)}
                   style={{ padding: '10px 20px', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap', background: config.color, color: botType === 'grid' ? '#000' : '#fff' }}>
                   Deploy Strategy →
                 </button>
@@ -502,6 +505,18 @@ export default function BacktestPanel() {
           )}
         </div>
       </div>
+
+      {showDeploy && walletAddress && (
+        <CreateBotModal
+          walletAddress={walletAddress}
+          botType={botType}
+          initialSymbol={selectedMarket?.name}
+          initialDex={selectedMarket?.dex === 'main' ? '' : (selectedMarket?.dex ?? '')}
+          initialParams={params}
+          onClose={() => setShowDeploy(false)}
+          onCreated={() => setShowDeploy(false)}
+        />
+      )}
     </div>
   )
 }

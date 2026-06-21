@@ -60,7 +60,7 @@ function DashboardLayout({
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} onSelectMarket={(symbol, dex) => setPendingMarket({ symbol, dex })} />}
           {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} initialMarket={pendingMarket} initialInterval="30m" onMarketConsumed={() => setPendingMarket(null)} />}
           {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
-          {section === 'backtest' && <BacktestPanel />}
+          {section === 'backtest' && <BacktestPanel walletAddress={address} />}
           {section === 'history' && (
             <div className="flex items-center justify-center h-64">
               <p className="text-sm text-gray-600">Trade History — Coming in next update</p>
