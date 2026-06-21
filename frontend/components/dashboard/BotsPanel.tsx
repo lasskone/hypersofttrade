@@ -860,7 +860,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                  {['15m', '30m', '1h', '4h', '8h', '1d'].map(iv => (
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
                     <button key={iv} type="button" onClick={() => setEnvelopeInterval(iv)}
                       style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: envelopeInterval === iv ? '#a78bfa22' : '#13131f',
@@ -972,9 +972,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                  {['1h', '4h', '8h', '1d'].map(iv => (
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
                     <button key={iv} type="button" onClick={() => setBtInterval(iv)}
-                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: btInterval === iv ? '#3b82f622' : '#13131f',
                         color: btInterval === iv ? '#3b82f6' : '#6b7280',
                         outline: btInterval === iv ? '1px solid #3b82f644' : '1px solid #1a1a2e',
@@ -1035,9 +1035,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                  {['15m', '1h', '4h', '8h', '1d'].map(iv => (
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
                     <button key={iv} type="button" onClick={() => setEmaInterval(iv)}
-                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: emaInterval === iv ? '#10b98122' : '#13131f',
                         color: emaInterval === iv ? '#10b981' : '#6b7280',
                         outline: emaInterval === iv ? '1px solid #10b98144' : '1px solid #1a1a2e',
@@ -1384,7 +1384,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                  {['15m', '30m', '1h', '4h', '8h', '1d'].map(iv => (
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
                     <button key={iv} type="button" onClick={() => setEnvelopeInterval(iv)}
                       style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: envelopeInterval === iv ? '#a78bfa22' : '#13131f',
@@ -1496,9 +1496,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                  {['1h', '4h', '8h', '1d'].map(iv => (
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
                     <button key={iv} type="button" onClick={() => setBtInterval(iv)}
-                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: btInterval === iv ? '#3b82f622' : '#13131f',
                         color: btInterval === iv ? '#3b82f6' : '#6b7280',
                         outline: btInterval === iv ? '1px solid #3b82f644' : '1px solid #1a1a2e',
@@ -1559,9 +1559,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
-                  {['15m', '1h', '4h', '8h', '1d'].map(iv => (
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
                     <button key={iv} type="button" onClick={() => setEmaInterval(iv)}
-                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: emaInterval === iv ? '#10b98122' : '#13131f',
                         color: emaInterval === iv ? '#10b981' : '#6b7280',
                         outline: emaInterval === iv ? '1px solid #10b98144' : '1px solid #1a1a2e',
