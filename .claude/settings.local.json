@@ -42,7 +42,8 @@
       "Read(//private/tmp/envelope-bot/utilities/**)",
       "Bash(ls frontend/next.config*)",
       "Bash(python -c \"import py_compile; py_compile.compile\\('backend/bots/envelope/strategy.py', doraise=True\\)\")",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(python -m py_compile worker.py)"
     ]
   }
 }

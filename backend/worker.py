@@ -45,8 +45,108 @@ def _supabase():
 bot_manager = BotManager()
 
 
+async def cold_start_restore() -> None:
+    """
+    Runs ONCE at worker boot, before the reconciliation loop.
+
+    On a cold start the in-memory _tasks dict is empty, so the ongoing
+    reconcile loop would eventually launch all desired-running bots on its
+    first pass — but it provides no summary and does not mark permanent
+    failures as stopped.  This function makes the boot behaviour explicit:
+
+    • Unconditionally launches every bot whose desired_status='running',
+      regardless of what the (possibly stale) 'status' column says.
+    • For any bot that cannot be launched (missing wallet, start() raises),
+      sets status='error' and desired_status='stopped' so the reconcile loop
+      won't keep retrying it, and writes a bot_logs entry explaining why.
+    • Prints a single summary line so failures are visible immediately in
+      the worker logs.
+    """
+    print("[worker] Cold start: scanning for bots to restore...", flush=True)
+    db = _supabase()
+    result = (
+        db.table("bots")
+        .select("*, users(wallet_address)")
+        .eq("desired_status", "running")
+        .execute()
+    )
+    bots = result.data or []
+
+    if not bots:
+        print("[worker] Cold start: no bots with desired_status='running' — nothing to restore.", flush=True)
+        return
+
+    restored: list[str] = []
+    failed: list[tuple[str, str]] = []  # (bot_id, reason)
+
+    for bot in bots:
+        bot_id   = bot["id"]
+        bot_name = bot.get("name", bot_id)
+        user_row = bot.get("users") or {}
+        wallet_address = user_row.get("wallet_address", "")
+
+        if not wallet_address:
+            reason = "wallet_address missing (users join returned no data or user deleted)"
+            print(f"[worker] Cold start: SKIP {bot_id} ({bot_name}) — {reason}", flush=True)
+            failed.append((bot_id, reason))
+            try:
+                db.table("bots").update({
+                    "status": "error",
+                    "desired_status": "stopped",
+                    "error_message": reason,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", bot_id).execute()
+                bot_manager._add_log(bot_id, "error",
+                    f"[cold-start] Bot could not be restored on worker boot: {reason}")
+            except Exception as db_err:
+                print(f"[worker] Cold start: failed to update DB for {bot_id}: {db_err}", flush=True)
+            continue
+
+        cfg = bot.get("config", {})
+        print(
+            f"[worker] Cold start: launching {bot_id} ({bot_name}) "
+            f"type={cfg.get('bot_type')} wallet={wallet_address[:8]}...",
+            flush=True,
+        )
+        try:
+            await bot_manager.start(bot_id, cfg, wallet_address)
+            restored.append(bot_id)
+            bot_manager._add_log(bot_id, "info", "[cold-start] Bot task restored on worker boot.")
+        except Exception as exc:
+            reason = str(exc)
+            print(f"[worker] Cold start: FAILED to launch {bot_id} ({bot_name}): {reason}", flush=True)
+            failed.append((bot_id, reason))
+            try:
+                db.table("bots").update({
+                    "status": "error",
+                    "desired_status": "stopped",
+                    "error_message": reason,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", bot_id).execute()
+                bot_manager._add_log(bot_id, "error",
+                    f"[cold-start] Bot failed to restore on worker boot: {reason}")
+            except Exception as db_err:
+                print(f"[worker] Cold start: failed to update DB for {bot_id}: {db_err}", flush=True)
+
+    # ── Boot summary ────────────────────────────────────────────────────────────
+    restored_ids = ", ".join(restored) if restored else "none"
+    if failed:
+        failed_parts = "; ".join(f"{bid} ({reason})" for bid, reason in failed)
+        print(
+            f"[worker] Worker boot complete: restored {len(restored)} bot(s) (ids: {restored_ids}), "
+            f"{len(failed)} failed to restore (ids: {failed_parts})",
+            flush=True,
+        )
+    else:
+        print(
+            f"[worker] Worker boot complete: restored {len(restored)} bot(s) (ids: {restored_ids}), 0 failed.",
+            flush=True,
+        )
+
+
 async def reconcile_loop():
     print("[worker] Reconciliation loop starting...", flush=True)
+    await cold_start_restore()
     while True:
         try:
             db = _supabase()
