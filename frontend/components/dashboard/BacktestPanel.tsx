@@ -513,6 +513,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
           initialSymbol={selectedMarket?.name}
           initialDex={selectedMarket?.dex === 'main' ? '' : (selectedMarket?.dex ?? '')}
           initialParams={params}
+          initialInterval={interval}
           onClose={() => setShowDeploy(false)}
           onCreated={() => setShowDeploy(false)}
         />

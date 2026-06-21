@@ -592,7 +592,7 @@ export default function BotsPanel({ walletAddress }: Props) {
   )
 }
 
-export function CreateBotModal({ walletAddress, botType, onClose, onCreated, initialSymbol, initialDex, initialParams }: { walletAddress: string, botType: string, onClose: () => void, onCreated: () => void, initialSymbol?: string, initialDex?: string, initialParams?: Record<string, number> }) {
+export function CreateBotModal({ walletAddress, botType, onClose, onCreated, initialSymbol, initialDex, initialParams, initialInterval }: { walletAddress: string, botType: string, onClose: () => void, onCreated: () => void, initialSymbol?: string, initialDex?: string, initialParams?: Record<string, number>, initialInterval?: string }) {
   const ip = initialParams ?? {}
   const [name, setName] = useState(`My ${BOT_TYPES[botType as keyof typeof BOT_TYPES]?.name ?? 'Bot'}`)
   const [symbol, setSymbol] = useState(initialSymbol ?? 'BTC')
@@ -606,7 +606,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [envelope1, setEnvelope1] = useState(ip.envelope_1_pct != null ? String(ip.envelope_1_pct) : '7')
   const [envelope2, setEnvelope2] = useState(ip.envelope_2_pct != null ? String(ip.envelope_2_pct) : '10')
   const [envelope3, setEnvelope3] = useState(ip.envelope_3_pct != null ? String(ip.envelope_3_pct) : '15')
-  const [envelopeInterval, setEnvelopeInterval] = useState('4h')
+  const [envelopeInterval, setEnvelopeInterval] = useState(initialInterval ?? '4h')
   const [leverage, setLeverage] = useState('1')
   const [entryThreshold, setEntryThreshold] = useState('0.01')
   const [exitThreshold, setExitThreshold] = useState('0.005')
@@ -617,12 +617,12 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [rsiPeriod, setRsiPeriod] = useState(ip.rsi_period != null ? String(ip.rsi_period) : '14')
   const [rsiOversold, setRsiOversold] = useState(ip.rsi_oversold != null ? String(ip.rsi_oversold) : '30')
   const [rsiOverbought, setRsiOverbought] = useState(ip.rsi_overbought != null ? String(ip.rsi_overbought) : '70')
-  const [btInterval, setBtInterval] = useState('4h')
+  const [btInterval, setBtInterval] = useState(initialInterval ?? '4h')
   const [emaFast, setEmaFast] = useState(ip.ema_fast != null ? String(ip.ema_fast) : '9')
   const [emaSlow, setEmaSlow] = useState(ip.ema_slow != null ? String(ip.ema_slow) : '21')
   const [useAtrStop, setUseAtrStop] = useState(false)
   const [atrMultiplier, setAtrMultiplier] = useState('2.0')
-  const [emaInterval, setEmaInterval] = useState('4h')
+  const [emaInterval, setEmaInterval] = useState(initialInterval ?? '4h')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
