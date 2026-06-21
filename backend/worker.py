@@ -49,21 +49,25 @@ async def cold_start_restore() -> None:
     """
     Runs ONCE at worker boot, before the reconciliation loop.
 
-    On a cold start the in-memory _tasks dict is empty, so the ongoing
-    reconcile loop would eventually launch all desired-running bots on its
-    first pass — but it provides no summary and does not mark permanent
-    failures as stopped.  This function makes the boot behaviour explicit:
-
+    Pass 1 — restore desired-running bots:
     • Unconditionally launches every bot whose desired_status='running',
       regardless of what the (possibly stale) 'status' column says.
     • For any bot that cannot be launched (missing wallet, start() raises),
       sets status='error' and desired_status='stopped' so the reconcile loop
       won't keep retrying it, and writes a bot_logs entry explaining why.
-    • Prints a single summary line so failures are visible immediately in
-      the worker logs.
+    • Prints a single summary line so failures are visible immediately.
+
+    Pass 2 — correct stale status for stopped/non-running bots:
+    • Any bot whose desired_status is NOT 'running' but whose 'status' column
+      is still 'running' (left over from before this Worker process started)
+      gets corrected to status='stopped' immediately.  Without this, those bots
+      would show a perpetual "Stopping…" badge in the UI because no ongoing
+      reconcile branch ever touches the (desired='stopped', no local task) case.
     """
     print("[worker] Cold start: scanning for bots to restore...", flush=True)
     db = _supabase()
+
+    # ── Pass 1: restore desired-running bots ───────────────────────────────────
     result = (
         db.table("bots")
         .select("*, users(wallet_address)")
@@ -72,76 +76,119 @@ async def cold_start_restore() -> None:
     )
     bots = result.data or []
 
-    if not bots:
-        print("[worker] Cold start: no bots with desired_status='running' — nothing to restore.", flush=True)
-        return
-
     restored: list[str] = []
     failed: list[tuple[str, str]] = []  # (bot_id, reason)
 
-    for bot in bots:
-        bot_id   = bot["id"]
-        bot_name = bot.get("name", bot_id)
-        user_row = bot.get("users") or {}
-        wallet_address = user_row.get("wallet_address", "")
-
-        if not wallet_address:
-            reason = "wallet_address missing (users join returned no data or user deleted)"
-            print(f"[worker] Cold start: SKIP {bot_id} ({bot_name}) — {reason}", flush=True)
-            failed.append((bot_id, reason))
-            try:
-                db.table("bots").update({
-                    "status": "error",
-                    "desired_status": "stopped",
-                    "error_message": reason,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", bot_id).execute()
-                bot_manager._add_log(bot_id, "error",
-                    f"[cold-start] Bot could not be restored on worker boot: {reason}")
-            except Exception as db_err:
-                print(f"[worker] Cold start: failed to update DB for {bot_id}: {db_err}", flush=True)
-            continue
-
-        cfg = bot.get("config", {})
-        print(
-            f"[worker] Cold start: launching {bot_id} ({bot_name}) "
-            f"type={cfg.get('bot_type')} wallet={wallet_address[:8]}...",
-            flush=True,
-        )
-        try:
-            await bot_manager.start(bot_id, cfg, wallet_address)
-            restored.append(bot_id)
-            bot_manager._add_log(bot_id, "info", "[cold-start] Bot task restored on worker boot.")
-        except Exception as exc:
-            reason = str(exc)
-            print(f"[worker] Cold start: FAILED to launch {bot_id} ({bot_name}): {reason}", flush=True)
-            failed.append((bot_id, reason))
-            try:
-                db.table("bots").update({
-                    "status": "error",
-                    "desired_status": "stopped",
-                    "error_message": reason,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", bot_id).execute()
-                bot_manager._add_log(bot_id, "error",
-                    f"[cold-start] Bot failed to restore on worker boot: {reason}")
-            except Exception as db_err:
-                print(f"[worker] Cold start: failed to update DB for {bot_id}: {db_err}", flush=True)
-
-    # ── Boot summary ────────────────────────────────────────────────────────────
-    restored_ids = ", ".join(restored) if restored else "none"
-    if failed:
-        failed_parts = "; ".join(f"{bid} ({reason})" for bid, reason in failed)
-        print(
-            f"[worker] Worker boot complete: restored {len(restored)} bot(s) (ids: {restored_ids}), "
-            f"{len(failed)} failed to restore (ids: {failed_parts})",
-            flush=True,
-        )
+    if not bots:
+        print("[worker] Cold start: no bots with desired_status='running' — nothing to restore.", flush=True)
     else:
-        print(
-            f"[worker] Worker boot complete: restored {len(restored)} bot(s) (ids: {restored_ids}), 0 failed.",
-            flush=True,
+        for bot in bots:
+            bot_id   = bot["id"]
+            bot_name = bot.get("name", bot_id)
+            user_row = bot.get("users") or {}
+            wallet_address = user_row.get("wallet_address", "")
+
+            if not wallet_address:
+                reason = "wallet_address missing (users join returned no data or user deleted)"
+                print(f"[worker] Cold start: SKIP {bot_id} ({bot_name}) — {reason}", flush=True)
+                failed.append((bot_id, reason))
+                try:
+                    db.table("bots").update({
+                        "status": "error",
+                        "desired_status": "stopped",
+                        "error_message": reason,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", bot_id).execute()
+                    bot_manager._add_log(bot_id, "error",
+                        f"[cold-start] Bot could not be restored on worker boot: {reason}")
+                except Exception as db_err:
+                    print(f"[worker] Cold start: failed to update DB for {bot_id}: {db_err}", flush=True)
+                continue
+
+            cfg = bot.get("config", {})
+            print(
+                f"[worker] Cold start: launching {bot_id} ({bot_name}) "
+                f"type={cfg.get('bot_type')} wallet={wallet_address[:8]}...",
+                flush=True,
+            )
+            try:
+                await bot_manager.start(bot_id, cfg, wallet_address)
+                restored.append(bot_id)
+                bot_manager._add_log(bot_id, "info", "[cold-start] Bot task restored on worker boot.")
+            except Exception as exc:
+                reason = str(exc)
+                print(f"[worker] Cold start: FAILED to launch {bot_id} ({bot_name}): {reason}", flush=True)
+                failed.append((bot_id, reason))
+                try:
+                    db.table("bots").update({
+                        "status": "error",
+                        "desired_status": "stopped",
+                        "error_message": reason,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", bot_id).execute()
+                    bot_manager._add_log(bot_id, "error",
+                        f"[cold-start] Bot failed to restore on worker boot: {reason}")
+                except Exception as db_err:
+                    print(f"[worker] Cold start: failed to update DB for {bot_id}: {db_err}", flush=True)
+
+        # ── Pass 1 summary ──────────────────────────────────────────────────────
+        restored_ids = ", ".join(restored) if restored else "none"
+        if failed:
+            failed_parts = "; ".join(f"{bid} ({reason})" for bid, reason in failed)
+            print(
+                f"[worker] Worker boot: restored {len(restored)} bot(s) (ids: {restored_ids}), "
+                f"{len(failed)} failed (ids: {failed_parts})",
+                flush=True,
+            )
+        else:
+            print(
+                f"[worker] Worker boot: restored {len(restored)} bot(s) (ids: {restored_ids}), 0 failed.",
+                flush=True,
+            )
+
+    # ── Pass 2: correct stale status='running' for non-running bots ───────────
+    # Query ALL bots that still report status='running' in the DB.  Any of those
+    # that are NOT in our freshly-built task set (i.e. were not just restored in
+    # Pass 1) have a stale status left over from a previous Worker process.
+    # Correct them to 'stopped' now so the UI does not get stuck on "Stopping…".
+    try:
+        stale_result = (
+            db.table("bots")
+            .select("id, name, status, desired_status")
+            .eq("status", "running")
+            .execute()
         )
+        stale_bots = [
+            b for b in (stale_result.data or [])
+            if b.get("desired_status") != "running"  # NULL desired_status is treated as stopped
+        ]
+        if stale_bots:
+            print(
+                f"[worker] Cold start: found {len(stale_bots)} bot(s) with stale status='running' "
+                f"(desired_status is not 'running') — correcting now...",
+                flush=True,
+            )
+            for bot in stale_bots:
+                bot_id   = bot["id"]
+                bot_name = bot.get("name", bot_id)
+                print(
+                    f"[worker] Cold start: bot {bot_id} ({bot_name}) "
+                    f"status was stale ('running'), corrected to 'stopped' (no active task at boot)",
+                    flush=True,
+                )
+                try:
+                    db.table("bots").update({
+                        "status": "stopped",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", bot_id).execute()
+                except Exception as db_err:
+                    print(f"[worker] Cold start: failed to correct stale status for {bot_id}: {db_err}", flush=True)
+        else:
+            print("[worker] Cold start: no stale status fields found — DB is consistent.", flush=True)
+    except Exception as e:
+        print(f"[worker] Cold start: stale-status correction failed: {e}", flush=True)
+
+    print("[worker] Cold start complete.", flush=True)
 
 
 async def reconcile_loop():
@@ -166,13 +213,13 @@ async def reconcile_loop():
                 wallet_address = user_row.get("wallet_address", "")
 
                 if desired == "running" and not is_running_locally:
+                    # ── Case 1: should be running, task is absent → start it ───
                     if not wallet_address:
                         print(f"[worker] Cannot start bot {bot_id} — wallet_address missing (user row: {user_row})", flush=True)
                         continue
                     print(f"[worker] Starting bot {bot_id} ({bot.get('name')}) for wallet {wallet_address[:8]}...", flush=True)
                     try:
                         cfg = bot.get("config", {})
-                        print(f"[worker] DEBUG bot_id={bot_id} bot_type_in_config={cfg.get('bot_type')} full_config_keys={list(cfg.keys())}", flush=True)
                         await bot_manager.start(bot_id, cfg, wallet_address)
                         db.table("bots").update({
                             "status": "running",
@@ -186,7 +233,8 @@ async def reconcile_loop():
                             "updated_at": datetime.now(timezone.utc).isoformat(),
                         }).eq("id", bot_id).execute()
 
-                elif desired == "stopped" and is_running_locally:
+                elif desired != "running" and is_running_locally:
+                    # ── Case 2: should NOT be running, task exists → stop it ───
                     print(f"[worker] Stopping bot {bot_id} ({bot.get('name')})", flush=True)
                     await bot_manager.stop(bot_id)
                     db.table("bots").update({
@@ -196,10 +244,27 @@ async def reconcile_loop():
                     }).eq("id", bot_id).execute()
 
                 elif desired == "running" and is_running_locally:
-                    # Bot already running as expected — just update heartbeat
+                    # ── Case 3: running as expected → just update heartbeat ────
                     db.table("bots").update({
                         "last_heartbeat": datetime.now(timezone.utc).isoformat(),
                     }).eq("id", bot_id).execute()
+
+                else:
+                    # ── Case 4 (was missing): desired != running, no local task ─
+                    # No task action needed — but the 'status' column may be stale
+                    # (e.g. 'running' left over from a crashed/restarted Worker).
+                    # Correct it unconditionally so the UI never gets stuck.
+                    current_status = bot.get("status")
+                    if current_status not in ("stopped", "error"):
+                        print(
+                            f"[worker] Reconcile: bot {bot_id} ({bot.get('name')}) "
+                            f"status was stale ('{current_status}'), corrected to 'stopped' (no active task)",
+                            flush=True,
+                        )
+                        db.table("bots").update({
+                            "status": "stopped",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", bot_id).execute()
 
         except Exception as e:
             print(f"[worker] Reconciliation error: {e}", flush=True)
