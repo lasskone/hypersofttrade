@@ -370,17 +370,33 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     if (!result || !walletAddress) return
     setSaving(true); setSaveError('')
     try {
-      const res = await fetch(`${API_URL}/backtest/saved`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wallet_address: walletAddress,
-          name: saveName.trim() || 'Saved Backtest',
-          full_config: buildFullConfig(),
-          results: result,
-        }),
-      })
-      if (!res.ok) { const d = await res.json(); throw new Error(d.detail ?? 'Save failed') }
+      // Separate fetch() network errors from HTTP error responses so the modal
+      // always shows the REAL cause instead of the generic "Failed to fetch".
+      let res: Response
+      try {
+        res = await fetch(`${API_URL}/backtest/saved`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            wallet_address: walletAddress,
+            name: saveName.trim() || 'Saved Backtest',
+            full_config: buildFullConfig(),
+            results: result,
+          }),
+        })
+      } catch (networkErr: any) {
+        // fetch() itself threw — no response received at all (server down, CORS
+        // preflight blocked, no network, etc.)
+        throw new Error(`No response from server — ${networkErr.message}. Check that the API is reachable and the backend has been deployed.`)
+      }
+      if (!res.ok) {
+        // Server responded but with an error status — read the body as text first
+        // so we handle both JSON and HTML error pages safely.
+        const text = await res.text().catch(() => '')
+        let detail = text
+        try { detail = (JSON.parse(text) as any)?.detail ?? text } catch { /* not JSON */ }
+        throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`)
+      }
       setShowSaveModal(false)
       await fetchSavedBacktests()
     } catch (e: any) { setSaveError(e.message) }
