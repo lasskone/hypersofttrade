@@ -95,6 +95,29 @@ interface BacktestResult {
   bot_type: string
 }
 
+interface SavedBacktestConfig {
+  bot_type: string
+  symbol: string
+  dex: string
+  interval: string
+  allocation: number
+  start_date: string
+  end_date: string
+  active_period: string
+  params: Record<string, number>
+}
+
+interface SavedBacktest {
+  id: string
+  name: string
+  bot_type: string
+  symbol: string
+  dex: string
+  full_config: SavedBacktestConfig
+  results: BacktestResult
+  created_at: string
+}
+
 const fmt = (n: number, dec = 2) => n.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: Math.max(dec, 4) })
 
 function EquityChart({ data, allocation, color }: { data: { time: number; value: number }[], allocation: number, color: string }) {
@@ -187,6 +210,22 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const [error, setError] = useState('')
   const [showDeploy, setShowDeploy] = useState(false)
 
+  // Sub-tabs
+  const [activeMainTab, setActiveMainTab] = useState<'run' | 'saved'>('run')
+
+  // Save modal
+  const [showSaveModal, setShowSaveModal] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+
+  // Saved backtests list
+  const [savedBacktests, setSavedBacktests] = useState<SavedBacktest[]>([])
+  const [savedLoading, setSavedLoading] = useState(false)
+
+  // Delete confirmation
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<{ id: string; name: string } | null>(null)
+
   const config = BOT_CONFIGS[botType]
 
   // Load markets
@@ -201,6 +240,11 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
       })
       .catch(() => setMarketsLoading(false))
   }, [])
+
+  // Load saved backtests on mount and when wallet changes
+  useEffect(() => {
+    if (walletAddress) fetchSavedBacktests()
+  }, [walletAddress])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -239,28 +283,36 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     setEndDate(end.toISOString().split('T')[0])
   }
 
-  const computeLimit = () => {
-    const intervalMs = INTERVALS.find(i => i.label === interval)?.ms ?? 14_400_000
-    const start = new Date(startDate).getTime()
-    const end = new Date(endDate).getTime()
+  const computeLimit = (iv: string, sd: string, ed: string) => {
+    const intervalMs = INTERVALS.find(i => i.label === iv)?.ms ?? 14_400_000
+    const start = new Date(sd).getTime()
+    const end = new Date(ed).getTime()
     return Math.min(Math.ceil((end - start) / intervalMs), 5000)
   }
 
-  const handleRun = async () => {
-    if (!selectedMarket) { setError('Please select a market'); return }
+  // ── Core backtest runner — takes all params explicitly (safe for auto-run after load) ──
+  const runBacktestWithConfig = async (cfg: {
+    market: Market
+    bot_type: string
+    iv: string
+    alloc: number
+    sd: string
+    ed: string
+    fieldParams: Record<string, number>
+  }) => {
     setLoading(true); setError(''); setResult(null)
     try {
       const body: Record<string, any> = {
-        bot_type: botType,
-        symbol: selectedMarket.name,
-        dex: selectedMarket.dex === 'main' ? '' : selectedMarket.dex,
-        interval,
-        limit: computeLimit(),
-        allocation: parseFloat(allocation),
-        start_date: startDate,
-        end_date: endDate,
+        bot_type: cfg.bot_type,
+        symbol: cfg.market.name,
+        dex: cfg.market.dex === 'main' ? '' : cfg.market.dex,
+        interval: cfg.iv,
+        limit: computeLimit(cfg.iv, cfg.sd, cfg.ed),
+        allocation: cfg.alloc,
+        start_date: cfg.sd,
+        end_date: cfg.ed,
+        ...cfg.fieldParams,
       }
-      config.fields.forEach(f => { body[f.key] = getParam(f.key, f.default) })
       const res = await fetch(`${API_URL}/backtest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -273,239 +325,472 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     finally { setLoading(false) }
   }
 
-  const s = { input: { width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }, label: { fontSize: 11, color: '#6b7280', marginBottom: 4, display: 'block' as const, fontWeight: 600, letterSpacing: '0.05em' as const } }
+  const handleRun = async () => {
+    if (!selectedMarket) { setError('Please select a market'); return }
+    const fieldParams: Record<string, number> = {}
+    config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
+    await runBacktestWithConfig({
+      market: selectedMarket,
+      bot_type: botType,
+      iv: interval,
+      alloc: parseFloat(allocation),
+      sd: startDate,
+      ed: endDate,
+      fieldParams,
+    })
+  }
+
+  // ── Build the full config snapshot to save ──
+  const buildFullConfig = (): SavedBacktestConfig => {
+    const fieldParams: Record<string, number> = {}
+    config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
+    return {
+      bot_type: botType,
+      symbol: selectedMarket?.name ?? '',
+      dex: selectedMarket ? (selectedMarket.dex === 'main' ? '' : selectedMarket.dex) : '',
+      interval,
+      allocation: parseFloat(allocation),
+      start_date: startDate,
+      end_date: endDate,
+      active_period: activePeriod,
+      params: fieldParams,
+    }
+  }
+
+  // ── Save ──
+  const handleSaveClick = () => {
+    if (!result || !selectedMarket) return
+    const cfgLabel = BOT_CONFIGS[botType]?.label ?? botType
+    setSaveName(`${cfgLabel} — ${selectedMarket.name} ${interval}`)
+    setSaveError('')
+    setShowSaveModal(true)
+  }
+
+  const handleSaveConfirm = async () => {
+    if (!result || !walletAddress) return
+    setSaving(true); setSaveError('')
+    try {
+      const res = await fetch(`${API_URL}/backtest/saved`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          name: saveName.trim() || 'Saved Backtest',
+          full_config: buildFullConfig(),
+          results: result,
+        }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.detail ?? 'Save failed') }
+      setShowSaveModal(false)
+      await fetchSavedBacktests()
+    } catch (e: any) { setSaveError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  // ── Fetch saved list ──
+  const fetchSavedBacktests = async () => {
+    if (!walletAddress) return
+    setSavedLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/backtest/saved?wallet_address=${encodeURIComponent(walletAddress)}`)
+      if (res.ok) setSavedBacktests(await res.json())
+    } catch {}
+    finally { setSavedLoading(false) }
+  }
+
+  // ── Load saved config back into form and auto-run ──
+  const loadSavedBacktest = async (saved: SavedBacktest) => {
+    const cfg = saved.full_config
+    const dexSearch = cfg.dex || 'main'
+    const market = markets.find(m => m.name === cfg.symbol && m.dex === dexSearch)
+    if (!market) { setError(`Market "${cfg.symbol}" not found in loaded markets`); return }
+
+    // Restore all form state
+    setBotType(cfg.bot_type)
+    setSelectedMarket(market)
+    setInterval(cfg.interval)
+    setAllocation(String(cfg.allocation))
+    setStartDate(cfg.start_date)
+    setEndDate(cfg.end_date)
+    setActivePeriod(cfg.active_period ?? '')
+    setUseCustomDates(!cfg.active_period)
+    setParams(cfg.params ?? {})
+
+    // Switch to run tab
+    setActiveMainTab('run')
+
+    // Auto-run immediately with explicit params (no state timing issue)
+    await runBacktestWithConfig({
+      market,
+      bot_type: cfg.bot_type,
+      iv: cfg.interval,
+      alloc: cfg.allocation,
+      sd: cfg.start_date,
+      ed: cfg.end_date,
+      fieldParams: cfg.params ?? {},
+    })
+  }
+
+  // ── Delete ──
+  const handleDeleteConfirm = async (id: string) => {
+    if (!walletAddress) return
+    try {
+      await fetch(`${API_URL}/backtest/saved/${id}?wallet_address=${encodeURIComponent(walletAddress)}`, { method: 'DELETE' })
+      setConfirmDeleteItem(null)
+      await fetchSavedBacktests()
+    } catch {}
+  }
+
+  const s = {
+    input: { width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
+    label: { fontSize: 11, color: '#6b7280', marginBottom: 4, display: 'block' as const, fontWeight: 600, letterSpacing: '0.05em' as const },
+  }
   const pnlColor = (v: number) => v >= 0 ? '#10b981' : '#ef4444'
 
   return (
     <div style={{ padding: 24, backgroundColor: '#0a0a0f', minHeight: '100%' }}>
-      <div style={{ marginBottom: 24 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: 20, fontWeight: 900, color: 'white', margin: 0 }}>Backtest Console</h2>
         <p style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>Simulate any strategy on historical Hyperliquid data before deploying real capital</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
-
-        {/* LEFT — Config */}
-        <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-          {/* Strategy selector */}
-          <div>
-            <label style={s.label}>STRATEGY</label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {Object.entries(BOT_CONFIGS).map(([k, v]) => (
-                <button key={k} onClick={() => { setBotType(k); setResult(null) }}
-                  style={{ flex: 1, padding: '8px 4px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', transition: 'all 0.15s',
-                    background: botType === k ? v.color + '22' : '#13131f',
-                    color: botType === k ? v.color : '#6b7280',
-                    outline: botType === k ? `1px solid ${v.color}66` : '1px solid #1a1a2e',
-                  }}>
-                  {v.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Market selector */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <label style={s.label}>MARKET</label>
-              {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
-            </div>
-            <div ref={dropdownRef} style={{ position: 'relative' }}>
-              {showSearch ? (
-                <input autoFocus type="text" value={marketSearch}
-                  onChange={e => setMarketSearch(e.target.value)}
-                  placeholder="Search markets…"
-                  style={{ ...s.input, border: '1px solid #00d4aa', padding: '10px 12px' }}
-                />
-              ) : (
-                <div onClick={() => setShowSearch(true)}
-                  style={{ ...s.input, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px' }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
-                      {marketsLoading ? 'Loading…' : (selectedMarket?.name ?? 'Select Market')}
-                    </span>
-                    {selectedMarket && (
-                      <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
-                        {selectedMarket.dex === 'main' ? 'HL' : selectedMarket.dex.toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                  <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
-                </div>
-              )}
-              {showSearch && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 300, marginTop: 4 }}>
-                  {dexGroups.map(dexName => {
-                    const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
-                    if (!dexMarkets.length) return null
-                    return (
-                      <div key={dexName}>
-                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1, position: 'sticky', top: 0 }}>
-                          {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
-                        </div>
-                        {dexMarkets.map(m => (
-                          <div key={m.name} onClick={() => handleSelectMarket(m)}
-                            style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: selectedMarket?.name === m.name ? '#1a1a2e' : 'transparent' }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
-                            onMouseLeave={e => (e.currentTarget.style.background = selectedMarket?.name === m.name ? '#1a1a2e' : 'transparent')}>
-                            <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
-                            <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${fmt(m.mark_price)}` : '—'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })}
-                  {!filteredMarkets.length && <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Interval */}
-          <div>
-            <label style={s.label}>INTERVAL</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {INTERVALS.map(iv => (
-                <button key={iv.label} onClick={() => setInterval(iv.label)}
-                  style={{ padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
-                    background: interval === iv.label ? '#00d4aa22' : '#13131f',
-                    color: interval === iv.label ? '#00d4aa' : '#6b7280',
-                    outline: interval === iv.label ? '1px solid #00d4aa44' : '1px solid #1a1a2e',
-                  }}>
-                  {iv.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Period */}
-          <div>
-            <label style={s.label}>PERIOD</label>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-              {PERIOD_PRESETS.map(p => (
-                <button key={p.label} onClick={() => handlePeriodPreset(p)}
-                  style={{ flex: 1, padding: '6px 4px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
-                    background: activePeriod === p.label && !useCustomDates ? '#00d4aa22' : '#13131f',
-                    color: activePeriod === p.label && !useCustomDates ? '#00d4aa' : '#6b7280',
-                    outline: activePeriod === p.label && !useCustomDates ? '1px solid #00d4aa44' : '1px solid #1a1a2e',
-                  }}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            {/* Custom date range */}
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ ...s.label, marginBottom: 2 }}>FROM</p>
-                <input type="date" value={startDate}
-                  onChange={e => { setStartDate(e.target.value); setUseCustomDates(true); setActivePeriod('') }}
-                  style={{ ...s.input, colorScheme: 'dark' }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ ...s.label, marginBottom: 2 }}>TO</p>
-                <input type="date" value={endDate}
-                  onChange={e => { setEndDate(e.target.value); setUseCustomDates(true); setActivePeriod('') }}
-                  style={{ ...s.input, colorScheme: 'dark' }} />
-              </div>
-            </div>
-          </div>
-
-          {/* Allocation */}
-          <div>
-            <label style={s.label}>ALLOCATION (USDC)</label>
-            <input style={s.input} type="number" value={allocation} onChange={e => setAllocation(e.target.value)} />
-          </div>
-
-          {/* Strategy params */}
-          <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
-            <label style={{ ...s.label, marginBottom: 10 }}>STRATEGY PARAMETERS</label>
-            {config.fields.map(f => (
-              <div key={f.key} style={{ marginBottom: 12 }}>
-                <label style={s.label}>{f.label.toUpperCase()}</label>
-                <input style={s.input} type="number" value={getParam(f.key, f.default)}
-                  onChange={e => setParams(p => ({ ...p, [f.key]: parseFloat(e.target.value) || 0 }))} />
-                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>{f.hint}</p>
-              </div>
-            ))}
-          </div>
-
-          {error && <p style={{ fontSize: 12, color: '#ef4444' }}>{error}</p>}
-
-          <button onClick={handleRun} disabled={loading || !selectedMarket}
-            style={{ width: '100%', padding: '13px 0', borderRadius: 8, fontWeight: 800, fontSize: 14, cursor: loading ? 'wait' : 'pointer', border: 'none', opacity: loading ? 0.7 : 1, transition: 'opacity 0.2s',
-              background: loading ? '#1a1a2e' : config.color,
-              color: loading ? '#6b7280' : (botType === 'grid' ? '#000' : '#fff'),
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {([
+          { key: 'run' as const, label: '▶  Run Backtest' },
+          { key: 'saved' as const, label: `Saved${savedBacktests.length ? ` (${savedBacktests.length})` : ''}` },
+        ] as const).map(tab => (
+          <button key={tab.key} onClick={() => { setActiveMainTab(tab.key); if (tab.key === 'saved') fetchSavedBacktests() }}
+            style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: 'none',
+              background: activeMainTab === tab.key ? '#00d4aa22' : '#0d0d14',
+              color: activeMainTab === tab.key ? '#00d4aa' : '#6b7280',
+              outline: activeMainTab === tab.key ? '1px solid #00d4aa44' : '1px solid #1a1a2e',
             }}>
-            {loading ? '⏳ Running simulation...' : '▶  Run Backtest'}
+            {tab.label}
           </button>
-        </div>
-
-        {/* RIGHT — Results */}
-        <div>
-          {!result && !loading && (
-            <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
-                <p style={{ color: '#6b7280', fontSize: 14 }}>Configure your strategy and click Run Backtest</p>
-                <p style={{ color: '#374151', fontSize: 12, marginTop: 4 }}>Results and equity curve will appear here</p>
-              </div>
-            </div>
-          )}
-
-          {loading && (
-            <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ width: 36, height: 36, border: `2px solid ${config.color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
-                <p style={{ color: '#6b7280', fontSize: 13 }}>Fetching data & running simulation...</p>
-                <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-              </div>
-            </div>
-          )}
-
-          {result && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Stats */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-                {[
-                  { label: 'Total PnL', value: `${result.pnl_pct >= 0 ? '+' : ''}${result.pnl_pct}%`, sub: `${result.pnl_usd >= 0 ? '+' : ''}$${result.pnl_usd}`, color: pnlColor(result.pnl_pct) },
-                  { label: 'vs Buy & Hold', value: `${result.bnh_pct >= 0 ? '+' : ''}${result.bnh_pct}%`, sub: result.pnl_pct >= result.bnh_pct ? '✅ Strategy wins' : '❌ B&H wins', color: pnlColor(result.pnl_pct - result.bnh_pct) },
-                  { label: 'Win Rate', value: `${result.win_rate}%`, sub: `${result.total_trades} trades`, color: result.win_rate >= 50 ? '#10b981' : '#ef4444' },
-                  { label: 'Max Drawdown', value: `-${result.max_drawdown_pct}%`, sub: 'Peak to trough', color: '#ef4444' },
-                  { label: 'Final Equity', value: `$${result.final_equity.toFixed(2)}`, sub: `Started at $${allocation}`, color: 'white' },
-                  { label: 'Data', value: `${result.candles_used}`, sub: `${result.interval} candles · ${result.symbol}`, color: '#6b7280' },
-                ].map(({ label, value, sub, color }) => (
-                  <div key={label} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 10, padding: '14px 16px' }}>
-                    <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>{label}</p>
-                    <p style={{ fontSize: 22, fontWeight: 900, color, margin: '0 0 2px' }}>{value}</p>
-                    <p style={{ fontSize: 11, color: '#4b5563' }}>{sub}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Chart */}
-              <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 20 }}>
-                <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, letterSpacing: '0.08em', marginBottom: 16 }}>EQUITY CURVE</p>
-                <EquityChart data={result.equity_curve} allocation={parseFloat(allocation)} color={config.color} />
-              </div>
-
-              {/* Deploy CTA */}
-              <div style={{ background: '#0d0d14', border: `1px solid ${config.color}44`, borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-                <div>
-                  <p style={{ fontWeight: 800, color: 'white', fontSize: 14, margin: '0 0 2px' }}>Like these results?</p>
-                  <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>Deploy this exact strategy with real capital on your account</p>
-                </div>
-                <button
-                  onClick={() => setShowDeploy(true)}
-                  style={{ padding: '10px 20px', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap', background: config.color, color: botType === 'grid' ? '#000' : '#fff' }}>
-                  Deploy Strategy →
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        ))}
       </div>
 
+      {/* ── RUN tab ── */}
+      {activeMainTab === 'run' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
+
+          {/* LEFT — Config */}
+          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Strategy selector */}
+            <div>
+              <label style={s.label}>STRATEGY</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {Object.entries(BOT_CONFIGS).map(([k, v]) => (
+                  <button key={k} onClick={() => { setBotType(k); setResult(null) }}
+                    style={{ flex: 1, padding: '8px 4px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', transition: 'all 0.15s',
+                      background: botType === k ? v.color + '22' : '#13131f',
+                      color: botType === k ? v.color : '#6b7280',
+                      outline: botType === k ? `1px solid ${v.color}66` : '1px solid #1a1a2e',
+                    }}>
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Market selector */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={s.label}>MARKET</label>
+                {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
+              </div>
+              <div ref={dropdownRef} style={{ position: 'relative' }}>
+                {showSearch ? (
+                  <input autoFocus type="text" value={marketSearch}
+                    onChange={e => setMarketSearch(e.target.value)}
+                    placeholder="Search markets…"
+                    style={{ ...s.input, border: '1px solid #00d4aa', padding: '10px 12px' }}
+                  />
+                ) : (
+                  <div onClick={() => setShowSearch(true)}
+                    style={{ ...s.input, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
+                        {marketsLoading ? 'Loading…' : (selectedMarket?.name ?? 'Select Market')}
+                      </span>
+                      {selectedMarket && (
+                        <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
+                          {selectedMarket.dex === 'main' ? 'HL' : selectedMarket.dex.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
+                  </div>
+                )}
+                {showSearch && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 300, marginTop: 4 }}>
+                    {dexGroups.map(dexName => {
+                      const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
+                      if (!dexMarkets.length) return null
+                      return (
+                        <div key={dexName}>
+                          <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1, position: 'sticky', top: 0 }}>
+                            {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
+                          </div>
+                          {dexMarkets.map(m => (
+                            <div key={m.name} onClick={() => handleSelectMarket(m)}
+                              style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: selectedMarket?.name === m.name ? '#1a1a2e' : 'transparent' }}
+                              onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                              onMouseLeave={e => (e.currentTarget.style.background = selectedMarket?.name === m.name ? '#1a1a2e' : 'transparent')}>
+                              <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                              <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${fmt(m.mark_price)}` : '—'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
+                    {!filteredMarkets.length && <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Interval */}
+            <div>
+              <label style={s.label}>INTERVAL</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {INTERVALS.map(iv => (
+                  <button key={iv.label} onClick={() => setInterval(iv.label)}
+                    style={{ padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                      background: interval === iv.label ? '#00d4aa22' : '#13131f',
+                      color: interval === iv.label ? '#00d4aa' : '#6b7280',
+                      outline: interval === iv.label ? '1px solid #00d4aa44' : '1px solid #1a1a2e',
+                    }}>
+                    {iv.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Period */}
+            <div>
+              <label style={s.label}>PERIOD</label>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+                {PERIOD_PRESETS.map(p => (
+                  <button key={p.label} onClick={() => handlePeriodPreset(p)}
+                    style={{ flex: 1, padding: '6px 4px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                      background: activePeriod === p.label && !useCustomDates ? '#00d4aa22' : '#13131f',
+                      color: activePeriod === p.label && !useCustomDates ? '#00d4aa' : '#6b7280',
+                      outline: activePeriod === p.label && !useCustomDates ? '1px solid #00d4aa44' : '1px solid #1a1a2e',
+                    }}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ ...s.label, marginBottom: 2 }}>FROM</p>
+                  <input type="date" value={startDate}
+                    onChange={e => { setStartDate(e.target.value); setUseCustomDates(true); setActivePeriod('') }}
+                    style={{ ...s.input, colorScheme: 'dark' }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ ...s.label, marginBottom: 2 }}>TO</p>
+                  <input type="date" value={endDate}
+                    onChange={e => { setEndDate(e.target.value); setUseCustomDates(true); setActivePeriod('') }}
+                    style={{ ...s.input, colorScheme: 'dark' }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Allocation */}
+            <div>
+              <label style={s.label}>ALLOCATION (USDC)</label>
+              <input style={s.input} type="number" value={allocation} onChange={e => setAllocation(e.target.value)} />
+            </div>
+
+            {/* Strategy params */}
+            <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
+              <label style={{ ...s.label, marginBottom: 10 }}>STRATEGY PARAMETERS</label>
+              {config.fields.map(f => (
+                <div key={f.key} style={{ marginBottom: 12 }}>
+                  <label style={s.label}>{f.label.toUpperCase()}</label>
+                  <input style={s.input} type="number" value={getParam(f.key, f.default)}
+                    onChange={e => setParams(p => ({ ...p, [f.key]: parseFloat(e.target.value) || 0 }))} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>{f.hint}</p>
+                </div>
+              ))}
+            </div>
+
+            {error && <p style={{ fontSize: 12, color: '#ef4444' }}>{error}</p>}
+
+            <button onClick={handleRun} disabled={loading || !selectedMarket}
+              style={{ width: '100%', padding: '13px 0', borderRadius: 8, fontWeight: 800, fontSize: 14, cursor: loading ? 'wait' : 'pointer', border: 'none', opacity: loading ? 0.7 : 1, transition: 'opacity 0.2s',
+                background: loading ? '#1a1a2e' : config.color,
+                color: loading ? '#6b7280' : (botType === 'grid' ? '#000' : '#fff'),
+              }}>
+              {loading ? '⏳ Running simulation...' : '▶  Run Backtest'}
+            </button>
+          </div>
+
+          {/* RIGHT — Results */}
+          <div>
+            {!result && !loading && (
+              <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
+                  <p style={{ color: '#6b7280', fontSize: 14 }}>Configure your strategy and click Run Backtest</p>
+                  <p style={{ color: '#374151', fontSize: 12, marginTop: 4 }}>Results and equity curve will appear here</p>
+                </div>
+              </div>
+            )}
+
+            {loading && (
+              <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ width: 36, height: 36, border: `2px solid ${config.color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
+                  <p style={{ color: '#6b7280', fontSize: 13 }}>Fetching data & running simulation...</p>
+                  <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+                </div>
+              </div>
+            )}
+
+            {result && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* Stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                  {[
+                    { label: 'Total PnL', value: `${result.pnl_pct >= 0 ? '+' : ''}${result.pnl_pct}%`, sub: `${result.pnl_usd >= 0 ? '+' : ''}$${result.pnl_usd}`, color: pnlColor(result.pnl_pct) },
+                    { label: 'vs Buy & Hold', value: `${result.bnh_pct >= 0 ? '+' : ''}${result.bnh_pct}%`, sub: result.pnl_pct >= result.bnh_pct ? '✅ Strategy wins' : '❌ B&H wins', color: pnlColor(result.pnl_pct - result.bnh_pct) },
+                    { label: 'Win Rate', value: `${result.win_rate}%`, sub: `${result.total_trades} trades`, color: result.win_rate >= 50 ? '#10b981' : '#ef4444' },
+                    { label: 'Max Drawdown', value: `-${result.max_drawdown_pct}%`, sub: 'Peak to trough', color: '#ef4444' },
+                    { label: 'Final Equity', value: `$${result.final_equity.toFixed(2)}`, sub: `Started at $${allocation}`, color: 'white' },
+                    { label: 'Data', value: `${result.candles_used}`, sub: `${result.interval} candles · ${result.symbol}`, color: '#6b7280' },
+                  ].map(({ label, value, sub, color }) => (
+                    <div key={label} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 10, padding: '14px 16px' }}>
+                      <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>{label}</p>
+                      <p style={{ fontSize: 22, fontWeight: 900, color, margin: '0 0 2px' }}>{value}</p>
+                      <p style={{ fontSize: 11, color: '#4b5563' }}>{sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Chart */}
+                <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 20 }}>
+                  <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, letterSpacing: '0.08em', marginBottom: 16 }}>EQUITY CURVE</p>
+                  <EquityChart data={result.equity_curve} allocation={parseFloat(allocation)} color={config.color} />
+                </div>
+
+                {/* Action row */}
+                <div style={{ background: '#0d0d14', border: `1px solid ${config.color}44`, borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                  <div>
+                    <p style={{ fontWeight: 800, color: 'white', fontSize: 14, margin: '0 0 2px' }}>Like these results?</p>
+                    <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>Save this configuration or deploy it with real capital</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    {walletAddress && (
+                      <button onClick={handleSaveClick}
+                        style={{ padding: '10px 16px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                        Save Config
+                      </button>
+                    )}
+                    <button onClick={() => setShowDeploy(true)}
+                      style={{ padding: '10px 20px', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap', background: config.color, color: botType === 'grid' ? '#000' : '#fff' }}>
+                      Deploy Strategy →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── SAVED tab ── */}
+      {activeMainTab === 'saved' && (
+        <div style={{ maxWidth: 900 }}>
+          {savedLoading ? (
+            <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}>
+              <p style={{ color: '#6b7280', fontSize: 13 }}>Loading saved backtests...</p>
+            </div>
+          ) : savedBacktests.length === 0 ? (
+            <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 260, gap: 8 }}>
+              <div style={{ fontSize: 40, marginBottom: 4 }}>📂</div>
+              <p style={{ color: '#6b7280', fontSize: 14, margin: 0 }}>No saved backtests yet</p>
+              <p style={{ color: '#374151', fontSize: 12, margin: 0 }}>Run a backtest and click "Save Config" to save it here</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {savedBacktests.map(saved => {
+                const botColor = BOT_CONFIGS[saved.bot_type]?.color ?? '#6b7280'
+                const botLabel = BOT_CONFIGS[saved.bot_type]?.label ?? saved.bot_type
+                const pnl = saved.results?.pnl_pct ?? 0
+                const dd = saved.results?.max_drawdown_pct ?? 0
+                const cfg = saved.full_config
+                const savedDate = new Date(saved.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                return (
+                  <div key={saved.id}
+                    onClick={() => loadSavedBacktest(saved)}
+                    style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 10, padding: '14px 18px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 16, transition: 'border-color 0.15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = botColor + '55')}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#1a1a2e')}>
+
+                    {/* Color stripe */}
+                    <div style={{ width: 4, height: 48, borderRadius: 2, background: botColor, flexShrink: 0 }} />
+
+                    {/* Name + badges */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                        <span style={{ color: 'white', fontWeight: 700, fontSize: 14 }}>{saved.name}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: botColor + '22', color: botColor }}>
+                          {botLabel}
+                        </span>
+                      </div>
+                      <p style={{ color: '#6b7280', fontSize: 12, margin: 0 }}>
+                        {cfg.symbol}{cfg.dex ? ` (${cfg.dex.toUpperCase()})` : ''} · {cfg.interval} · {cfg.start_date} → {cfg.end_date}
+                      </p>
+                    </div>
+
+                    {/* Metrics */}
+                    <div style={{ display: 'flex', gap: 20, flexShrink: 0, alignItems: 'center' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 2px' }}>Total PnL</p>
+                        <p style={{ fontSize: 16, fontWeight: 900, color: pnlColor(pnl), margin: 0 }}>
+                          {pnl >= 0 ? '+' : ''}{pnl}%
+                        </p>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 2px' }}>Max DD</p>
+                        <p style={{ fontSize: 16, fontWeight: 900, color: '#ef4444', margin: 0 }}>-{dd}%</p>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 2px' }}>Saved</p>
+                        <p style={{ fontSize: 12, color: '#4b5563', margin: 0 }}>{savedDate}</p>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button
+                        title="Re-run this backtest"
+                        onClick={e => { e.stopPropagation(); loadSavedBacktest(saved) }}
+                        style={{ padding: '6px 10px', borderRadius: 6, fontSize: 13, cursor: 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: '#9ca3af' }}>
+                        ↺
+                      </button>
+                      <button
+                        title="Delete"
+                        onClick={e => { e.stopPropagation(); setConfirmDeleteItem({ id: saved.id, name: saved.name }) }}
+                        style={{ padding: '6px 10px', borderRadius: 6, fontSize: 13, cursor: 'pointer', border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.07)', color: '#ef4444' }}>
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Deploy modal ── */}
       {showDeploy && walletAddress && (
         <CreateBotModal
           walletAddress={walletAddress}
@@ -517,6 +802,63 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
           onClose={() => setShowDeploy(false)}
           onCreated={() => setShowDeploy(false)}
         />
+      )}
+
+      {/* ── Save name modal ── */}
+      {showSaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          onClick={() => setShowSaveModal(false)}>
+          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 16, padding: 24, width: 400 }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ color: 'white', fontWeight: 800, fontSize: 16, margin: '0 0 16px' }}>Save Backtest Configuration</h3>
+            <label style={s.label}>NAME</label>
+            <input
+              autoFocus
+              style={{ ...s.input, marginBottom: 0 }}
+              value={saveName}
+              onChange={e => setSaveName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveConfirm()}
+              placeholder="e.g. Grid BTC 4h"
+            />
+            {saveError && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{saveError}</p>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={() => setShowSaveModal(false)}
+                style={{ flex: 1, padding: '10px 0', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer', border: '1px solid #1a1a2e', background: 'transparent', color: '#6b7280' }}>
+                Cancel
+              </button>
+              <button onClick={handleSaveConfirm} disabled={saving || !saveName.trim()}
+                style={{ flex: 2, padding: '10px 0', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: saving ? 'wait' : 'pointer', border: 'none',
+                  background: config.color, color: botType === 'grid' ? '#000' : '#fff', opacity: (saving || !saveName.trim()) ? 0.6 : 1 }}>
+                {saving ? 'Saving...' : 'Save Configuration'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete confirm modal ── */}
+      {confirmDeleteItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          onClick={() => setConfirmDeleteItem(null)}>
+          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 16, padding: 24, width: 380 }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ color: 'white', fontWeight: 800, fontSize: 16, margin: '0 0 8px' }}>Delete Saved Backtest</h3>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 20px', lineHeight: 1.5 }}>
+              Delete <span style={{ color: 'white', fontWeight: 700 }}>"{confirmDeleteItem.name}"</span>?{' '}
+              This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setConfirmDeleteItem(null)}
+                style={{ flex: 1, padding: '10px 0', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer', border: '1px solid #1a1a2e', background: 'transparent', color: '#6b7280' }}>
+                Cancel
+              </button>
+              <button onClick={() => handleDeleteConfirm(confirmDeleteItem.id)}
+                style={{ flex: 1, padding: '10px 0', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: 'pointer', border: 'none', background: '#ef4444', color: 'white' }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
