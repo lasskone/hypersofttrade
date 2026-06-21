@@ -94,6 +94,43 @@ function LiveDot() {
   );
 }
 
+function Tooltip({ text }: { text: string }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-block', marginLeft: 4, verticalAlign: 'middle' }}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+    >
+      <span style={{ fontSize: 10, color: '#4b5563', cursor: 'default', userSelect: 'none', lineHeight: 1 }}>ⓘ</span>
+      {visible && (
+        <span style={{
+          position: 'absolute',
+          top: 'calc(100% + 6px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 248,
+          padding: '8px 10px',
+          borderRadius: 8,
+          backgroundColor: '#13131f',
+          border: '1px solid #2a2a3e',
+          color: '#9ca3af',
+          fontSize: 11,
+          lineHeight: '1.55',
+          fontWeight: 400,
+          zIndex: 9999,
+          pointerEvents: 'none',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.7)',
+          whiteSpace: 'normal',
+          display: 'block',
+        }}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ─── Position management modal ───────────────────────────────────────────────
 function PositionModal({ pos, walletAddress, onClose, onAction }: {
   pos: any;
@@ -477,13 +514,14 @@ export function OverviewPanel({
   const totalAllocated = activeBots.reduce((sum, b) => sum + (parseFloat(String(b.allocated_usdc ?? 0))), 0);
   const freeBalance = parseFloat(String(availableToTrade)) - totalAllocated;
 
-  const stats = [
+  const stats: { label: string; subtitle: string; value: string; color: string; live: boolean; tooltip?: string }[] = [
     {
       label: 'Account Value',
       subtitle: 'Perp margin + USDC spot',
       value: `$${fmt(accountValue)}`,
       color: '#ffffff',
       live: false,
+      tooltip: 'Total account equity — perp margin balance plus USDC spot balance combined.',
     },
     {
       label: 'Available to Trade',
@@ -491,6 +529,7 @@ export function OverviewPanel({
       value: `$${fmt(availableToTrade)}`,
       color: '#ffffff',
       live: false,
+      tooltip: 'Withdrawable balance — what you could actually use for a new trade or withdraw right now.',
     },
     {
       label: 'Open Positions',
@@ -519,13 +558,16 @@ export function OverviewPanel({
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        {stats.map(({ label, subtitle, value, color, live }) => (
+        {stats.map(({ label, subtitle, value, color, live, tooltip }) => (
           <div key={label} className="rounded-xl p-5 border transition-colors"
             style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
             onMouseEnter={e => (e.currentTarget.style.borderColor = '#00d4aa44')}
             onMouseLeave={e => (e.currentTarget.style.borderColor = '#1a1a2e')}>
             <div className="flex items-center mb-1">
-              <p className="text-xs text-gray-500">{label}</p>
+              <p className="text-xs text-gray-500">
+                {label}
+                {tooltip && <Tooltip text={tooltip} />}
+              </p>
               {live && <LiveDot />}
             </div>
             <p style={{ fontSize: 11, color: '#6b7280', marginTop: 2, marginBottom: 8 }}>{subtitle}</p>
@@ -540,16 +582,30 @@ export function OverviewPanel({
           {/* Summary strip */}
           <div className="grid grid-cols-3 gap-px border-b" style={{ borderColor: '#1a1a2e', backgroundColor: '#1a1a2e' }}>
             {[
-              { label: 'Total Allocated', value: `$${fmt(totalAllocated)}`, color: '#ffffff' },
+              {
+                label: 'Total Allocated',
+                value: `$${fmt(totalAllocated)}`,
+                color: '#ffffff' as string,
+                tip: 'Sum of the USDC allocation set on each of your currently active (running) bots.',
+              },
               {
                 label: 'Free / Unallocated',
                 value: `$${fmt(freeBalance)}`,
                 color: freeBalance < 0 ? '#ef4444' : freeBalance < totalAllocated * 0.2 ? '#f59e0b' : '#10b981',
+                tip: "Available to Trade minus Total Allocated. If negative, your bots are configured to use more capital than is actually free in your account right now — a likely cause of 'insufficient minimum value' order rejections.",
               },
-              { label: 'Available to Trade', value: `$${fmt(availableToTrade)}`, color: '#ffffff' },
-            ].map(({ label, value, color }) => (
+              {
+                label: 'Available to Trade',
+                value: `$${fmt(availableToTrade)}`,
+                color: '#ffffff' as string,
+                tip: 'Withdrawable balance — what you could actually use for a new trade or withdraw right now.',
+              },
+            ].map(({ label, value, color, tip }) => (
               <div key={label} className="px-5 py-3" style={{ backgroundColor: '#0d0d14' }}>
-                <p className="text-xs text-gray-500 mb-1">{label}</p>
+                <p className="text-xs text-gray-500 mb-1">
+                  {label}
+                  <Tooltip text={tip} />
+                </p>
                 <p className="text-sm font-bold" style={{ color }}>{value}</p>
               </div>
             ))}
@@ -559,7 +615,9 @@ export function OverviewPanel({
             <table className="w-full">
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                  <TH>Bot</TH><TH>Symbol</TH><TH>Allocated</TH><TH>Leverage</TH><TH>Buying Power</TH><TH>Status</TH>
+                  <TH>Bot</TH><TH>Symbol</TH><TH>Allocated</TH><TH>Leverage</TH>
+                  <TH>Buying Power <Tooltip text="Allocated capital × leverage — the maximum position size this bot's allocation can theoretically open." /></TH>
+                  <TH>Status</TH>
                 </tr>
               </thead>
               <tbody>
@@ -617,7 +675,10 @@ export function OverviewPanel({
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
-                  <TH>Mark Price</TH><TH>Notional</TH><TH>Margin</TH><TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
+                  <TH>Mark Price</TH>
+                  <TH>Notional <Tooltip text="Full leveraged exposure of this position — size × mark price." /></TH>
+                  <TH>Margin <Tooltip text="Real cash committed to this position — Notional ÷ Leverage." /></TH>
+                  <TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
                   <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
                 </tr>
               </thead>
