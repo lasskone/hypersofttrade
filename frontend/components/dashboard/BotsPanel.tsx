@@ -201,15 +201,21 @@ interface Market {
 }
 
 const statusColor = (b: Bot) => {
-  if (b.status === 'running') return '#00d4aa'
   if (b.status === 'error') return '#ef4444'
-  if (b.desired_status === 'running') return '#f59e0b'   // queued-to-start
-  if (b.desired_status === 'stopped' && b.status === 'running') return '#f59e0b'  // queued-to-stop
+  // Stopping: Worker is still running but desired_status was set to stopped
+  if (b.status === 'running' && b.desired_status === 'stopped') return '#f59e0b'
+  if (b.status === 'running') return '#00d4aa'
+  // Starting: desired_status is running but Worker hasn't launched it yet
+  if (b.desired_status === 'running') return '#f59e0b'
   return '#6b7280'
 }
 const statusLabel = (b: Bot) => {
-  if (b.status === 'running') return 'Running'
   if (b.status === 'error') return 'Error'
+  // Check for transitional states BEFORE the plain running/stopped checks so
+  // the badge changes immediately after a Stop/Start click (desired_status
+  // is updated instantly; status follows ~5 s later when the Worker catches up).
+  if (b.status === 'running' && b.desired_status === 'stopped') return 'Stopping...'
+  if (b.status === 'running') return 'Running'
   if (b.desired_status === 'running') return 'Starting...'
   return 'Stopped'
 }
@@ -273,28 +279,51 @@ export default function BotsPanel({ walletAddress }: Props) {
   }, [walletAddress, bots])
 
   const handleAction = async (bot: Bot, action: 'start' | 'stop' | 'delete') => {
-    try {
-      if (action === 'delete') {
-        setConfirmAction({
-          message: `Delete bot "${bot.name}"? This cannot be undone.`,
-          onConfirm: async () => {
-            await fetch(`${API_URL}/bots/${bot.id}`, { method: 'DELETE' })
+    if (action === 'delete') {
+      setConfirmAction({
+        message: `Delete bot "${bot.name}"? This cannot be undone.`,
+        onConfirm: async () => {
+          try {
+            const res = await fetch(`${API_URL}/bots/${bot.id}`, { method: 'DELETE' })
+            if (!res.ok) {
+              const text = await res.text().catch(() => '')
+              let detail = text
+              try { detail = (JSON.parse(text) as any)?.detail ?? text } catch { /* not JSON */ }
+              showToast(`Delete failed: HTTP ${res.status} ${detail}`)
+              setConfirmAction(null)
+              return
+            }
             showToast('Bot deleted')
             fetchBots()
-            setConfirmAction(null)
-          },
-        })
-        return
-      } else {
-        await fetch(`${API_URL}/bots/${bot.id}/${action}`, {
+          } catch (e: any) { showToast(`Delete failed: ${e.message}`) }
+          setConfirmAction(null)
+        },
+      })
+      return
+    }
+
+    try {
+      let res: Response
+      try {
+        res = await fetch(`${API_URL}/bots/${bot.id}/${action}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ wallet_address: walletAddress })
+          body: JSON.stringify({ wallet_address: walletAddress }),
         })
-        showToast(`Bot ${action === 'start' ? 'started' : 'stopped'}`)
+      } catch (networkErr: any) {
+        showToast(`Action failed — no response from server: ${networkErr.message}`)
+        return
       }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        let detail = text
+        try { detail = (JSON.parse(text) as any)?.detail ?? text } catch { /* not JSON */ }
+        showToast(`Action failed: HTTP ${res.status} ${detail}`)
+        return
+      }
+      showToast(action === 'start' ? 'Bot queued to start' : 'Bot queued to stop')
       fetchBots()
-    } catch { showToast('Action failed') }
+    } catch (e: any) { showToast(`Action failed: ${e.message}`) }
   }
 
   const handleDeleteSelected = () => {
