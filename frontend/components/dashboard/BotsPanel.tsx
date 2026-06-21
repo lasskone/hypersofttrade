@@ -239,16 +239,28 @@ export default function BotsPanel({ walletAddress }: Props) {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
-  const fetchBots = async () => {
+  // silent=true suppresses the error toast — used for background polls so a
+  // transient API hiccup doesn't spam toasts every 5 seconds.
+  const fetchBots = async (silent = false) => {
     try {
       const res = await fetch(`${API_URL}/bots/?wallet_address=${walletAddress}`)
       const data = await res.json()
       setBots(data.bots ?? [])
-    } catch { showToast('Failed to load bots') }
+    } catch { if (!silent) showToast('Failed to load bots') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { fetchBots() }, [walletAddress])
+  // Initial load (non-silent so the user sees an error if the API is unreachable).
+  useEffect(() => { fetchBots() }, [walletAddress]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll every 5 s — matches the Worker's POLL_INTERVAL so transitional states
+  // ("Starting…" / "Stopping…") resolve automatically in at most one cycle,
+  // without requiring a manual page refresh.
+  useEffect(() => {
+    if (!walletAddress) return
+    const id = setInterval(() => fetchBots(true), 5000)
+    return () => clearInterval(id)
+  }, [walletAddress]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!walletAddress || bots.length === 0) return
