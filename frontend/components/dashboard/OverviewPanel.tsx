@@ -44,6 +44,15 @@ const isBuySide = (side: unknown): boolean => {
   return s === 'B' || s === 'BUY';
 };
 
+const fmtOrderType = (raw: unknown): string => {
+  const s = String(raw ?? '');
+  if (s === 'Take Profit Market' || s === 'Take Profit Limit') return 'Take Profit';
+  if (s === 'Stop Market' || s === 'Stop Limit') return 'Stop Loss';
+  if (s === 'Market') return 'Market';
+  if (s === 'Limit') return 'Limit';
+  return s || 'Limit';
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 function SkeletonCard() {
   return (
@@ -839,7 +848,7 @@ export function OverviewPanel({
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
                           style={{ backgroundColor: isTrigger ? '#f59e0b18' : '#00d4aa18', color: isTrigger ? '#f59e0b' : '#00d4aa' }}>
-                          {o?.order_type || (isTrigger ? 'Trigger' : 'Limit')}
+                          {fmtOrderType(o?.order_type)}
                         </span>
                       </td>
                       <TD>${fmt(o?.price)}</TD>

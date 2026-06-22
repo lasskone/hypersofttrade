@@ -220,10 +220,29 @@ class HyperliquidService:
         # direction and resolve at position-merge time when side is known.
         tpsl_triggers_by_coin: dict[str, list[dict]] = {}
         if not isinstance(open_orders, Exception) and isinstance(open_orders, list):
+            # Diagnostic: log raw fields for any Stop order so we can confirm
+            # whether isTrigger/reduceOnly are set (determines if our filter catches them).
+            for order in open_orders:
+                if isinstance(order, dict) and "stop" in (order.get("orderType") or "").lower():
+                    print(
+                        f"[portfolio] Stop order diagnostic — coin={order.get('coin')} "
+                        f"orderType={order.get('orderType')!r} "
+                        f"isTrigger={order.get('isTrigger')} "
+                        f"reduceOnly={order.get('reduceOnly')} "
+                        f"triggerPx={order.get('triggerPx')} "
+                        f"triggerCondition={order.get('triggerCondition')!r}"
+                    )
+
             for order in open_orders:
                 if not isinstance(order, dict):
                     continue
-                if not order.get("isTrigger") or not order.get("reduceOnly"):
+                # Primary filter: isTrigger + reduceOnly (catches TP Market / SL Market).
+                # Fallback filter: orderType contains "stop" or "take profit" + reduceOnly,
+                # in case isTrigger is False for some order variants.
+                otype_lower = (order.get("orderType") or "").lower()
+                is_tpsl_by_flag   = order.get("isTrigger") and order.get("reduceOnly")
+                is_tpsl_by_type   = ("stop" in otype_lower or "take profit" in otype_lower) and order.get("reduceOnly")
+                if not (is_tpsl_by_flag or is_tpsl_by_type):
                     continue
                 coin = order.get("coin", "")
                 trigger_px_raw = order.get("triggerPx")
