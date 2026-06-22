@@ -94,8 +94,9 @@ class EnvelopeBot:
         self._open_order_ids: set[int] = set()
         self._candles: list[dict] = []
         self._exchange = None
-        self._last_ma: float = 0.0       # MA value when buy orders were last placed/refreshed
-        self._waiting_close: bool = False  # True after a sell is placed; reset when position confirms closed
+        self._last_ma: float = 0.0           # MA value when buy orders were last placed/refreshed
+        self._waiting_close: bool = False    # True after a sell is placed; reset when position confirms closed
+        self._close_order_id: Optional[int] = None  # OID of the resting sell order we are monitoring
 
     def _init_exchange(self):
         import eth_account
@@ -178,11 +179,12 @@ class EnvelopeBot:
             self.log("warning", f"Failed to fetch real position: {e}")
         return {"szi": 0.0, "entry_px": 0.0, "unrealized_pnl": 0.0}
 
-    async def _fetch_real_open_orders(self) -> list[dict]:
+    async def _fetch_real_open_orders(self) -> tuple[list[dict], list[dict]]:
         """
-        Fetch real resting limit buy orders for self.coin from frontendOpenOrders.
-        Returns list of {"price": float, "size": float, "oid": int}.
-        Excludes TP/SL trigger orders and sell orders.
+        Fetch all resting non-trigger orders for self.coin from frontendOpenOrders.
+        Returns (resting_buys, resting_sells) — two separate lists.
+        Each entry: {"price": float, "size": float, "oid": int}.
+        TP/SL trigger orders are excluded from both lists.
         """
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -193,9 +195,10 @@ class EnvelopeBot:
                 )
                 orders = resp.json()
             if not isinstance(orders, list):
-                return []
+                return [], []
             coin_short = self.coin.split(":")[-1] if ":" in self.coin else self.coin
-            result = []
+            buys: list[dict] = []
+            sells: list[dict] = []
             for o in orders:
                 if not isinstance(o, dict):
                     continue
@@ -204,20 +207,22 @@ class EnvelopeBot:
                     continue
                 if o.get("isTrigger"):
                     continue  # skip TP/SL trigger orders
-                if (o.get("side", "") or "").upper() != "B":
-                    continue  # only buy (long entry) orders
                 limit_px_raw = o.get("limitPx")
                 if limit_px_raw is None:
                     continue
-                result.append({
+                entry = {
                     "price": float(limit_px_raw),
                     "size": float(o.get("sz", "0") or "0"),
                     "oid": o.get("oid"),
-                })
-            return result
+                }
+                if (o.get("side", "") or "").upper() == "B":
+                    buys.append(entry)
+                else:
+                    sells.append(entry)
+            return buys, sells
         except Exception as e:
             self.log("warning", f"Failed to fetch real open orders: {e}")
-            return []
+            return [], []
 
     async def _place_limit_order(self, is_buy: bool, size: float, price: float) -> Optional[int]:
         """Place a limit order and return order_id."""
@@ -293,7 +298,7 @@ class EnvelopeBot:
             try:
                 # 0. Fetch real state from Hyperliquid — source of truth for every tick.
                 #    This makes the bot restart-safe: no stale in-memory state is trusted.
-                real_pos, real_orders = await asyncio.gather(
+                real_pos, (resting_buys, resting_sells) = await asyncio.gather(
                     self._fetch_real_position(),
                     self._fetch_real_open_orders(),
                 )
@@ -302,7 +307,7 @@ class EnvelopeBot:
                 real_upnl       = real_pos["unrealized_pnl"]
                 has_position    = real_szi != 0.0
 
-                self.log("info", f"Real state — szi={real_szi} entry_px={real_entry_px} upnl={real_upnl:.2f} resting_buys={len(real_orders)}")
+                self.log("info", f"Real state — szi={real_szi} entry_px={real_entry_px} upnl={real_upnl:.2f} resting_buys={len(resting_buys)} resting_sells={len(resting_sells)}")
 
                 # 1. Fetch latest candles
                 candles = await self._fetch_candles(limit=self.ma_period + 10)
@@ -325,6 +330,36 @@ class EnvelopeBot:
 
                 ma_base = current_sma
 
+                # 1b. If a sell order is in flight, check its fill status before anything else.
+                #     Three possible states:
+                #       a) Sell still resting on the book → wait, log, skip remaining logic.
+                #       b) Sell gone + position gone   → fill confirmed, exit close mode, continue.
+                #       c) Sell gone + position open   → sell was cancelled/rejected externally;
+                #                                        re-place at current ma_base, continue.
+                if self._waiting_close:
+                    sell_resting = any(
+                        o.get("oid") == self._close_order_id for o in resting_sells
+                    )
+                    if sell_resting:
+                        sell_px = next(
+                            (o["price"] for o in resting_sells if o.get("oid") == self._close_order_id),
+                            ma_base,
+                        )
+                        self.log("info", f"Waiting for close fill — sell order {self._close_order_id} resting @ ${sell_px:.4f}")
+                        continue
+                    elif not has_position:
+                        self.log("info", f"Position closed confirmed (sell {self._close_order_id} filled) — resuming normal operation")
+                        self._waiting_close = False
+                        self._close_order_id = None
+                        continue
+                    else:
+                        self.log("warning", f"Sell order {self._close_order_id} disappeared without fill — re-placing close order at MA={ma_base:.4f}")
+                        oid = await self._place_limit_order(False, abs(real_szi), ma_base)
+                        if oid:
+                            self._close_order_id = oid
+                            self.log("info", f"Re-placed sell order (oid={oid})")
+                        continue
+
                 # 2. Stop loss — uses REAL position data (entry_px, szi) from Hyperliquid.
                 #    Fires correctly after any restart because it never reads self._positions.
                 if self.stop_loss_pct > 0 and has_position and real_entry_px > 0:
@@ -341,14 +376,16 @@ class EnvelopeBot:
 
                 # 3. Close signal (high >= ma_base on last closed candle).
                 #    Uses real_szi for the sell size.
-                #    Does NOT clear any in-memory state — the next tick's real API fetch
-                #    will see szi == 0 once the sell order fills, which is the true confirmation.
+                #    Sets _waiting_close + _close_order_id so the fill-check block (1b)
+                #    monitors the order each tick until confirmed filled or re-placed.
                 if has_position and last["high"] >= ma_base:
                     self.log("info", f"Close signal: high={last['high']} >= MA={ma_base:.2f} | real_szi={real_szi}")
                     await self._cancel_all_orders()
                     oid = await self._place_limit_order(False, abs(real_szi), ma_base)
                     if oid:
-                        self.log("info", f"Sell order placed (oid={oid}) — position close confirmed on next tick via real API")
+                        self._close_order_id = oid
+                        self._waiting_close = True
+                        self.log("info", f"Sell order placed (oid={oid}) — monitoring fill each tick")
 
                 # 4. Proactively place limit buy orders at all envelope levels.
                 #    Orders are placed in advance and left resting on the book (GTC),
@@ -363,11 +400,9 @@ class EnvelopeBot:
                 #      - MA drift ≤ 0.5%: existing orders are still correctly positioned,
                 #        skip placement entirely (no-op).
                 #
-                #    Skipped entirely while a pending close is in flight (sell placed in
-                #    step 3 this tick, or position still open from a prior close signal).
-                #    Resets automatically once the real API confirms position is closed.
-                in_close_mode = has_position and (last["high"] >= ma_base or self._waiting_close)
-                self._waiting_close = in_close_mode
+                #    Skipped when a close signal fired this tick (step 3 set _waiting_close).
+                #    _waiting_close is managed exclusively by step 3 (set) and block 1b (clear).
+                in_close_mode = has_position and last["high"] >= ma_base
 
                 if not in_close_mode:
                     ma_drifted = (
@@ -376,12 +411,12 @@ class EnvelopeBot:
                     )
 
                     if ma_drifted:
-                        # Cancel stale buy orders by OID from the real_orders snapshot.
+                        # Cancel stale buy orders by OID from the resting_buys snapshot.
                         # Cancelling by OID (not _cancel_all_orders) leaves any resting
                         # sell order from a prior close signal untouched.
-                        if real_orders:
-                            self.log("info", f"MA drifted {self._last_ma:.4f} → {ma_base:.4f} — cancelling {len(real_orders)} stale buy order(s)")
-                            for o in real_orders:
+                        if resting_buys:
+                            self.log("info", f"MA drifted {self._last_ma:.4f} → {ma_base:.4f} — cancelling {len(resting_buys)} stale buy order(s)")
+                            for o in resting_buys:
                                 oid = o.get("oid")
                                 if oid:
                                     try:
@@ -408,7 +443,7 @@ class EnvelopeBot:
                     else:
                         self.log("info", f"MA drift < 0.5% ({self._last_ma:.4f} → {ma_base:.4f}) — existing orders unchanged")
 
-                self.log("info", f"Tick complete — MA={ma_base:.2f} | Price={current_price:.2f} | real_szi={real_szi} | resting_buys={len(real_orders)} | in_close_mode={in_close_mode}")
+                self.log("info", f"Tick complete — MA={ma_base:.2f} | Price={current_price:.2f} | real_szi={real_szi} | resting_buys={len(resting_buys)} | resting_sells={len(resting_sells)} | in_close_mode={in_close_mode}")
 
             except asyncio.CancelledError:
                 self.log("info", "Bot cancelled — cleaning up...")
