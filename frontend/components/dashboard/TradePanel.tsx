@@ -66,7 +66,9 @@ export function TradePanel({ walletAddress, openPositions = [], initialMarket = 
     const loadMarkets = async () => {
       try {
         const res = await fetch(`${API_URL}/market/all`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data: Market[] = await res.json()
+        if (!Array.isArray(data)) throw new Error('Invalid market data')
         setMarkets(data)
         if (initialMarket) {
           const match = data.find((m: Market) =>
