@@ -119,6 +119,25 @@ const BOT_TYPES = {
     minAllocation: 50,
     color: '#10b981',
   },
+  passivbot_dca: {
+    name: 'Passivbot DCA',
+    emoji: '🔄',
+    tagline: 'Martingale DCA grid — contrarian market maker with auto-unstucking',
+    description: 'A clean re-implementation of Passivbot\'s core DCA grid strategy. Places GTC limit entry orders in a grid below (long) or above (short) price. Grid spacing widens automatically as wallet exposure grows. Auto-unstucking closes a small % of stuck positions at a loss to free capital for new opportunities.',
+    howItWorks: [
+      'Places limit buy orders in a grid below current price (long mode)',
+      'Each DCA level: size = current_pos_size × double_down_factor',
+      'Spacing widens automatically as wallet exposure increases',
+      'Take-profit orders placed linearly between markup_start and markup_end',
+      'Auto-unstuck: closes small % of stuck position within loss allowance',
+    ],
+    bestFor: 'Ranging/dipping markets with mean reversion tendency',
+    risk: 'High',
+    riskColor: '#ef4444',
+    params: {},
+    minAllocation: 100,
+    color: '#ec4899',
+  },
 }
 
 const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
@@ -166,6 +185,25 @@ const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
     use_atr_stop: false,
     atr_multiplier: 2.0,
     interval: '4h',
+    allocated_usdc: 100,
+    leverage: 1,
+  },
+  passivbot_dca: {
+    direction: 'long',
+    wallet_exposure_limit: 0.1,
+    entry_initial_qty_pct: 0.01,
+    double_down_factor: 0.9,
+    entry_grid_spacing_pct: 0.003,
+    entry_grid_spacing_we_weight: 0.5,
+    close_grid_markup_start: 0.001,
+    close_grid_markup_end: 0.003,
+    close_grid_qty_pct: 0.05,
+    trailing_enabled: false,
+    trailing_threshold_pct: 0.02,
+    trailing_retracement_pct: 0.005,
+    unstuck_enabled: true,
+    unstuck_loss_allowance_pct: 0.02,
+    unstuck_close_pct: 0.02,
     allocated_usdc: 100,
     leverage: 1,
   },
@@ -678,6 +716,21 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [useAtrStop, setUseAtrStop] = useState(false)
   const [atrMultiplier, setAtrMultiplier] = useState('2.0')
   const [emaInterval, setEmaInterval] = useState(initialInterval ?? '4h')
+  const [pbDirection, setPbDirection] = useState('long')
+  const [pbWalletExposureLimit, setPbWalletExposureLimit] = useState('0.1')
+  const [pbEntryInitialQtyPct, setPbEntryInitialQtyPct] = useState('0.01')
+  const [pbDoubleDownFactor, setPbDoubleDownFactor] = useState('0.9')
+  const [pbEntryGridSpacingPct, setPbEntryGridSpacingPct] = useState('0.003')
+  const [pbEntryGridSpacingWeWeight, setPbEntryGridSpacingWeWeight] = useState('0.5')
+  const [pbCloseGridMarkupStart, setPbCloseGridMarkupStart] = useState('0.001')
+  const [pbCloseGridMarkupEnd, setPbCloseGridMarkupEnd] = useState('0.003')
+  const [pbCloseGridQtyPct, setPbCloseGridQtyPct] = useState('0.05')
+  const [pbTrailingEnabled, setPbTrailingEnabled] = useState(false)
+  const [pbTrailingThresholdPct, setPbTrailingThresholdPct] = useState('0.02')
+  const [pbTrailingRetracementPct, setPbTrailingRetracementPct] = useState('0.005')
+  const [pbUnstuckEnabled, setPbUnstuckEnabled] = useState(true)
+  const [pbUnstuckLossAllowancePct, setPbUnstuckLossAllowancePct] = useState('0.02')
+  const [pbUnstuckClosePct, setPbUnstuckClosePct] = useState('0.02')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -757,7 +810,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             interval: btInterval,
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
-          } : {
+          } : botType === 'ema_cross' ? {
             dex,
             ema_fast: parseInt(emaFast),
             ema_slow: parseInt(emaSlow),
@@ -765,6 +818,25 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             use_atr_stop: useAtrStop,
             atr_multiplier: parseFloat(atrMultiplier),
             interval: emaInterval,
+            allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
+          } : {
+            dex,
+            direction: pbDirection,
+            wallet_exposure_limit: parseFloat(pbWalletExposureLimit),
+            entry_initial_qty_pct: parseFloat(pbEntryInitialQtyPct),
+            double_down_factor: parseFloat(pbDoubleDownFactor),
+            entry_grid_spacing_pct: parseFloat(pbEntryGridSpacingPct),
+            entry_grid_spacing_we_weight: parseFloat(pbEntryGridSpacingWeWeight),
+            close_grid_markup_start: parseFloat(pbCloseGridMarkupStart),
+            close_grid_markup_end: parseFloat(pbCloseGridMarkupEnd),
+            close_grid_qty_pct: parseFloat(pbCloseGridQtyPct),
+            trailing_enabled: pbTrailingEnabled,
+            trailing_threshold_pct: parseFloat(pbTrailingThresholdPct),
+            trailing_retracement_pct: parseFloat(pbTrailingRetracementPct),
+            unstuck_enabled: pbUnstuckEnabled,
+            unstuck_loss_allowance_pct: parseFloat(pbUnstuckLossAllowancePct),
+            unstuck_close_pct: parseFloat(pbUnstuckClosePct),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
           }
@@ -1085,7 +1157,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if position drops by this %. 0 = disabled.</p>
               </div>
             </>
-          ) : (
+          ) : botType === 'ema_cross' ? (
             <>
               <div>
                 <label style={labelStyle}>Interval</label>
@@ -1152,6 +1224,124 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
               </div>
             </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Direction</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['long', 'short', 'both'].map(dir => (
+                    <button key={dir} type="button" onClick={() => setPbDirection(dir)}
+                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: pbDirection === dir ? '#ec4899' : '#1a1a2e',
+                        backgroundColor: pbDirection === dir ? '#ec489918' : '#0d0d14',
+                        color: pbDirection === dir ? '#ec4899' : '#6b7280',
+                      }}>
+                      {dir.charAt(0).toUpperCase() + dir.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips. Short: sells rallies. Both: grid on both sides.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Wallet Exposure Limit</label>
+                  <input style={inputStyle} type="number" step="0.01" value={pbWalletExposureLimit} onChange={e => setPbWalletExposureLimit(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Max % of balance to expose per direction. 0.1 = 10%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Initial Entry Qty %</label>
+                  <input style={inputStyle} type="number" step="0.001" value={pbEntryInitialQtyPct} onChange={e => setPbEntryInitialQtyPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First entry size as fraction of allocation. 0.01 = 1%</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Double Down Factor</label>
+                  <input style={inputStyle} type="number" step="0.05" value={pbDoubleDownFactor} onChange={e => setPbDoubleDownFactor(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>DCA size multiplier. 0.9 = each level adds 90% of current pos</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Grid Spacing %</label>
+                  <input style={inputStyle} type="number" step="0.001" value={pbEntryGridSpacingPct} onChange={e => setPbEntryGridSpacingPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Base spacing between entry levels. 0.003 = 0.3%</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Spacing WE Weight</label>
+                <input style={inputStyle} type="number" step="0.1" value={pbEntryGridSpacingWeWeight} onChange={e => setPbEntryGridSpacingWeWeight(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>How much wallet exposure widens spacing. 0 = fixed, 1 = fully dynamic</p>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label style={labelStyle}>TP Markup Start</label>
+                  <input style={inputStyle} type="number" step="0.0001" value={pbCloseGridMarkupStart} onChange={e => setPbCloseGridMarkupStart(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First TP level above avg entry. 0.001 = 0.1%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>TP Markup End</label>
+                  <input style={inputStyle} type="number" step="0.0001" value={pbCloseGridMarkupEnd} onChange={e => setPbCloseGridMarkupEnd(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Last TP level. 0.003 = 0.3%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>TP Qty %</label>
+                  <input style={inputStyle} type="number" step="0.01" value={pbCloseGridQtyPct} onChange={e => setPbCloseGridQtyPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>% of position per TP. 0.05 = 5%</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e' }}>
+                <input type="checkbox" id="pb-trailing" checked={pbTrailingEnabled} onChange={e => setPbTrailingEnabled(e.target.checked)}
+                  style={{ accentColor: '#ec4899', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="pb-trailing" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer', color: '#9ca3af' }}>
+                    Trailing Entry Mode
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Wait for retracement before placing each DCA entry</p>
+                </div>
+              </div>
+              {pbTrailingEnabled && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label style={labelStyle}>Trailing Threshold %</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbTrailingThresholdPct} onChange={e => setPbTrailingThresholdPct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Price must move this % from entry to arm trailing. 0.02 = 2%</p>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Trailing Retracement %</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbTrailingRetracementPct} onChange={e => setPbTrailingRetracementPct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Retracement from extreme to trigger entry. 0.005 = 0.5%</p>
+                  </div>
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e' }}>
+                <input type="checkbox" id="pb-unstuck" checked={pbUnstuckEnabled} onChange={e => setPbUnstuckEnabled(e.target.checked)}
+                  style={{ accentColor: '#ec4899', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="pb-unstuck" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer', color: '#9ca3af' }}>
+                    Auto-Unstuck
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Gradually close stuck positions at a small loss to free capital</p>
+                </div>
+              </div>
+              {pbUnstuckEnabled && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label style={labelStyle}>Unstuck Loss Allowance</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbUnstuckLossAllowancePct} onChange={e => setPbUnstuckLossAllowancePct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Max loss allowed for unstucking as % of balance. 0.02 = 2%</p>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Unstuck Close %</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbUnstuckClosePct} onChange={e => setPbUnstuckClosePct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>% of stuck position to close per tick. 0.02 = 2%</p>
+                  </div>
+                </div>
+              )}
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <input style={inputStyle} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage. Higher leverage amplifies both gains and losses.</p>
+              </div>
+            </>
           )}
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -1199,6 +1389,21 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [useAtrStop, setUseAtrStop] = useState(Boolean(merged.use_atr_stop ?? false))
   const [atrMultiplier, setAtrMultiplier] = useState(String(merged.atr_multiplier ?? 2.0))
   const [emaInterval, setEmaInterval] = useState(String(merged.interval ?? '4h'))
+  const [pbDirection, setPbDirection] = useState(String(merged.direction ?? 'long'))
+  const [pbWalletExposureLimit, setPbWalletExposureLimit] = useState(String(merged.wallet_exposure_limit ?? 0.1))
+  const [pbEntryInitialQtyPct, setPbEntryInitialQtyPct] = useState(String(merged.entry_initial_qty_pct ?? 0.01))
+  const [pbDoubleDownFactor, setPbDoubleDownFactor] = useState(String(merged.double_down_factor ?? 0.9))
+  const [pbEntryGridSpacingPct, setPbEntryGridSpacingPct] = useState(String(merged.entry_grid_spacing_pct ?? 0.003))
+  const [pbEntryGridSpacingWeWeight, setPbEntryGridSpacingWeWeight] = useState(String(merged.entry_grid_spacing_we_weight ?? 0.5))
+  const [pbCloseGridMarkupStart, setPbCloseGridMarkupStart] = useState(String(merged.close_grid_markup_start ?? 0.001))
+  const [pbCloseGridMarkupEnd, setPbCloseGridMarkupEnd] = useState(String(merged.close_grid_markup_end ?? 0.003))
+  const [pbCloseGridQtyPct, setPbCloseGridQtyPct] = useState(String(merged.close_grid_qty_pct ?? 0.05))
+  const [pbTrailingEnabled, setPbTrailingEnabled] = useState(Boolean(merged.trailing_enabled ?? false))
+  const [pbTrailingThresholdPct, setPbTrailingThresholdPct] = useState(String(merged.trailing_threshold_pct ?? 0.02))
+  const [pbTrailingRetracementPct, setPbTrailingRetracementPct] = useState(String(merged.trailing_retracement_pct ?? 0.005))
+  const [pbUnstuckEnabled, setPbUnstuckEnabled] = useState(Boolean(merged.unstuck_enabled ?? true))
+  const [pbUnstuckLossAllowancePct, setPbUnstuckLossAllowancePct] = useState(String(merged.unstuck_loss_allowance_pct ?? 0.02))
+  const [pbUnstuckClosePct, setPbUnstuckClosePct] = useState(String(merged.unstuck_close_pct ?? 0.02))
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -1277,7 +1482,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         interval: btInterval,
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
-      } : {
+      } : bot.bot_type === 'ema_cross' ? {
         symbol: symbol,
         dex: dex,
         ema_fast: parseInt(emaFast),
@@ -1286,6 +1491,26 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         use_atr_stop: useAtrStop,
         atr_multiplier: parseFloat(atrMultiplier),
         interval: emaInterval,
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+      } : {
+        symbol: symbol,
+        dex: dex,
+        direction: pbDirection,
+        wallet_exposure_limit: parseFloat(pbWalletExposureLimit),
+        entry_initial_qty_pct: parseFloat(pbEntryInitialQtyPct),
+        double_down_factor: parseFloat(pbDoubleDownFactor),
+        entry_grid_spacing_pct: parseFloat(pbEntryGridSpacingPct),
+        entry_grid_spacing_we_weight: parseFloat(pbEntryGridSpacingWeWeight),
+        close_grid_markup_start: parseFloat(pbCloseGridMarkupStart),
+        close_grid_markup_end: parseFloat(pbCloseGridMarkupEnd),
+        close_grid_qty_pct: parseFloat(pbCloseGridQtyPct),
+        trailing_enabled: pbTrailingEnabled,
+        trailing_threshold_pct: parseFloat(pbTrailingThresholdPct),
+        trailing_retracement_pct: parseFloat(pbTrailingRetracementPct),
+        unstuck_enabled: pbUnstuckEnabled,
+        unstuck_loss_allowance_pct: parseFloat(pbUnstuckLossAllowancePct),
+        unstuck_close_pct: parseFloat(pbUnstuckClosePct),
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
       }
@@ -1609,7 +1834,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Exit if position drops by this %. 0 = disabled.</p>
               </div>
             </>
-          ) : (
+          ) : bot.bot_type === 'ema_cross' ? (
             <>
               <div>
                 <label style={labelStyle}>Interval</label>
@@ -1674,6 +1899,124 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
                 </div>
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Direction</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['long', 'short', 'both'].map(dir => (
+                    <button key={dir} type="button" onClick={() => setPbDirection(dir)}
+                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: pbDirection === dir ? '#ec4899' : '#1a1a2e',
+                        backgroundColor: pbDirection === dir ? '#ec489918' : '#0d0d14',
+                        color: pbDirection === dir ? '#ec4899' : '#6b7280',
+                      }}>
+                      {dir.charAt(0).toUpperCase() + dir.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips. Short: sells rallies. Both: grid on both sides.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Wallet Exposure Limit</label>
+                  <input style={inputStyle} type="number" step="0.01" value={pbWalletExposureLimit} onChange={e => setPbWalletExposureLimit(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Max % of balance to expose per direction. 0.1 = 10%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Initial Entry Qty %</label>
+                  <input style={inputStyle} type="number" step="0.001" value={pbEntryInitialQtyPct} onChange={e => setPbEntryInitialQtyPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First entry size as fraction of allocation. 0.01 = 1%</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Double Down Factor</label>
+                  <input style={inputStyle} type="number" step="0.05" value={pbDoubleDownFactor} onChange={e => setPbDoubleDownFactor(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>DCA size multiplier. 0.9 = each level adds 90% of current pos</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Grid Spacing %</label>
+                  <input style={inputStyle} type="number" step="0.001" value={pbEntryGridSpacingPct} onChange={e => setPbEntryGridSpacingPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Base spacing between entry levels. 0.003 = 0.3%</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Spacing WE Weight</label>
+                <input style={inputStyle} type="number" step="0.1" value={pbEntryGridSpacingWeWeight} onChange={e => setPbEntryGridSpacingWeWeight(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>How much wallet exposure widens spacing. 0 = fixed, 1 = fully dynamic</p>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label style={labelStyle}>TP Markup Start</label>
+                  <input style={inputStyle} type="number" step="0.0001" value={pbCloseGridMarkupStart} onChange={e => setPbCloseGridMarkupStart(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First TP above avg entry. 0.001 = 0.1%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>TP Markup End</label>
+                  <input style={inputStyle} type="number" step="0.0001" value={pbCloseGridMarkupEnd} onChange={e => setPbCloseGridMarkupEnd(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Last TP level. 0.003 = 0.3%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>TP Qty %</label>
+                  <input style={inputStyle} type="number" step="0.01" value={pbCloseGridQtyPct} onChange={e => setPbCloseGridQtyPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>% of position per TP. 0.05 = 5%</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e' }}>
+                <input type="checkbox" id="pb-trailing-edit" checked={pbTrailingEnabled} onChange={e => setPbTrailingEnabled(e.target.checked)}
+                  style={{ accentColor: '#ec4899', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="pb-trailing-edit" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer', color: '#9ca3af' }}>
+                    Trailing Entry Mode
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Wait for retracement before placing each DCA entry</p>
+                </div>
+              </div>
+              {pbTrailingEnabled && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label style={labelStyle}>Trailing Threshold %</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbTrailingThresholdPct} onChange={e => setPbTrailingThresholdPct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Price must move this % from entry to arm trailing. 0.02 = 2%</p>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Trailing Retracement %</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbTrailingRetracementPct} onChange={e => setPbTrailingRetracementPct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Retracement from extreme to trigger entry. 0.005 = 0.5%</p>
+                  </div>
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e' }}>
+                <input type="checkbox" id="pb-unstuck-edit" checked={pbUnstuckEnabled} onChange={e => setPbUnstuckEnabled(e.target.checked)}
+                  style={{ accentColor: '#ec4899', width: 16, height: 16, cursor: 'pointer' }} />
+                <div>
+                  <label htmlFor="pb-unstuck-edit" style={{ ...labelStyle, marginBottom: 0, cursor: 'pointer', color: '#9ca3af' }}>
+                    Auto-Unstuck
+                  </label>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 1 }}>Gradually close stuck positions at a small loss to free capital</p>
+                </div>
+              </div>
+              {pbUnstuckEnabled && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label style={labelStyle}>Unstuck Loss Allowance</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbUnstuckLossAllowancePct} onChange={e => setPbUnstuckLossAllowancePct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Max loss for unstucking as % of balance. 0.02 = 2%</p>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Unstuck Close %</label>
+                    <input style={inputStyle} type="number" step="0.001" value={pbUnstuckClosePct} onChange={e => setPbUnstuckClosePct(e.target.value)} />
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>% of stuck position to close per tick. 0.02 = 2%</p>
+                  </div>
+                </div>
+              )}
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <input style={inputStyle} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage. Higher leverage amplifies both gains and losses.</p>
               </div>
             </>
           )}
