@@ -517,11 +517,11 @@ export function OverviewPanel({
   const stats: { label: string; subtitle: string; value: string; color: string; live: boolean; tooltip?: string }[] = [
     {
       label: 'Account Value',
-      subtitle: 'Total equity across all DEXes',
+      subtitle: 'Perp equity + USDC spot (unified)',
       value: `$${fmt(accountValue)}`,
       color: '#ffffff',
       live: false,
-      tooltip: 'Total perp account equity reported directly by Hyperliquid (marginSummary.accountValue), summed across all DEXes.',
+      tooltip: 'Total unified account value — perp margin equity (marginSummary.accountValue) plus USDC spot balance. Matches Hyperliquid\'s "Portfolio Value" display.',
     },
     {
       label: 'Available to Trade',

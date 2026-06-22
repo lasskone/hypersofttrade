@@ -249,9 +249,11 @@ class HyperliquidService:
             total_account_value += acct_val
             available_to_trade  += withdrawable
             print(
-                f"[portfolio] DEX={dex_label!r} accountValue={acct_val} "
-                f"withdrawable={withdrawable} "
-                f"rawState_keys={list(state.keys())}"
+                f"[portfolio][DEBUG] wallet={wallet_address} DEX={dex_label!r} "
+                f"accountValue={acct_val} withdrawable={withdrawable} "
+                f"rawState_keys={list(state.keys())} "
+                f"marginSummary={state.get('marginSummary')} "
+                f"raw_withdrawable={state.get('withdrawable')!r}"
             )
 
             asset_positions = state.get("assetPositions") or []
@@ -294,20 +296,41 @@ class HyperliquidService:
                     "opened_at":         None,
                 })
 
-        # Step 4: spot balances (display-only — NOT added to account_value;
-        # marginSummary.accountValue already includes the full perp equity)
+        # Step 4: spot balances.
+        # For Hyperliquid unified accounts, clearinghouseState only returns the perp
+        # margin side.  The USDC spot balance is held separately and must come from
+        # spotClearinghouseState.  We add it to both account_value and available_to_trade
+        # to match what Hyperliquid's own interface displays as "Portfolio Value" and
+        # "Available to Trade".
         spot_balances: list[dict] = []
         if not isinstance(spot_state, Exception) and isinstance(spot_state, dict):
+            # Log the raw response once so field names are visible in production logs.
+            print(f"[portfolio] spotClearinghouseState raw: {spot_state}")
             for balance in (spot_state.get("balances") or []):
                 if not isinstance(balance, dict):
                     continue
                 amount = float(balance.get("total", "0") or "0")
                 if amount > 0:
+                    coin = balance.get("coin", "")
+                    hold = float(balance.get("hold", "0") or "0")
                     spot_balances.append({
-                        "coin":  balance.get("coin", ""),
+                        "coin":  coin,
                         "total": amount,
-                        "hold":  float(balance.get("hold", "0") or "0"),
+                        "hold":  hold,
                     })
+                    if coin == "USDC":
+                        # Unified account: add USDC spot to perp totals.
+                        usdc_available = max(0.0, amount - hold)
+                        total_account_value += amount
+                        available_to_trade  += usdc_available
+                        print(
+                            f"[portfolio] USDC spot (unified): "
+                            f"total={amount} hold={hold} available={usdc_available} "
+                            f"→ account_value now={total_account_value} "
+                            f"available_to_trade now={available_to_trade}"
+                        )
+        else:
+            print(f"[portfolio] spotClearinghouseState unavailable: {spot_state}")
 
         # Step 5: recent fills (last 50)
         recent_fills: list[dict] = []
