@@ -517,11 +517,11 @@ export function OverviewPanel({
   const stats: { label: string; subtitle: string; value: string; color: string; live: boolean; tooltip?: string }[] = [
     {
       label: 'Account Value',
-      subtitle: 'Perp margin + USDC spot',
+      subtitle: 'Total equity across all DEXes',
       value: `$${fmt(accountValue)}`,
       color: '#ffffff',
       live: false,
-      tooltip: 'Total account equity — perp margin balance plus USDC spot balance combined.',
+      tooltip: 'Total perp account equity reported directly by Hyperliquid (marginSummary.accountValue), summed across all DEXes.',
     },
     {
       label: 'Available to Trade',
@@ -687,7 +687,7 @@ export function OverviewPanel({
                   <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH><TH>Entry Price</TH>
                   <TH>Mark Price</TH>
                   <TH>Notional <Tooltip text="Full leveraged exposure of this position — size × mark price." /></TH>
-                  <TH>Margin <Tooltip text="Real cash committed to this position — Notional ÷ Leverage." /></TH>
+                  <TH>Margin <Tooltip text="Real cash committed to this position — reported directly by Hyperliquid (marginUsed field)." /></TH>
                   <TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
                   <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
                 </tr>
@@ -701,8 +701,7 @@ export function OverviewPanel({
                   const tpPx   = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null;
                   const slPx   = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null;
                   const notional = parseFloat(String(pos?.position_value ?? 0));
-                  const lev      = parseFloat(String(pos?.leverage ?? 1));
-                  const margin   = lev > 0 ? notional / lev : 0;
+                  const margin   = parseFloat(String(pos?.margin_used ?? 0));
                   return (
                     <tr key={i}
                       className="border-b last:border-0 hover:bg-white/5 transition-colors"

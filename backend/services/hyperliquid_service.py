@@ -245,10 +245,14 @@ class HyperliquidService:
             dex_label      = dex_names[i] or "main"
             margin_summary = state.get("marginSummary") or {}
             acct_val       = float(margin_summary.get("accountValue", "0") or "0")
+            withdrawable   = float(state.get("withdrawable", 0) or 0)
             total_account_value += acct_val
-            if dex_names[i] == "":
-                available_to_trade = float(state.get("withdrawable", 0) or 0)
-            print(f"[portfolio] DEX={dex_label} accountValue={acct_val}")
+            available_to_trade  += withdrawable
+            print(
+                f"[portfolio] DEX={dex_label!r} accountValue={acct_val} "
+                f"withdrawable={withdrawable} "
+                f"rawState_keys={list(state.keys())}"
+            )
 
             asset_positions = state.get("assetPositions") or []
             for ap in asset_positions:
@@ -290,7 +294,8 @@ class HyperliquidService:
                     "opened_at":         None,
                 })
 
-        # Step 4: spot balances (also add USDC spot to account value)
+        # Step 4: spot balances (display-only — NOT added to account_value;
+        # marginSummary.accountValue already includes the full perp equity)
         spot_balances: list[dict] = []
         if not isinstance(spot_state, Exception) and isinstance(spot_state, dict):
             for balance in (spot_state.get("balances") or []):
@@ -303,9 +308,6 @@ class HyperliquidService:
                         "total": amount,
                         "hold":  float(balance.get("hold", "0") or "0"),
                     })
-                    if balance.get("coin") == "USDC":
-                        total_account_value += amount
-                        print(f"[portfolio] USDC spot balance added: {amount}")
 
         # Step 5: recent fills (last 50)
         recent_fills: list[dict] = []
