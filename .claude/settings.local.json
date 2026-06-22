@@ -43,7 +43,8 @@
       "Bash(ls frontend/next.config*)",
       "Bash(python -c \"import py_compile; py_compile.compile\\('backend/bots/envelope/strategy.py', doraise=True\\)\")",
       "Bash(npx tsc *)",
-      "Bash(python -m py_compile worker.py)"
+      "Bash(python -m py_compile worker.py)",
+      "WebFetch(domain:hyperliquid.gitbook.io)"
     ]
   }
 }

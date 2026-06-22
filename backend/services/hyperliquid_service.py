@@ -165,8 +165,14 @@ class HyperliquidService:
 
     async def get_complete_portfolio(self, wallet_address: str) -> dict:
         """Aggregate portfolio across ALL DEXes (main + HIP-3), spot, fills, orders."""
-        # Step 1: discover all DEX names
+        # Step 1: discover all DEX names.
+        # Always guarantee the main DEX ("") is in the list — perpDexs may represent
+        # it as None, as {}, or omit it entirely depending on API version.  Without it
+        # the fan-out never fetches the main clearinghouseState and withdrawable = 0.
         dex_names = await self.get_all_perp_dexes()
+        if "" not in dex_names:
+            dex_names.insert(0, "")
+            print(f"[portfolio] Main DEX ('') missing from perpDexs — inserted at position 0")
         print(f"[portfolio] Found {len(dex_names)} DEXes: {dex_names}")
 
         # Step 2: fan-out — all DEX states + spot + fills + orders in parallel

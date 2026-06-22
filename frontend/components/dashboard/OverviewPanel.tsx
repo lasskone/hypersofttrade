@@ -623,7 +623,17 @@ export function OverviewPanel({
               <tbody>
                 {activeBots.map((b: any) => {
                   const allocated = parseFloat(String(b.allocated_usdc ?? 0));
-                  const leverage  = parseFloat(String(b.config?.leverage ?? 1));
+                  // Prefer the configured leverage from config.
+                  // If it was never stored (older bot or missing field), fall back to the
+                  // matching open position's actual exchange leverage so the display stays
+                  // accurate even when the stored config is stale or absent.
+                  const configLev: number | null = b.config?.leverage != null
+                    ? parseFloat(String(b.config.leverage))
+                    : null;
+                  const matchingPosLev = parseFloat(String(
+                    openPositions.find((p: any) => p.symbol === b.symbol)?.leverage ?? 0
+                  ));
+                  const leverage = configLev != null ? Math.max(configLev, 1) : Math.max(matchingPosLev, 1);
                   const buyingPower = allocated * leverage;
                   const isRunning = b.status === 'running';
                   const isStopping = b.status === 'running' && b.desired_status === 'stopped';
@@ -638,7 +648,7 @@ export function OverviewPanel({
                       </td>
                       <TD>{b.symbol ?? '—'}</TD>
                       <TD>${fmt(allocated)}</TD>
-                      <TD>{leverage > 1 ? `${fmt(leverage, 0)}x` : '—'}</TD>
+                      <TD>{`${fmt(leverage, 0)}x`}</TD>
                       <TD color={leverage > 1 ? '#00d4aa' : undefined}>${fmt(buyingPower)}</TD>
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
