@@ -33,9 +33,11 @@ const PERIOD_PRESETS = [
   { label: '1Y', days: 365 },
 ]
 
-const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key: string; label: string; default: number; hint: string }[] }> = {
+const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: string; color: string; fields: { key: string; label: string; default: number; hint: string }[] }> = {
   grid: {
     label: 'Grid Bot',
+    emoji: '⚡',
+    description: 'Fixed price levels, buys dips / sells rallies',
     color: '#00d4aa',
     fields: [
       { key: 'levels', label: 'Grid Levels', default: 10, hint: 'Number of buy/sell order pairs. More levels = more trades, smaller profit per trade.' },
@@ -46,6 +48,8 @@ const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key:
   },
   envelope_dca: {
     label: 'Envelope DCA Bot',
+    emoji: '📈',
+    description: 'SMA envelope with multi-level DCA entries',
     color: '#8b5cf6',
     fields: [
       { key: 'ma_period', label: 'MA Period', default: 20, hint: 'Moving average window. Higher = smoother signal, fewer trades.' },
@@ -57,6 +61,8 @@ const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key:
   },
   bb_rsi: {
     label: 'BB + RSI Bot',
+    emoji: '🎯',
+    description: 'Mean reversion on Bollinger Band breakouts',
     color: '#3b82f6',
     fields: [
       { key: 'bb_period', label: 'BB Period', default: 20, hint: 'Bollinger Band period' },
@@ -70,6 +76,8 @@ const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key:
   },
   ema_cross: {
     label: 'EMA Cross Bot',
+    emoji: '✂️',
+    description: 'Golden/death cross trend following',
     color: '#10b981',
     fields: [
       { key: 'ema_fast', label: 'Fast EMA', default: 9, hint: 'Fast EMA period' },
@@ -80,6 +88,8 @@ const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key:
   },
   passivbot_dca: {
     label: 'Passivbot DCA',
+    emoji: '🤖',
+    description: 'Martingale DCA grid, contrarian market maker',
     color: '#ec4899',
     fields: [
       { key: 'wallet_exposure_limit', label: 'Wallet Exposure Limit', default: 0.1, hint: 'Max fraction of balance to expose. 0.1 = 10%' },
@@ -511,27 +521,33 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
 
       {/* ── RUN tab ── */}
       {activeMainTab === 'run' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {/* Strategy selector — full width card grid */}
+          <div>
+            <label style={s.label}>STRATEGY</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))', gap: 8 }}>
+              {Object.entries(BOT_CONFIGS).map(([k, v]) => (
+                <button key={k} onClick={() => { setBotType(k); setResult(null) }}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '12px 14px', borderRadius: 8, cursor: 'pointer', border: '1px solid', textAlign: 'left', transition: 'all 0.15s',
+                    borderColor: botType === k ? v.color : '#1a1a2e',
+                    background: botType === k ? v.color + '14' : '#0d0d14',
+                  }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>{v.emoji}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: botType === k ? v.color : 'white' }}>{v.label}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: botType === k ? v.color + 'cc' : '#6b7280', margin: 0, lineHeight: 1.4 }}>{v.description}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Config + Results two-column grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
 
           {/* LEFT — Config */}
           <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-            {/* Strategy selector */}
-            <div>
-              <label style={s.label}>STRATEGY</label>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {Object.entries(BOT_CONFIGS).map(([k, v]) => (
-                  <button key={k} onClick={() => { setBotType(k); setResult(null) }}
-                    style={{ flex: 1, padding: '8px 4px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', transition: 'all 0.15s',
-                      background: botType === k ? v.color + '22' : '#13131f',
-                      color: botType === k ? v.color : '#6b7280',
-                      outline: botType === k ? `1px solid ${v.color}66` : '1px solid #1a1a2e',
-                    }}>
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-            </div>
 
             {/* Market selector */}
             <div>
@@ -756,12 +772,13 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
               </div>
             )}
           </div>
+          </div>
         </div>
       )}
 
       {/* ── SAVED tab ── */}
       {activeMainTab === 'saved' && (
-        <div style={{ maxWidth: 900 }}>
+        <div>
           {savedLoading ? (
             <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}>
               <p style={{ color: '#6b7280', fontSize: 13 }}>Loading saved backtests...</p>
