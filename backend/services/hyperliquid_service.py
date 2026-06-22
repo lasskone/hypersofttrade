@@ -227,9 +227,12 @@ class HyperliquidService:
                 elif "stop loss" in otype or otype == "sl":
                     tpsl["sl_price"] = trigger_px
 
-        # Step 3: aggregate perp positions across all DEXes
-        available_to_trade   = 0.0
-        total_account_value  = 0.0
+        # Step 3: aggregate perp positions across all DEXes.
+        # Account Value and Available to Trade are NOT taken from clearinghouseState —
+        # on a unified account the USDC collateral lives in spot, so the perp
+        # marginSummary figures are a subset.  Both are derived from
+        # spotClearinghouseState in Step 4.  clearinghouseState is used here only
+        # for open positions and unrealized PnL.
         total_unrealized_pnl = 0.0
         all_positions: list[dict] = []
 
@@ -244,16 +247,10 @@ class HyperliquidService:
 
             dex_label      = dex_names[i] or "main"
             margin_summary = state.get("marginSummary") or {}
-            acct_val       = float(margin_summary.get("accountValue", "0") or "0")
-            withdrawable   = float(state.get("withdrawable", 0) or 0)
-            total_account_value += acct_val
-            available_to_trade  += withdrawable
             print(
-                f"[portfolio][DEBUG] wallet={wallet_address} DEX={dex_label!r} "
-                f"accountValue={acct_val} withdrawable={withdrawable} "
-                f"rawState_keys={list(state.keys())} "
-                f"marginSummary={state.get('marginSummary')} "
-                f"raw_withdrawable={state.get('withdrawable')!r}"
+                f"[portfolio] DEX={dex_label!r} perp accountValue={margin_summary.get('accountValue')!r} "
+                f"perp withdrawable={state.get('withdrawable')!r} "
+                f"(display values come from spot — see Step 4)"
             )
 
             asset_positions = state.get("assetPositions") or []
@@ -296,16 +293,21 @@ class HyperliquidService:
                     "opened_at":         None,
                 })
 
-        # Step 4: spot balances.
-        # For Hyperliquid unified accounts, clearinghouseState only returns the perp
-        # margin side.  The USDC spot balance is held separately and must come from
-        # spotClearinghouseState.  We add it to both account_value and available_to_trade
-        # to match what Hyperliquid's own interface displays as "Portfolio Value" and
-        # "Available to Trade".
+        # Step 4: spot balances — source of truth for Account Value and Available to Trade.
+        # On a Hyperliquid unified account the USDC collateral lives in spot; perp
+        # marginSummary.accountValue is only the perp-margin subset.
+        # We log ALL top-level fields of the response so we can verify exact field names
+        # in production, then derive both display values from spot directly.
         spot_balances: list[dict] = []
+        total_account_value = 0.0
+        available_to_trade  = 0.0
+
         if not isinstance(spot_state, Exception) and isinstance(spot_state, dict):
-            # Log the raw response once so field names are visible in production logs.
-            print(f"[portfolio] spotClearinghouseState raw: {spot_state}")
+            # Log every top-level key and the full balances array.
+            spot_top = {k: v for k, v in spot_state.items() if k != "balances"}
+            print(f"[portfolio] spotClearinghouseState top-level fields: {spot_top}")
+            print(f"[portfolio] spotClearinghouseState balances: {spot_state.get('balances')}")
+
             for balance in (spot_state.get("balances") or []):
                 if not isinstance(balance, dict):
                     continue
@@ -318,17 +320,26 @@ class HyperliquidService:
                         "total": amount,
                         "hold":  hold,
                     })
-                    if coin == "USDC":
-                        # Unified account: add USDC spot to perp totals.
-                        usdc_available = max(0.0, amount - hold)
-                        total_account_value += amount
-                        available_to_trade  += usdc_available
-                        print(
-                            f"[portfolio] USDC spot (unified): "
-                            f"total={amount} hold={hold} available={usdc_available} "
-                            f"→ account_value now={total_account_value} "
-                            f"available_to_trade now={available_to_trade}"
-                        )
+
+            # Prefer top-level accountValue / withdrawable if the endpoint provides them
+            # (Hyperliquid may extend spotClearinghouseState with these for unified accounts).
+            # Fall back to USDC balance fields if they are absent.
+            spot_acct_val    = float(spot_state.get("accountValue", 0) or 0)
+            spot_withdrawable = float(spot_state.get("withdrawable", 0) or 0)
+
+            usdc_entry = next((b for b in spot_balances if b["coin"] == "USDC"), None)
+            usdc_total = usdc_entry["total"] if usdc_entry else 0.0
+            usdc_hold  = usdc_entry["hold"]  if usdc_entry else 0.0
+
+            total_account_value = spot_acct_val  if spot_acct_val  > 0 else usdc_total
+            available_to_trade  = spot_withdrawable if spot_withdrawable > 0 else max(0.0, usdc_total - usdc_hold)
+
+            print(
+                f"[portfolio] spot accountValue field={spot_acct_val!r} "
+                f"withdrawable field={spot_withdrawable!r} "
+                f"usdc_total={usdc_total} usdc_hold={usdc_hold} "
+                f"→ account_value={total_account_value} available_to_trade={available_to_trade}"
+            )
         else:
             print(f"[portfolio] spotClearinghouseState unavailable: {spot_state}")
 
