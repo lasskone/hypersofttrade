@@ -35,6 +35,7 @@ function DashboardLayout({
 }) {
   const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
   const [openPositions, setOpenPositions] = useState<any[]>([])
+  const [openOrders, setOpenOrders] = useState<any[]>([])
   const [pendingMarket, setPendingMarket] = useState<{ symbol: string, dex: string, interval?: string } | null>(null)
 
   useEffect(() => {
@@ -44,6 +45,7 @@ function DashboardLayout({
         const res = await fetch(`${API_URL}/account/${address}/portfolio`)
         const data = await res.json()
         setOpenPositions(data.open_positions ?? [])
+        setOpenOrders(data.open_orders ?? [])
       } catch {}
     }
     fetchPositions()
@@ -58,7 +60,7 @@ function DashboardLayout({
         <TopBar section={section} />
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} onSelectMarket={(symbol, dex, interval) => setPendingMarket({ symbol, dex, interval })} />}
-          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} initialMarket={pendingMarket} initialInterval={pendingMarket?.interval ?? '15m'} onMarketConsumed={() => setPendingMarket(null)} />}
+          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} openOrders={openOrders} initialMarket={pendingMarket} initialInterval={pendingMarket?.interval ?? '15m'} onMarketConsumed={() => setPendingMarket(null)} />}
           {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
           {section === 'backtest' && <BacktestPanel walletAddress={address} />}
           {section === 'history' && (

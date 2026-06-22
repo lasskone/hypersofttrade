@@ -20,6 +20,7 @@ interface Market {
 interface Props {
   walletAddress: string
   openPositions?: any[]
+  openOrders?: any[]
   initialMarket?: { symbol: string, dex: string } | null
   initialInterval?: string
   onMarketConsumed?: () => void
@@ -30,7 +31,7 @@ const fmt = (n: number, dec = 2) =>
 
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
-export function TradePanel({ walletAddress, openPositions = [], initialMarket = null, initialInterval, onMarketConsumed }: Props) {
+export function TradePanel({ walletAddress, openPositions = [], openOrders = [], initialMarket = null, initialInterval, onMarketConsumed }: Props) {
   // Markets
   const [markets, setMarkets] = useState<Market[]>([])
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null)
@@ -718,7 +719,7 @@ export function TradePanel({ walletAddress, openPositions = [], initialMarket = 
             <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
               borderRadius: '8px', overflow: 'hidden', flexShrink: 0,
               height: chartHeight }}>
-              <HLChart symbol={selectedMarket.name} height={chartHeight} positions={openPositions} initialInterval={initialInterval} />
+              <HLChart symbol={selectedMarket.name} height={chartHeight} positions={openPositions} openOrders={openOrders} initialInterval={initialInterval} />
             </div>
           )}
 

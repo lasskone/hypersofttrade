@@ -30,10 +30,23 @@ interface Props {
     size: number
     unrealized_pnl: number
     mark_price: number
+    tp_price?: number
+    sl_price?: number
+  }>
+  openOrders?: Array<{
+    coin: string
+    side: string
+    price?: number
+    limitPx?: number
+    sz?: number
+    size?: number
+    order_type?: string
+    type?: string
+    isTrigger?: boolean
   }>
 }
 
-export default function HLChart({ symbol, height = 420, initialInterval, positions = [] }: Props) {
+export default function HLChart({ symbol, height = 420, initialInterval, positions = [], openOrders = [] }: Props) {
   const containerRef    = useRef<HTMLDivElement>(null)
   const chartRef        = useRef<any>(null)
   const rsiContainerRef = useRef<HTMLDivElement>(null)
@@ -44,7 +57,8 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const volSeriesRef    = useRef<any>(null)
   const rsiSeriesRef    = useRef<any>(null)
   const candleDataRef   = useRef<any[]>([])
-  const priceLineRefs   = useRef<any[]>([])
+  const priceLineRefs      = useRef<any[]>([])
+  const tpslOrderLinesRef  = useRef<any[]>([])
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -449,6 +463,70 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
       priceLineRefs.current.push(pl)
     })
   }, [chartReady, positions, symbol])
+
+  // ── TP / SL / limit order lines ────────────────────────────────────────────
+  useEffect(() => {
+    if (!chartReady || !chartRef.current || !candleSeriesRef.current) return
+
+    tpslOrderLinesRef.current.forEach(pl => {
+      try { candleSeriesRef.current?.removePriceLine(pl) } catch {}
+    })
+    tpslOrderLinesRef.current = []
+
+    const coinShort = (s: string) => s.split(':').pop() ?? s
+    const matches = (coin: string) => {
+      const c = String(coin ?? '')
+      const s = String(symbol ?? '')
+      return c === s || coinShort(c) === s || c === coinShort(s)
+    }
+
+    // TP / SL from positions
+    positions.forEach(pos => {
+      if (!matches(pos.symbol)) return
+      if (pos.tp_price && pos.tp_price > 0) {
+        const pl = candleSeriesRef.current.createPriceLine({
+          price: pos.tp_price,
+          color: '#26a69a',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: `TP ${coinShort(pos.symbol)} $${pos.tp_price}`,
+        })
+        tpslOrderLinesRef.current.push(pl)
+      }
+      if (pos.sl_price && pos.sl_price > 0) {
+        const pl = candleSeriesRef.current.createPriceLine({
+          price: pos.sl_price,
+          color: '#ef5350',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: `SL ${coinShort(pos.symbol)} $${pos.sl_price}`,
+        })
+        tpslOrderLinesRef.current.push(pl)
+      }
+    })
+
+    // Resting limit orders
+    openOrders.forEach(o => {
+      if (!matches(o.coin)) return
+      if (o.isTrigger) return
+      const price = parseFloat(String(o.price ?? o.limitPx ?? 0))
+      if (!price || price <= 0) return
+      const size = parseFloat(String(o.sz ?? o.size ?? 0))
+      const side = String(o.side ?? '').toUpperCase()
+      const isBuy = side === 'B' || side === 'BUY' || side === 'LONG'
+      const pl = candleSeriesRef.current.createPriceLine({
+        price,
+        color: isBuy ? '#26a69a' : '#ef5350',
+        lineWidth: 1,
+        lineStyle: 1,
+        axisLabelVisible: true,
+        title: `${isBuy ? 'Buy' : 'Sell'} ${coinShort(o.coin)} ${size} @ $${price}`,
+      })
+      tpslOrderLinesRef.current.push(pl)
+    })
+  }, [chartReady, positions, openOrders, symbol])
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
