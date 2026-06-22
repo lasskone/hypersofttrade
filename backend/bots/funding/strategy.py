@@ -76,6 +76,8 @@ class FundingRateBot:
         self._exchange = None
         self._position: Optional[dict] = None  # {side, size, entry_price, entry_time, funding_collected}
         self._running = False
+        self._oi_capped_coins: set = set()       # coins known to be at OI cap; skipped by scanner
+        self._oi_cap_reset_time: float = 0.0    # epoch time when _oi_capped_coins was last cleared
 
     def _init_exchange(self):
         import eth_account
@@ -125,6 +127,13 @@ class FundingRateBot:
 
     async def _get_best_funding_opportunity(self) -> Optional[dict]:
         """Scan all perp pairs and return the best funding rate opportunity."""
+        # Reset OI cap skip list every 60 minutes so caps can be retried.
+        if self._oi_capped_coins and self._oi_cap_reset_time > 0:
+            if time.time() - self._oi_cap_reset_time >= 3600:
+                self.log("info", f"OI cap skip list cleared after 60 min — will retry: {self._oi_capped_coins}")
+                self._oi_capped_coins.clear()
+                self._oi_cap_reset_time = 0.0
+
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(INFO_ENDPOINT, json={"type": "metaAndAssetCtxs"})
@@ -135,6 +144,8 @@ class FundingRateBot:
             opportunities = []
             for i, m in enumerate(meta_list):
                 name = m.get("name", "")
+                if name in self._oi_capped_coins:
+                    continue
                 funding = float(ctxs_list[i].get("funding", 0))
                 mark_px = float(ctxs_list[i].get("markPx", 0))
                 if mark_px <= 0 or abs(funding) < self.entry_threshold:
@@ -148,6 +159,8 @@ class FundingRateBot:
                 })
 
             if not opportunities:
+                if self._oi_capped_coins:
+                    self.log("warning", "All top opportunities OI-capped, waiting for next cycle")
                 return None
 
             # Return the pair with highest absolute funding rate
@@ -209,7 +222,14 @@ class FundingRateBot:
             statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
             status = statuses[0] if statuses else {}
             if "error" in status:
-                self.log("error", f"Entry order rejected: {status['error']}")
+                err_msg = status["error"]
+                if "open interest is at cap" in err_msg.lower():
+                    self.log("info", f"Skipping {self.coin} — OI at cap, trying next opportunity")
+                    self._oi_capped_coins.add(self.coin)
+                    if self._oi_cap_reset_time == 0.0:
+                        self._oi_cap_reset_time = time.time()
+                else:
+                    self.log("error", f"Entry order rejected: {err_msg}")
                 return
             side_label = "SHORT" if is_short else "LONG"
             self._position = {
