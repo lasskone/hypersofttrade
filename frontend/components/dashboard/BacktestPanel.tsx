@@ -78,6 +78,20 @@ const BOT_CONFIGS: Record<string, { label: string; color: string; fields: { key:
       { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage' },
     ],
   },
+  passivbot_dca: {
+    label: 'Passivbot DCA',
+    color: '#ec4899',
+    fields: [
+      { key: 'wallet_exposure_limit', label: 'Wallet Exposure Limit', default: 0.1, hint: 'Max fraction of balance to expose. 0.1 = 10%' },
+      { key: 'entry_initial_qty_pct', label: 'Initial Entry Qty %', default: 0.01, hint: 'First entry size as fraction of allocation. 0.01 = 1%' },
+      { key: 'double_down_factor', label: 'Double Down Factor', default: 0.9, hint: 'DCA size multiplier. 0.9 = each DCA adds 90% of current position' },
+      { key: 'entry_grid_spacing_pct', label: 'Grid Spacing %', default: 0.003, hint: 'Base spacing between entries. 0.003 = 0.3%' },
+      { key: 'entry_grid_spacing_we_weight', label: 'Spacing Exposure Weight', default: 0.5, hint: 'How much wallet exposure widens spacing. 0 = fixed, 1 = fully dynamic' },
+      { key: 'close_grid_markup_start', label: 'Close Markup Start', default: 0.001, hint: 'First TP level above avg entry. 0.001 = 0.1%' },
+      { key: 'close_grid_markup_end', label: 'Close Markup End', default: 0.003, hint: 'Last TP level. 0.003 = 0.3%' },
+      { key: 'close_grid_qty_pct', label: 'Close Qty per TP %', default: 0.05, hint: 'Fraction of position to close per TP. 0.05 = 5% per level' },
+    ],
+  },
 }
 
 interface BacktestResult {
@@ -104,7 +118,7 @@ interface SavedBacktestConfig {
   start_date: string
   end_date: string
   active_period: string
-  params: Record<string, number>
+  params: Record<string, any>
 }
 
 interface SavedBacktest {
@@ -193,6 +207,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const [botType, setBotType] = useState('grid')
+  const [pbDirection, setPbDirection] = useState('long')
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
   const [params, setParams] = useState<Record<string, number>>({})
@@ -298,7 +313,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     alloc: number
     sd: string
     ed: string
-    fieldParams: Record<string, number>
+    fieldParams: Record<string, any>
   }) => {
     setLoading(true); setError(''); setResult(null)
     try {
@@ -327,8 +342,9 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
 
   const handleRun = async () => {
     if (!selectedMarket) { setError('Please select a market'); return }
-    const fieldParams: Record<string, number> = {}
+    const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
+    if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
     await runBacktestWithConfig({
       market: selectedMarket,
       bot_type: botType,
@@ -342,8 +358,9 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
 
   // ── Build the full config snapshot to save ──
   const buildFullConfig = (): SavedBacktestConfig => {
-    const fieldParams: Record<string, number> = {}
+    const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
+    if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
     return {
       bot_type: botType,
       symbol: selectedMarket?.name ?? '',
@@ -430,7 +447,11 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     setEndDate(cfg.end_date)
     setActivePeriod(cfg.active_period ?? '')
     setUseCustomDates(!cfg.active_period)
-    setParams(cfg.params ?? {})
+    const savedParams = cfg.params ?? {}
+    if (cfg.bot_type === 'passivbot_dca' && savedParams['direction']) {
+      setPbDirection(String(savedParams['direction']))
+    }
+    setParams(savedParams)
 
     // Switch to run tab
     setActiveMainTab('run')
@@ -626,6 +647,24 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
             {/* Strategy params */}
             <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
               <label style={{ ...s.label, marginBottom: 10 }}>STRATEGY PARAMETERS</label>
+              {botType === 'passivbot_dca' && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={s.label}>DIRECTION</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {['long', 'short'].map(dir => (
+                      <button key={dir} type="button" onClick={() => setPbDirection(dir)}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                          borderColor: pbDirection === dir ? '#ec4899' : '#1a1a2e',
+                          backgroundColor: pbDirection === dir ? '#ec489918' : '#0a0a0f',
+                          color: pbDirection === dir ? '#ec4899' : '#6b7280',
+                        }}>
+                        {dir.charAt(0).toUpperCase() + dir.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips below price. Short: sells rallies above price.</p>
+                </div>
+              )}
               {config.fields.map(f => (
                 <div key={f.key} style={{ marginBottom: 12 }}>
                   <label style={s.label}>{f.label.toUpperCase()}</label>

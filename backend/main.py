@@ -132,6 +132,22 @@ async def run_backtest(body: dict):
                 stop_loss_pct=float(body.get("stop_loss_pct", 5)),
                 leverage=int(body.get("leverage", 1)),
             )
+        elif bot_type == "passivbot_dca":
+            from services.backtest_engine import run_passivbot_dca_backtest
+            result = run_passivbot_dca_backtest(
+                candles=candles,
+                allocation=allocation,
+                direction=str(body.get("direction", "long")),
+                wallet_exposure_limit=float(body.get("wallet_exposure_limit", 0.1)),
+                entry_initial_qty_pct=float(body.get("entry_initial_qty_pct", 0.01)),
+                double_down_factor=float(body.get("double_down_factor", 0.9)),
+                entry_grid_spacing_pct=float(body.get("entry_grid_spacing_pct", 0.003)),
+                entry_grid_spacing_we_weight=float(body.get("entry_grid_spacing_we_weight", 0.5)),
+                close_grid_markup_start=float(body.get("close_grid_markup_start", 0.001)),
+                close_grid_markup_end=float(body.get("close_grid_markup_end", 0.003)),
+                close_grid_qty_pct=float(body.get("close_grid_qty_pct", 0.05)),
+                leverage=int(body.get("leverage", 1)),
+            )
         else:
             raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
     except ValueError as exc:

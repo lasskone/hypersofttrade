@@ -514,3 +514,176 @@ def run_emacross_backtest(
         "win_rate": round(win_rate, 1), "max_drawdown_pct": round(max_drawdown, 2),
         "bnh_pct": round(bnh_pct, 2), "equity_curve": equity_curve, "candles_used": len(candles),
     }
+
+
+def run_passivbot_dca_backtest(
+    candles: list[dict],
+    allocation: float,
+    direction: str,
+    wallet_exposure_limit: float,
+    entry_initial_qty_pct: float,
+    double_down_factor: float,
+    entry_grid_spacing_pct: float,
+    entry_grid_spacing_we_weight: float,
+    close_grid_markup_start: float,
+    close_grid_markup_end: float,
+    close_grid_qty_pct: float,
+    leverage: int = 1,
+) -> dict:
+    """
+    Simulate Passivbot-style DCA Grid strategy on OHLCV candles.
+    Accumulates a position via DCA grid entries and exits via TP grid.
+    Supports long and short directions.
+    """
+    if len(candles) < 10:
+        raise ValueError("Not enough candles for backtest")
+
+    MIN_NOTIONAL = 10.0
+    fee_rate = 0.00035
+    is_long = direction != "short"
+
+    cash = allocation
+    pos_size = 0.0   # size in asset (coins)
+    avg_entry = 0.0  # average entry price
+
+    # Number of TP levels: e.g. 0.05 -> 20 levels
+    n_tp = max(1, round(1.0 / close_grid_qty_pct))
+
+    trades: list[dict] = []
+    equity_curve: list[dict] = []
+    max_equity = allocation
+    max_drawdown = 0.0
+
+    for candle in candles:
+        close = candle["close"]
+        low = candle["low"]
+        high = candle["high"]
+        ts = candle["time"]
+
+        wallet_exposure = (pos_size * avg_entry) / (allocation * leverage) if pos_size > 0 else 0.0
+
+        # ENTRY LOGIC
+        if wallet_exposure < wallet_exposure_limit:
+            spacing_adj = entry_grid_spacing_pct * (
+                1 + (wallet_exposure / max(wallet_exposure_limit, 1e-9)) * entry_grid_spacing_we_weight
+            )
+
+            if pos_size == 0:
+                if is_long:
+                    entry_price = close * (1 - entry_grid_spacing_pct)
+                    if low <= entry_price:
+                        qty = (entry_initial_qty_pct * allocation * leverage) / entry_price
+                        notional = qty * entry_price
+                        margin = notional / leverage
+                        if notional >= MIN_NOTIONAL and cash >= margin * 0.999:
+                            cash -= margin
+                            avg_entry = entry_price
+                            pos_size = qty
+                            trades.append({"type": "entry", "price": entry_price})
+                else:
+                    entry_price = close * (1 + entry_grid_spacing_pct)
+                    if high >= entry_price:
+                        qty = (entry_initial_qty_pct * allocation * leverage) / entry_price
+                        notional = qty * entry_price
+                        margin = notional / leverage
+                        if notional >= MIN_NOTIONAL and cash >= margin * 0.999:
+                            cash -= margin
+                            avg_entry = entry_price
+                            pos_size = qty
+                            trades.append({"type": "entry", "price": entry_price})
+            else:
+                if is_long:
+                    dca_price = avg_entry * (1 - spacing_adj)
+                    if low <= dca_price:
+                        dca_qty = pos_size * double_down_factor
+                        notional = dca_qty * dca_price
+                        margin = notional / leverage
+                        if notional >= MIN_NOTIONAL and cash >= margin * 0.999:
+                            new_pos = pos_size + dca_qty
+                            avg_entry = (pos_size * avg_entry + dca_qty * dca_price) / new_pos
+                            cash -= margin
+                            pos_size = new_pos
+                            trades.append({"type": "dca", "price": dca_price})
+                else:
+                    dca_price = avg_entry * (1 + spacing_adj)
+                    if high >= dca_price:
+                        dca_qty = pos_size * double_down_factor
+                        notional = dca_qty * dca_price
+                        margin = notional / leverage
+                        if notional >= MIN_NOTIONAL and cash >= margin * 0.999:
+                            new_pos = pos_size + dca_qty
+                            avg_entry = (pos_size * avg_entry + dca_qty * dca_price) / new_pos
+                            cash -= margin
+                            pos_size = new_pos
+                            trades.append({"type": "dca", "price": dca_price})
+
+        # TP GRID EXIT
+        if pos_size > 1e-12:
+            for j in range(n_tp):
+                if pos_size < 1e-10:
+                    break
+                frac = j / max(n_tp - 1, 1)
+                tp_pct = close_grid_markup_start + (close_grid_markup_end - close_grid_markup_start) * frac
+
+                if is_long:
+                    tp_price = avg_entry * (1 + tp_pct)
+                    if high >= tp_price:
+                        tp_qty = min(pos_size * close_grid_qty_pct, pos_size)
+                        if tp_qty * tp_price < MIN_NOTIONAL / 10:
+                            tp_qty = pos_size
+                        fee = tp_price * tp_qty * fee_rate
+                        pnl = (tp_price - avg_entry) * tp_qty
+                        margin_returned = tp_qty * avg_entry / leverage
+                        cash += margin_returned + pnl - fee
+                        pos_size -= tp_qty
+                        trades.append({"type": "tp", "price": tp_price, "pnl": pnl - fee})
+                else:
+                    tp_price = avg_entry * (1 - tp_pct)
+                    if low <= tp_price:
+                        tp_qty = min(pos_size * close_grid_qty_pct, pos_size)
+                        if tp_qty * tp_price < MIN_NOTIONAL / 10:
+                            tp_qty = pos_size
+                        fee = tp_price * tp_qty * fee_rate
+                        pnl = (avg_entry - tp_price) * tp_qty
+                        margin_returned = tp_qty * avg_entry / leverage
+                        cash += margin_returned + pnl - fee
+                        pos_size -= tp_qty
+                        trades.append({"type": "tp", "price": tp_price, "pnl": pnl - fee})
+
+            if pos_size < 1e-10:
+                pos_size = 0.0
+                avg_entry = 0.0
+
+        # EQUITY
+        if pos_size > 0 and avg_entry > 0:
+            margin_in_use = pos_size * avg_entry / leverage
+            unrealized = (close - avg_entry) * pos_size if is_long else (avg_entry - close) * pos_size
+            equity = cash + margin_in_use + unrealized
+        else:
+            equity = cash
+
+        if equity > max_equity:
+            max_equity = equity
+        dd = (max_equity - equity) / max_equity * 100
+        if dd > max_drawdown:
+            max_drawdown = dd
+
+        equity_curve.append({"time": ts, "value": round(equity, 2)})
+
+    final_equity = equity_curve[-1]["value"] if equity_curve else allocation
+    pnl_pct = (final_equity - allocation) / allocation * 100
+    bnh_pct = (candles[-1]["close"] - candles[0]["close"]) / candles[0]["close"] * 100
+    tp_trades = [t for t in trades if t["type"] == "tp"]
+    win_rate = len([t for t in tp_trades if t.get("pnl", 0) > 0]) / len(tp_trades) * 100 if tp_trades else 0
+
+    return {
+        "pnl_pct": round(pnl_pct, 2),
+        "pnl_usd": round(final_equity - allocation, 2),
+        "final_equity": round(final_equity, 2),
+        "total_trades": len(trades),
+        "win_rate": round(win_rate, 1),
+        "max_drawdown_pct": round(max_drawdown, 2),
+        "bnh_pct": round(bnh_pct, 2),
+        "equity_curve": equity_curve,
+        "candles_used": len(candles),
+    }
