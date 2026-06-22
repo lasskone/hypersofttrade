@@ -215,17 +215,44 @@ class HyperliquidService:
         # Pre-process: build coin → {tp_price, sl_price} from position TP/SL orders
         tpsl_by_coin: dict[str, dict] = {}
         if not isinstance(open_orders, Exception) and isinstance(open_orders, list):
+            # Diagnostic: log ALL trigger/tpsl orders so we can verify field names
+            # from the live Hyperliquid response.
+            tpsl_raw = [
+                o for o in open_orders
+                if isinstance(o, dict) and (o.get("isPositionTpsl") or o.get("isTrigger"))
+            ]
+            print(
+                f"[portfolio] TP/SL diagnostic — {len(tpsl_raw)} trigger/tpsl orders "
+                f"out of {len(open_orders)} total open orders: {tpsl_raw}"
+            )
+
             for order in open_orders:
                 if not isinstance(order, dict) or not order.get("isPositionTpsl"):
                     continue
                 coin = order.get("coin", "")
                 tpsl = tpsl_by_coin.setdefault(coin, {})
+
+                trigger_px_raw = order.get("triggerPx")
+                trigger_px = float(trigger_px_raw or "0") if trigger_px_raw is not None else 0.0
+                if trigger_px == 0.0:
+                    print(f"[portfolio] Skipping TP/SL order for {coin} — triggerPx is zero/missing: {order}")
+                    continue
+
+                # Prefer triggerCondition ("tp"/"sl") — direct enum, more stable than
+                # orderType string matching which can change with API versions.
+                trigger_condition = (order.get("triggerCondition") or "").lower()
                 otype = (order.get("orderType") or "").lower()
-                trigger_px = float(order.get("triggerPx", "0") or "0")
-                if "take profit" in otype or otype == "tp":
+
+                is_tp = trigger_condition == "tp" or "take profit" in otype or otype == "tp"
+                is_sl = trigger_condition == "sl" or "stop loss" in otype or otype == "sl"
+
+                if is_tp:
                     tpsl["tp_price"] = trigger_px
-                elif "stop loss" in otype or otype == "sl":
+                elif is_sl:
                     tpsl["sl_price"] = trigger_px
+                else:
+                    print(f"[portfolio] TP/SL order for {coin} not classified "
+                          f"(triggerCondition={trigger_condition!r} orderType={otype!r}): {order}")
 
         # Step 3: aggregate perp positions across all DEXes.
         # Account Value and Available to Trade are NOT taken from clearinghouseState —
