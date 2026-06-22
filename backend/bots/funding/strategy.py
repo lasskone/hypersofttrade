@@ -168,10 +168,28 @@ class FundingRateBot:
 
     async def _open_position(self, is_short: bool, mark_price: float):
         """Open a position to collect funding."""
+        from services.hyperliquid_meta import get_sz_decimals as _fetch_sz_decimals
+
+        # Always resolve szDecimals for the *current* coin at order time.
+        # In scanner mode self.coin changes dynamically, so the value stored at
+        # construction (which was for the originally configured coin) may be wrong
+        # or completely inapplicable to the scanner-discovered coin.
+        sz_decimals = await _fetch_sz_decimals(self.coin)
+        # Keep self.sz_decimals in sync so close_position and future ticks see it.
+        self.sz_decimals = sz_decimals
+
         position_value = self.allocated_usdc * self.leverage
-        size = round_size(position_value / mark_price, self.sz_decimals)
-        if size <= 0:
-            self.log("warning", "Size too small, skipping entry")
+        raw_size = position_value / mark_price
+        size = round_size(raw_size, sz_decimals)
+        notional = size * mark_price
+
+        self.log("info", f"Size calc for {self.coin}: raw={raw_size:.8f} → rounded={size} "
+                         f"(szDecimals={sz_decimals}, notional=${notional:.2f})")
+
+        if size <= 0 or notional < 10:
+            self.log("warning",
+                     f"Skipping order: size too small after rounding "
+                     f"(szDecimals={sz_decimals}, size={size}, notional=${notional:.2f})")
             return
 
         # Market order with 1% slippage
