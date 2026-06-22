@@ -192,19 +192,19 @@ class FundingRateBot:
                      f"(szDecimals={sz_decimals}, size={size}, notional=${notional:.2f})")
             return
 
-        # Market order with 1% slippage
-        slippage = 0.01
+        # Limit GTC at mark price — aggressive limit that fills at current market
+        # price without IOC rejection on thin-book coins (e.g. LAYER).
         is_buy = not is_short
-        if is_buy:
-            limit_px = round_price(mark_price * (1 + slippage))
-        else:
-            limit_px = round_price(mark_price * (1 - slippage))
+        limit_px = round_price(mark_price)
+
+        self.log("info", f"Placing {'SHORT' if is_short else 'LONG'} limit GTC order: "
+                         f"{self.coin} size={size} price=${limit_px} tif=Gtc")
 
         try:
             result = await asyncio.to_thread(
                 self._exchange.order,
                 self.coin, is_buy, size, limit_px,
-                {"limit": {"tif": "Ioc"}},
+                {"limit": {"tif": "Gtc"}},
             )
             statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
             status = statuses[0] if statuses else {}
@@ -229,16 +229,14 @@ class FundingRateBot:
             return
         size = self._position["size"]
         is_buy = self._position["side"] == "short"  # close short = buy
-        slippage = 0.01
-        if is_buy:
-            limit_px = round_price(mark_price * (1 + slippage))
-        else:
-            limit_px = round_price(mark_price * (1 - slippage))
+        limit_px = round_price(mark_price)
+        self.log("info", f"Placing close {'BUY' if is_buy else 'SELL'} limit GTC order: "
+                         f"{self.coin} size={size} price=${limit_px} tif=Gtc reduce_only=True")
         try:
             result = await asyncio.to_thread(
                 self._exchange.order,
                 self.coin, is_buy, size, limit_px,
-                {"limit": {"tif": "Ioc"}},
+                {"limit": {"tif": "Gtc"}},
                 True,  # reduce_only
             )
             hold_hours = (time.time() - self._position["entry_time"]) / 3600
