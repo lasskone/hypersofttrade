@@ -88,7 +88,9 @@ class EnvelopeBot:
         self.dex = dex
         self.log = log_callback or (lambda level, msg: None)
         self._running = False
-        self._positions: list[dict] = []  # {level, entry_price, size, order_id}
+        # _positions and _open_order_ids are kept as cache only.
+        # All strategy logic reads from real Hyperliquid API state fetched each tick.
+        self._positions: list[dict] = []
         self._open_order_ids: set[int] = set()
         self._candles: list[dict] = []
         self._exchange = None
@@ -135,6 +137,86 @@ class EnvelopeBot:
         return [{"time": int(c["t"]) // 1000, "open": float(c["o"]), "high": float(c["h"]),
                  "low": float(c["l"]), "close": float(c["c"]), "volume": float(c["v"])} for c in candles]
 
+    async def _fetch_real_position(self) -> dict:
+        """
+        Fetch real open position for self.coin from Hyperliquid clearinghouseState.
+        Returns {"szi": float, "entry_px": float, "unrealized_pnl": float}.
+        szi == 0.0 means no open position.
+        """
+        payload: dict = {"type": "clearinghouseState", "user": self.master_address}
+        if self.dex:
+            payload["dex"] = self.dex
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    INFO_ENDPOINT, json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                state = resp.json()
+            # The API may return the coin as "XYZ100" (without DEX prefix) even for HIP-3 coins.
+            coin_short = self.coin.split(":")[-1] if ":" in self.coin else self.coin
+            for ap in (state.get("assetPositions") or []):
+                if not isinstance(ap, dict):
+                    continue
+                pos = ap.get("position") or {}
+                if not isinstance(pos, dict):
+                    continue
+                api_coin = pos.get("coin", "")
+                if api_coin not in (self.coin, coin_short):
+                    continue
+                szi = float(pos.get("szi", "0") or "0")
+                if szi == 0.0:
+                    continue
+                return {
+                    "szi": szi,
+                    "entry_px": float(pos.get("entryPx", "0") or "0"),
+                    "unrealized_pnl": float(pos.get("unrealizedPnl", "0") or "0"),
+                }
+        except Exception as e:
+            self.log("warning", f"Failed to fetch real position: {e}")
+        return {"szi": 0.0, "entry_px": 0.0, "unrealized_pnl": 0.0}
+
+    async def _fetch_real_open_orders(self) -> list[dict]:
+        """
+        Fetch real resting limit buy orders for self.coin from frontendOpenOrders.
+        Returns list of {"price": float, "size": float, "oid": int}.
+        Excludes TP/SL trigger orders and sell orders.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "frontendOpenOrders", "user": self.master_address},
+                    headers={"Content-Type": "application/json"},
+                )
+                orders = resp.json()
+            if not isinstance(orders, list):
+                return []
+            coin_short = self.coin.split(":")[-1] if ":" in self.coin else self.coin
+            result = []
+            for o in orders:
+                if not isinstance(o, dict):
+                    continue
+                api_coin = o.get("coin", "")
+                if api_coin not in (self.coin, coin_short):
+                    continue
+                if o.get("isTrigger"):
+                    continue  # skip TP/SL trigger orders
+                if (o.get("side", "") or "").upper() != "B":
+                    continue  # only buy (long entry) orders
+                limit_px_raw = o.get("limitPx")
+                if limit_px_raw is None:
+                    continue
+                result.append({
+                    "price": float(limit_px_raw),
+                    "size": float(o.get("sz", "0") or "0"),
+                    "oid": o.get("oid"),
+                })
+            return result
+        except Exception as e:
+            self.log("warning", f"Failed to fetch real open orders: {e}")
+            return []
+
     async def _place_limit_order(self, is_buy: bool, size: float, price: float) -> Optional[int]:
         """Place a limit order and return order_id."""
         try:
@@ -175,13 +257,14 @@ class EnvelopeBot:
         except Exception as e:
             self.log("warning", f"Cancel all orders failed: {e}")
 
-    async def _close_all_positions(self, mark_price: float):
-        """Close all open positions at market."""
-        if not self._positions:
-            return
-        total_size = sum(abs(p["size"]) for p in self._positions)
-        total_size = round_size(total_size, self.sz_decimals)
+    async def _close_all_positions(self, real_szi: float, mark_price: float):
+        """
+        Close open position using real position size from Hyperliquid.
+        real_szi must come from _fetch_real_position(), never from self._positions.
+        """
+        total_size = round_size(abs(real_szi), self.sz_decimals)
         if total_size <= 0:
+            self.log("warning", "Close requested but real_szi rounds to 0 — nothing to close")
             return
         slippage = 0.05
         limit_price = round_price(mark_price * (1 - slippage))
@@ -191,8 +274,7 @@ class EnvelopeBot:
                 self.coin, False, total_size, limit_price,
                 {"limit": {"tif": "Ioc"}},
             )
-            self.log("info", f"Closed all positions: {total_size} {self.coin} @ ~${limit_price}")
-            self._positions.clear()
+            self.log("info", f"Closed position: {total_size} {self.coin} @ ~${limit_price} (real_szi={real_szi})")
         except Exception as e:
             self.log("error", f"Close positions failed: {e}")
 
@@ -207,6 +289,19 @@ class EnvelopeBot:
 
         while self._running:
             try:
+                # 0. Fetch real state from Hyperliquid — source of truth for every tick.
+                #    This makes the bot restart-safe: no stale in-memory state is trusted.
+                real_pos, real_orders = await asyncio.gather(
+                    self._fetch_real_position(),
+                    self._fetch_real_open_orders(),
+                )
+                real_szi        = real_pos["szi"]
+                real_entry_px   = real_pos["entry_px"]
+                real_upnl       = real_pos["unrealized_pnl"]
+                has_position    = real_szi != 0.0
+
+                self.log("info", f"Real state — szi={real_szi} entry_px={real_entry_px} upnl={real_upnl:.2f} resting_buys={len(real_orders)}")
+
                 # 1. Fetch latest candles
                 candles = await self._fetch_candles(limit=self.ma_period + 10)
                 if len(candles) < self.ma_period + 2:
@@ -228,46 +323,66 @@ class EnvelopeBot:
 
                 ma_base = current_sma
 
-                # 2. Check stop loss
-                if self.stop_loss_pct > 0 and self._positions:
-                    total_invested = sum(p["entry_price"] * p["size"] for p in self._positions)
-                    current_value = current_price * sum(p["size"] for p in self._positions)
+                # 2. Stop loss — uses REAL position data (entry_px, szi) from Hyperliquid.
+                #    Fires correctly after any restart because it never reads self._positions.
+                if self.stop_loss_pct > 0 and has_position and real_entry_px > 0:
+                    total_size    = abs(real_szi)
+                    total_invested = real_entry_px * total_size
+                    current_value  = current_price * total_size
                     pnl_pct = (current_value - total_invested) / total_invested * 100
                     if pnl_pct < -self.stop_loss_pct:
-                        self.log("warning", f"Stop loss triggered: PnL={pnl_pct:.2f}%")
+                        self.log("warning", f"Stop loss triggered: PnL={pnl_pct:.2f}% (entry={real_entry_px:.4f} now={current_price:.4f} szi={real_szi})")
                         await self._cancel_all_orders()
-                        await self._close_all_positions(current_price)
+                        await self._close_all_positions(real_szi, current_price)
                         await asyncio.sleep(3600)  # pause 1h after stop loss
                         continue
 
-                # 3. Check close signal (high >= ma_base on last closed candle)
-                if self._positions and last["high"] >= ma_base:
-                    self.log("info", f"Close signal: high={last['high']} >= MA={ma_base:.2f}")
+                # 3. Close signal (high >= ma_base on last closed candle).
+                #    Uses real_szi for the sell size.
+                #    Does NOT clear any in-memory state — the next tick's real API fetch
+                #    will see szi == 0 once the sell order fills, which is the true confirmation.
+                if has_position and last["high"] >= ma_base:
+                    self.log("info", f"Close signal: high={last['high']} >= MA={ma_base:.2f} | real_szi={real_szi}")
                     await self._cancel_all_orders()
-                    # Place limit sell at ma_base
-                    total_size = sum(p["size"] for p in self._positions)
-                    oid = await self._place_limit_order(False, total_size, ma_base)
+                    oid = await self._place_limit_order(False, abs(real_szi), ma_base)
                     if oid:
-                        self._positions.clear()
-                        self._open_order_ids.discard(oid)
+                        self.log("info", f"Sell order placed (oid={oid}) — position close confirmed on next tick via real API")
 
-                # 4. Place buy orders at envelope levels (if not already positioned)
-                active_levels = {p["level"] for p in self._positions}
+                # 4. Place buy orders at envelope levels not yet covered.
+                #    Duplicate-order prevention uses TWO real-API checks — no memory state:
+                #
+                #    a) current_price <= buy_price: this level's price has already been
+                #       passed in a prior tick, meaning the order at this level was filled
+                #       (or should have been). Skipping prevents re-entering the same level
+                #       after a worker restart when a real position already exists.
+                #
+                #    b) A resting buy order already exists within 0.1% of buy_price on the
+                #       live order book — the order was placed and hasn't filled yet.
                 for i, env_pct in enumerate(self.envelopes):
-                    if i in active_levels:
-                        continue
-                    buy_price = ma_base * (1 - env_pct)
-                    # Check if current price already below this level
-                    if last["low"] <= buy_price:
-                        size = (per_level * self.leverage) / buy_price
-                        order_value = per_level * self.leverage
-                        self.log("info", f"Placing level {i} buy: price={buy_price:.4f} size={size:.6f} notional={order_value:.2f} USDC (capital={per_level:.2f} × leverage={self.leverage})")
-                        oid = await self._place_limit_order(True, size, buy_price)
-                        if oid:
-                            self._positions.append({"level": i, "entry_price": buy_price, "size": round_size(size, self.sz_decimals), "order_id": oid})
-                            self._open_order_ids.add(oid)
+                    buy_price = round_price(ma_base * (1 - env_pct))
 
-                self.log("info", f"Tick complete — MA={ma_base:.2f} | Price={current_price:.2f} | Positions={len(self._positions)}")
+                    # Original trigger: last closed candle's low touched this envelope level
+                    if last["low"] > buy_price:
+                        continue
+
+                    # (a) Skip levels the price has already passed through — these were
+                    #     filled in a prior tick and should not be re-entered now.
+                    if current_price <= buy_price:
+                        continue
+
+                    # (b) Skip if a resting buy order already exists near this price.
+                    if any(abs(o["price"] - buy_price) / buy_price <= 0.001 for o in real_orders):
+                        self.log("info", f"Level {i} buy already on book @ ~{buy_price:.4f} — skipping")
+                        continue
+
+                    size = (per_level * self.leverage) / buy_price
+                    order_value = per_level * self.leverage
+                    self.log("info", f"Placing level {i} buy: price={buy_price:.4f} size={size:.6f} notional={order_value:.2f} USDC (capital={per_level:.2f} × leverage={self.leverage})")
+                    oid = await self._place_limit_order(True, size, buy_price)
+                    if oid:
+                        self.log("info", f"Level {i} buy placed (oid={oid})")
+
+                self.log("info", f"Tick complete — MA={ma_base:.2f} | Price={current_price:.2f} | real_szi={real_szi} | resting_buys={len(real_orders)}")
 
             except asyncio.CancelledError:
                 self.log("info", "Bot cancelled — cleaning up...")
