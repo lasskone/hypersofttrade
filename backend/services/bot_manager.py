@@ -106,6 +106,8 @@ class BotManager:
             await self._run_bbrsi_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "ema_cross":
             await self._run_emacross_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "passivbot_dca":
+            await self._run_passivbot_dca_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -287,6 +289,41 @@ class BotManager:
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
         )
         self._add_log(bot_id, "info", f"EMA Cross Bot initializing — {coin}")
+        await bot.run()
+
+    async def _run_passivbot_dca_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.passivbot_dca.strategy import PassivbotDCABot
+
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "") or None
+        coin = f"{dex}:{symbol}" if dex else symbol
+
+        bot = PassivbotDCABot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=float(config.get("allocated_usdc", 100)),
+            leverage=int(config.get("leverage", 1)),
+            direction=config.get("direction", "long"),
+            wallet_exposure_limit=float(config.get("wallet_exposure_limit", 0.1)),
+            entry_initial_qty_pct=float(config.get("entry_initial_qty_pct", 0.01)),
+            double_down_factor=float(config.get("double_down_factor", 0.9)),
+            entry_grid_spacing_pct=float(config.get("entry_grid_spacing_pct", 0.003)),
+            entry_grid_spacing_we_weight=float(config.get("entry_grid_spacing_we_weight", 0.5)),
+            close_grid_markup_start=float(config.get("close_grid_markup_start", 0.001)),
+            close_grid_markup_end=float(config.get("close_grid_markup_end", 0.003)),
+            close_grid_qty_pct=float(config.get("close_grid_qty_pct", 0.05)),
+            trailing_enabled=bool(config.get("trailing_enabled", False)),
+            trailing_threshold_pct=float(config.get("trailing_threshold_pct", 0.02)),
+            trailing_retracement_pct=float(config.get("trailing_retracement_pct", 0.005)),
+            unstuck_enabled=bool(config.get("unstuck_enabled", True)),
+            unstuck_loss_allowance_pct=float(config.get("unstuck_loss_allowance_pct", 0.02)),
+            unstuck_close_pct=float(config.get("unstuck_close_pct", 0.02)),
+            sz_decimals=await get_sz_decimals(coin),
+            dex=dex,
+            log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+        )
+        self._add_log(bot_id, "info", f"Passivbot DCA Grid Bot initializing — {coin}")
         await bot.run()
 
 
