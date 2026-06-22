@@ -207,6 +207,7 @@ function PositionModal({ pos, walletAddress, onClose, onAction }: {
       showToast(`✅ Set ${msg}`)
       setTpPrice('')
       setSlPrice('')
+      setTimeout(onAction, 1500)
     } catch (e: any) {
       showToast(`❌ ${e.message}`)
     } finally {

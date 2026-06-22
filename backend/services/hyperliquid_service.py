@@ -212,47 +212,30 @@ class HyperliquidService:
                 if isinstance(asset, dict) and "name" in asset:
                     sz_decimals_map[asset["name"]] = asset.get("szDecimals", 5)
 
-        # Pre-process: build coin → {tp_price, sl_price} from position TP/SL orders
-        tpsl_by_coin: dict[str, dict] = {}
+        # Pre-process: build coin → list of {trigger_px, triggers_above} from TP/SL orders.
+        # Real Hyperliquid TP/SL orders have isTrigger=True, reduceOnly=True, and
+        # isPositionTpsl=False.  triggerCondition is a human string like "Price above 10"
+        # or "Price below 85000".  Whether "above" means TP or SL depends on position side
+        # (long: above=TP, below=SL; short: above=SL, below=TP), so we store the raw
+        # direction and resolve at position-merge time when side is known.
+        tpsl_triggers_by_coin: dict[str, list[dict]] = {}
         if not isinstance(open_orders, Exception) and isinstance(open_orders, list):
-            # Diagnostic: log ALL trigger/tpsl orders so we can verify field names
-            # from the live Hyperliquid response.
-            tpsl_raw = [
-                o for o in open_orders
-                if isinstance(o, dict) and (o.get("isPositionTpsl") or o.get("isTrigger"))
-            ]
-            print(
-                f"[portfolio] TP/SL diagnostic — {len(tpsl_raw)} trigger/tpsl orders "
-                f"out of {len(open_orders)} total open orders: {tpsl_raw}"
-            )
-
             for order in open_orders:
-                if not isinstance(order, dict) or not order.get("isPositionTpsl"):
+                if not isinstance(order, dict):
+                    continue
+                if not order.get("isTrigger") or not order.get("reduceOnly"):
                     continue
                 coin = order.get("coin", "")
-                tpsl = tpsl_by_coin.setdefault(coin, {})
-
                 trigger_px_raw = order.get("triggerPx")
                 trigger_px = float(trigger_px_raw or "0") if trigger_px_raw is not None else 0.0
                 if trigger_px == 0.0:
-                    print(f"[portfolio] Skipping TP/SL order for {coin} — triggerPx is zero/missing: {order}")
                     continue
-
-                # Prefer triggerCondition ("tp"/"sl") — direct enum, more stable than
-                # orderType string matching which can change with API versions.
-                trigger_condition = (order.get("triggerCondition") or "").lower()
-                otype = (order.get("orderType") or "").lower()
-
-                is_tp = trigger_condition == "tp" or "take profit" in otype or otype == "tp"
-                is_sl = trigger_condition == "sl" or "stop loss" in otype or otype == "sl"
-
-                if is_tp:
-                    tpsl["tp_price"] = trigger_px
-                elif is_sl:
-                    tpsl["sl_price"] = trigger_px
-                else:
-                    print(f"[portfolio] TP/SL order for {coin} not classified "
-                          f"(triggerCondition={trigger_condition!r} orderType={otype!r}): {order}")
+                condition = (order.get("triggerCondition") or "").lower()
+                triggers_above = "above" in condition  # False means "below"
+                tpsl_triggers_by_coin.setdefault(coin, []).append({
+                    "trigger_px":     trigger_px,
+                    "triggers_above": triggers_above,
+                })
 
         # Step 3: aggregate perp positions across all DEXes.
         # Account Value and Available to Trade are NOT taken from clearinghouseState —
@@ -300,7 +283,23 @@ class HyperliquidService:
                 if entry_px > 0 and mark_px > 0:
                     direction = 1 if szi > 0 else -1
                     roe_pct = round(((mark_px / entry_px) - 1) * lev_val * 100 * direction, 2)
-                tpsl = tpsl_by_coin.get(coin_key, {})
+                # Resolve TP/SL using position side:
+                # Long:  triggers_above=True → TP,  triggers_above=False → SL
+                # Short: triggers_above=True → SL,  triggers_above=False → TP
+                is_long = szi > 0
+                tp_price = None
+                sl_price = None
+                for trigger in tpsl_triggers_by_coin.get(coin_key, []):
+                    if trigger["triggers_above"]:
+                        if is_long:
+                            tp_price = trigger["trigger_px"]
+                        else:
+                            sl_price = trigger["trigger_px"]
+                    else:
+                        if is_long:
+                            sl_price = trigger["trigger_px"]
+                        else:
+                            tp_price = trigger["trigger_px"]
                 all_positions.append({
                     "dex":               dex_label,
                     "symbol":            coin_key,
@@ -315,8 +314,8 @@ class HyperliquidService:
                     "sz_decimals":       sz_decimals_map.get(coin_key, 5),
                     "mark_price":        mark_px,
                     "roe_pct":           roe_pct,
-                    "tp_price":          tpsl.get("tp_price"),
-                    "sl_price":          tpsl.get("sl_price"),
+                    "tp_price":          tp_price,
+                    "sl_price":          sl_price,
                     "opened_at":         None,
                 })
 
