@@ -94,6 +94,8 @@ class EnvelopeBot:
         self._open_order_ids: set[int] = set()
         self._candles: list[dict] = []
         self._exchange = None
+        self._last_ma: float = 0.0       # MA value when buy orders were last placed/refreshed
+        self._waiting_close: bool = False  # True after a sell is placed; reset when position confirms closed
 
     def _init_exchange(self):
         import eth_account
@@ -348,41 +350,65 @@ class EnvelopeBot:
                     if oid:
                         self.log("info", f"Sell order placed (oid={oid}) — position close confirmed on next tick via real API")
 
-                # 4. Place buy orders at envelope levels not yet covered.
-                #    Duplicate-order prevention uses TWO real-API checks — no memory state:
+                # 4. Proactively place limit buy orders at all envelope levels.
+                #    Orders are placed in advance and left resting on the book (GTC),
+                #    letting Hyperliquid fill them naturally when price reaches each level.
+                #    This is the CryptoRobotFr passive approach — NOT reactive post-move.
                 #
-                #    a) current_price <= buy_price: this level's price has already been
-                #       passed in a prior tick, meaning the order at this level was filled
-                #       (or should have been). Skipping prevents re-entering the same level
-                #       after a worker restart when a real position already exists.
+                #    MA drift detection avoids constant cancel/replace churn:
+                #      - First tick (self._last_ma == 0.0): place all levels immediately.
+                #      - MA moved > 0.5% since last placement: cancel stale buy orders by
+                #        OID (real_orders contains only buys — any resting sell is safe),
+                #        then re-place at the new MA-derived prices.
+                #      - MA drift ≤ 0.5%: existing orders are still correctly positioned,
+                #        skip placement entirely (no-op).
                 #
-                #    b) A resting buy order already exists within 0.1% of buy_price on the
-                #       live order book — the order was placed and hasn't filled yet.
-                for i, env_pct in enumerate(self.envelopes):
-                    buy_price = round_price(ma_base * (1 - env_pct))
+                #    Skipped entirely while a pending close is in flight (sell placed in
+                #    step 3 this tick, or position still open from a prior close signal).
+                #    Resets automatically once the real API confirms position is closed.
+                in_close_mode = has_position and (last["high"] >= ma_base or self._waiting_close)
+                self._waiting_close = in_close_mode
 
-                    # Original trigger: last closed candle's low touched this envelope level
-                    if last["low"] > buy_price:
-                        continue
+                if not in_close_mode:
+                    ma_drifted = (
+                        self._last_ma == 0.0
+                        or abs(ma_base - self._last_ma) / self._last_ma > 0.005
+                    )
 
-                    # (a) Skip levels the price has already passed through — these were
-                    #     filled in a prior tick and should not be re-entered now.
-                    if current_price <= buy_price:
-                        continue
+                    if ma_drifted:
+                        # Cancel stale buy orders by OID from the real_orders snapshot.
+                        # Cancelling by OID (not _cancel_all_orders) leaves any resting
+                        # sell order from a prior close signal untouched.
+                        if real_orders:
+                            self.log("info", f"MA drifted {self._last_ma:.4f} → {ma_base:.4f} — cancelling {len(real_orders)} stale buy order(s)")
+                            for o in real_orders:
+                                oid = o.get("oid")
+                                if oid:
+                                    try:
+                                        await asyncio.to_thread(self._exchange.cancel, self.coin, oid)
+                                        self.log("info", f"Cancelled stale buy order {oid}")
+                                    except Exception as e:
+                                        self.log("warning", f"Failed to cancel buy order {oid}: {e}")
+                        self._last_ma = ma_base
 
-                    # (b) Skip if a resting buy order already exists near this price.
-                    if any(abs(o["price"] - buy_price) / buy_price <= 0.001 for o in real_orders):
-                        self.log("info", f"Level {i} buy already on book @ ~{buy_price:.4f} — skipping")
-                        continue
+                        for i, env_pct in enumerate(self.envelopes):
+                            buy_price = round_price(ma_base * (1 - env_pct))
+                            # Skip if current price is already at or below this level —
+                            # placing a buy above current price would fill immediately as
+                            # taker. This level was filled (or skipped) in a prior tick.
+                            if current_price <= buy_price:
+                                self.log("info", f"Level {i} @ {buy_price:.4f} already passed (current={current_price:.4f}) — skipping")
+                                continue
+                            size = (per_level * self.leverage) / buy_price
+                            order_value = per_level * self.leverage
+                            self.log("info", f"Placing level {i} buy: price={buy_price:.4f} size={size:.6f} notional={order_value:.2f} USDC (capital={per_level:.2f} × leverage={self.leverage})")
+                            oid = await self._place_limit_order(True, size, buy_price)
+                            if oid:
+                                self.log("info", f"Level {i} buy placed (oid={oid})")
+                    else:
+                        self.log("info", f"MA drift < 0.5% ({self._last_ma:.4f} → {ma_base:.4f}) — existing orders unchanged")
 
-                    size = (per_level * self.leverage) / buy_price
-                    order_value = per_level * self.leverage
-                    self.log("info", f"Placing level {i} buy: price={buy_price:.4f} size={size:.6f} notional={order_value:.2f} USDC (capital={per_level:.2f} × leverage={self.leverage})")
-                    oid = await self._place_limit_order(True, size, buy_price)
-                    if oid:
-                        self.log("info", f"Level {i} buy placed (oid={oid})")
-
-                self.log("info", f"Tick complete — MA={ma_base:.2f} | Price={current_price:.2f} | real_szi={real_szi} | resting_buys={len(real_orders)}")
+                self.log("info", f"Tick complete — MA={ma_base:.2f} | Price={current_price:.2f} | real_szi={real_szi} | resting_buys={len(real_orders)} | in_close_mode={in_close_mode}")
 
             except asyncio.CancelledError:
                 self.log("info", "Bot cancelled — cleaning up...")
