@@ -47,6 +47,11 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const priceLineRefs   = useRef<any[]>([])
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
+
+  // When a position is clicked in Overview, initialInterval prop updates — sync it
+  useEffect(() => {
+    if (initialInterval) setSelectedInterval(initialInterval)
+  }, [initialInterval])
   const [showEMA, setShowEMA]                       = useState(true)
   const [emaPeriod, setEmaPeriod]                   = useState(20)
   const [showPeriodInput, setShowPeriodInput]       = useState(false)

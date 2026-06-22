@@ -343,7 +343,7 @@ export function OverviewPanel({
 }: {
   walletAddress: string;
   onNavigate?: (section: string) => void;
-  onSelectMarket?: (symbol: string, dex: string) => void;
+  onSelectMarket?: (symbol: string, dex: string, interval?: string) => void;
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [data, setData] = useState<any>(null);
@@ -707,7 +707,13 @@ export function OverviewPanel({
                       className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e', cursor: onSelectMarket ? 'pointer' : undefined }}
                       onClick={() => {
-                        if (onSelectMarket) onSelectMarket(pos?.symbol ?? '', pos?.dex === 'main' ? '' : (pos?.dex ?? ''))
+                        if (onSelectMarket) {
+                          const matchingBot = bots.find((b: any) =>
+                            b.symbol === pos?.symbol && (b.status === 'running' || b.desired_status === 'running')
+                          )
+                          const interval = matchingBot?.config?.interval ?? '15m'
+                          onSelectMarket(pos?.symbol ?? '', pos?.dex === 'main' ? '' : (pos?.dex ?? ''), interval)
+                        }
                         if (onNavigate) onNavigate('trade')
                       }}>
                       <td className="px-5 py-3">
