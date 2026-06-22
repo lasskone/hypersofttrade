@@ -156,17 +156,24 @@ class BotManager:
         engine = TradingEngine(engine_config)
         if not await engine.initialize():
             raise RuntimeError("TradingEngine failed to initialize")
-        if leverage > 1:
-            try:
-                from hyperliquid.exchange import Exchange
-                import eth_account
-                from hyperliquid.utils import constants
-                account = eth_account.Account.from_key(private_key)
-                ex = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
-                await asyncio.to_thread(ex.update_leverage, leverage, symbol_full, False)
+        # Always call update_leverage — including for 1x — so the exchange is
+        # explicitly set to the configured value and never inherits stale leverage
+        # from a previous bot session or manual trade.
+        self._add_log(bot_id, "info", f"Setting leverage to {leverage}x for {symbol_full} (from config)")
+        try:
+            from hyperliquid.exchange import Exchange
+            import eth_account
+            from hyperliquid.utils import constants
+            account = eth_account.Account.from_key(private_key)
+            ex = Exchange(account, constants.MAINNET_API_URL, account_address=master_address)
+            result = await asyncio.to_thread(ex.update_leverage, leverage, symbol_full, False)
+            status = (result or {}).get("status", "")
+            if status == "ok":
                 self._add_log(bot_id, "info", f"Leverage set to {leverage}x for {symbol_full}")
-            except Exception as e:
-                self._add_log(bot_id, "warning", f"Failed to set leverage: {e}")
+            else:
+                self._add_log(bot_id, "warning", f"Leverage update unexpected response for {symbol_full}: {result}")
+        except Exception as e:
+            self._add_log(bot_id, "warning", f"Failed to set leverage: {e}")
         await engine.start()
 
 

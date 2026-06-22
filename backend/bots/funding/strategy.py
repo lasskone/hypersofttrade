@@ -91,12 +91,19 @@ class FundingRateBot:
         )
 
     async def _set_leverage(self):
+        # Always call update_leverage — including for 1x — so the exchange is
+        # explicitly set to the configured value and never inherits stale leverage
+        # from a previous bot session or manual trade.
+        self.log("info", f"Setting leverage to {self.leverage}x for {self.coin} (from config)")
         try:
-            await asyncio.to_thread(
-                self._exchange.update_leverage,
-                self.leverage, self.coin, True,
+            result = await asyncio.to_thread(
+                self._exchange.update_leverage, self.leverage, self.coin, True
             )
-            self.log("info", f"Leverage set to {self.leverage}x")
+            status = (result or {}).get("status", "")
+            if status == "ok":
+                self.log("info", f"Leverage set to {self.leverage}x for {self.coin}")
+            else:
+                self.log("warning", f"Leverage update unexpected response for {self.coin}: {result}")
         except Exception as e:
             self.log("warning", f"Could not set leverage: {e}")
 
