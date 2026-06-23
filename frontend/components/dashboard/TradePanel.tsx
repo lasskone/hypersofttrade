@@ -33,6 +33,9 @@ const fmt = (n: number, dec = 2) =>
 const fmtPnl = (n: number) =>
   (n >= 0 ? '+' : '') + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+const fmtQty = (n: number) =>
+  n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : n.toFixed(2)
+
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
 export function TradePanel({ walletAddress, openPositions = [], openOrders = [], initialMarket = null, initialInterval, onMarketConsumed }: Props) {
@@ -162,10 +165,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
   const spread = orderbook.bids.length > 0 && orderbook.asks.length > 0
     ? parseFloat(orderbook.asks[0]?.[0] || '0') - parseFloat(orderbook.bids[0]?.[0] || '0')
     : 0
-
-  const matchingPositions = openPositions.filter(p =>
-    (p.coin || p.symbol) === selectedMarket?.name
-  )
 
   // Unique DEX groups (in order of first appearance)
   const dexGroupsSet: { [key: string]: boolean } = {}
@@ -672,9 +671,9 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
           </button>
         </div>
 
-        {/* ── MIDDLE COLUMN — Order Book (collapsible) ─────────────────── */}
+        {/* ── MIDDLE COLUMN — Order Book (collapsible ~180px) ─────────── */}
         <div style={{
-          width: obCollapsed ? '28px' : '160px', flexShrink: 0,
+          width: obCollapsed ? '28px' : '180px', flexShrink: 0,
           borderRight: '1px solid #1a1a2e',
           display: 'flex', flexDirection: 'column',
           overflow: 'hidden',
@@ -684,19 +683,27 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
           <div style={{
             display: 'flex', alignItems: 'center',
             justifyContent: obCollapsed ? 'center' : 'space-between',
-            padding: obCollapsed ? '10px 0' : '8px 10px',
-            borderBottom: '1px solid #1a1a2e', flexShrink: 0,
+            padding: obCollapsed ? '10px 0' : '6px 8px',
+            borderBottom: '1px solid #1a1a2e', flexShrink: 0, minHeight: '32px',
           }}>
             {!obCollapsed && (
-              <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600',
-                letterSpacing: '1px', whiteSpace: 'nowrap' }}>
-                ORDER BOOK
-              </span>
+              <div style={{ overflow: 'hidden' }}>
+                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600' }}>
+                  Order Book
+                </span>
+                {spread > 0 && markPrice > 0 && (
+                  <span style={{ fontSize: '9px', color: '#4b5563', marginLeft: '5px',
+                    whiteSpace: 'nowrap' }}>
+                    {spread.toFixed(2)} | {((spread / markPrice) * 100).toFixed(3)}%
+                  </span>
+                )}
+              </div>
             )}
             <button
               onClick={() => setObCollapsed(v => !v)}
               style={{ background: 'none', border: 'none', cursor: 'pointer',
-                color: '#6b7280', fontSize: '14px', padding: '0', lineHeight: 1 }}
+                color: '#6b7280', fontSize: '14px', padding: '0', lineHeight: 1,
+                flexShrink: 0 }}
             >
               {obCollapsed ? '›' : '‹'}
             </button>
@@ -704,38 +711,52 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
 
           {/* Book content */}
           {!obCollapsed && (
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex',
+              flexDirection: 'column',
+              fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
+
               {/* Column headers */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                padding: '4px 10px', fontSize: '9px', color: '#4b5563', flexShrink: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr',
+                padding: '3px 6px', fontSize: '9px', color: '#4b5563', flexShrink: 0,
+                borderBottom: '1px solid #0d0d14' }}>
                 <span>Price</span>
                 <span style={{ textAlign: 'right' }}>Size</span>
+                <span style={{ textAlign: 'right' }}>Total</span>
               </div>
 
-              {/* Asks (reversed — lowest ask at bottom, near spread) */}
+              {/* Asks — lowest ask at bottom, cumulative depth bars */}
               <div style={{ flex: 1, overflow: 'hidden', display: 'flex',
                 flexDirection: 'column', justifyContent: 'flex-end' }}>
                 {(() => {
                   const asks = orderbook.asks.slice(0, 10)
-                  const maxAsk = asks.length > 0
-                    ? Math.max(...asks.map((a: any) => parseFloat(a[1])))
-                    : 1
-                  return [...asks].reverse().map((ask: any, i: number) => (
-                    <div key={i} style={{ position: 'relative', padding: '1px 10px' }}>
+                  let cum = 0
+                  const withCum = asks.map((a: any) => {
+                    cum += parseFloat(a[0]) * parseFloat(a[1])
+                    return { price: a[0], size: a[1], total: cum }
+                  })
+                  const maxCum = cum || 1
+                  return [...withCum].reverse().map((ask, i) => (
+                    <div key={i} style={{ position: 'relative', height: '22px',
+                      display: 'flex', alignItems: 'center' }}>
                       <div style={{
-                        position: 'absolute', left: 0, top: 0, bottom: 0,
-                        width: `${(parseFloat(ask[1]) / maxAsk) * 100}%`,
-                        background: 'rgba(239,68,68,0.12)',
+                        position: 'absolute', right: 0, top: 0, bottom: 0,
+                        width: `${(ask.total / maxCum) * 100}%`,
+                        background: 'rgba(239,68,68,0.10)',
                       }} />
-                      <div style={{ position: 'relative', display: 'grid',
-                        gridTemplateColumns: '1fr 1fr', fontSize: '11px' }}>
-                        <span style={{ color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(ask[0]).toLocaleString('en-US',
+                      <div style={{ position: 'relative', width: '100%',
+                        display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr',
+                        padding: '0 6px', fontSize: '11px' }}>
+                        <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>
+                          {parseFloat(ask.price).toLocaleString('en-US',
                             { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
                         </span>
-                        <span style={{ color: '#6b7280', textAlign: 'right',
+                        <span style={{ color: '#9ca3af', textAlign: 'right',
                           fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(ask[1]).toFixed(3)}
+                          {parseFloat(ask.size).toFixed(3)}
+                        </span>
+                        <span style={{ color: '#6b7280', textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>
+                          {fmtQty(ask.total)}
                         </span>
                       </div>
                     </div>
@@ -743,45 +764,53 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
                 })()}
               </div>
 
-              {/* Spread row */}
-              <div style={{ padding: '4px 10px', background: '#0a0a0f', flexShrink: 0,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              {/* Mark price / spread divider */}
+              <div style={{ padding: '4px 6px', background: '#0a0a0f', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 borderTop: '1px solid #1a1a2e', borderBottom: '1px solid #1a1a2e' }}>
-                <span style={{ fontSize: '11px', color: 'white', fontWeight: '600',
+                <span style={{ fontSize: '12px', color: priceColor, fontWeight: '700',
                   fontVariantNumeric: 'tabular-nums' }}>
-                  ${markPrice > 0 ? fmt(markPrice) : '—'}
+                  {markPrice > 0 ? fmt(markPrice) : '—'}
                 </span>
-                {spread > 0 && (
-                  <span style={{ fontSize: '9px', color: '#4b5563',
-                    fontVariantNumeric: 'tabular-nums' }}>
-                    {spread.toFixed(2)}
+                {spread > 0 && markPrice > 0 && (
+                  <span style={{ fontSize: '9px', color: '#4b5563' }}>
+                    {((spread / markPrice) * 100).toFixed(3)}%
                   </span>
                 )}
               </div>
 
-              {/* Bids */}
+              {/* Bids — highest bid at top, cumulative depth bars */}
               <div style={{ flex: 1, overflow: 'hidden' }}>
                 {(() => {
                   const bids = orderbook.bids.slice(0, 10)
-                  const maxBid = bids.length > 0
-                    ? Math.max(...bids.map((b: any) => parseFloat(b[1])))
-                    : 1
-                  return bids.map((bid: any, i: number) => (
-                    <div key={i} style={{ position: 'relative', padding: '1px 10px' }}>
+                  let cum = 0
+                  const withCum = bids.map((b: any) => {
+                    cum += parseFloat(b[0]) * parseFloat(b[1])
+                    return { price: b[0], size: b[1], total: cum }
+                  })
+                  const maxCum = cum || 1
+                  return withCum.map((bid, i) => (
+                    <div key={i} style={{ position: 'relative', height: '22px',
+                      display: 'flex', alignItems: 'center' }}>
                       <div style={{
                         position: 'absolute', right: 0, top: 0, bottom: 0,
-                        width: `${(parseFloat(bid[1]) / maxBid) * 100}%`,
-                        background: 'rgba(0,212,170,0.12)',
+                        width: `${(bid.total / maxCum) * 100}%`,
+                        background: 'rgba(0,212,170,0.10)',
                       }} />
-                      <div style={{ position: 'relative', display: 'grid',
-                        gridTemplateColumns: '1fr 1fr', fontSize: '11px' }}>
-                        <span style={{ color: '#00d4aa', fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(bid[0]).toLocaleString('en-US',
+                      <div style={{ position: 'relative', width: '100%',
+                        display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr',
+                        padding: '0 6px', fontSize: '11px' }}>
+                        <span style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>
+                          {parseFloat(bid.price).toLocaleString('en-US',
                             { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
                         </span>
-                        <span style={{ color: '#6b7280', textAlign: 'right',
+                        <span style={{ color: '#9ca3af', textAlign: 'right',
                           fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(bid[1]).toFixed(3)}
+                          {parseFloat(bid.size).toFixed(3)}
+                        </span>
+                        <span style={{ color: '#6b7280', textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>
+                          {fmtQty(bid.total)}
                         </span>
                       </div>
                     </div>
@@ -813,86 +842,182 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
           <div style={{ borderTop: '1px solid #1a1a2e', flexShrink: 0,
             background: '#0d0d14' }}>
             {/* Header */}
-            <div
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '6px 12px', cursor: 'pointer', userSelect: 'none' }}
-              onClick={() => setPosCollapsed(v => !v)}
-            >
-              <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600',
-                letterSpacing: '1px' }}>
-                OPEN POSITIONS
-                {matchingPositions.length > 0 && (
-                  <span style={{ color: '#00d4aa', marginLeft: '6px' }}>
-                    ({matchingPositions.length})
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '5px 12px', borderBottom: posCollapsed ? 'none' : '1px solid #0a0a0f',
+              userSelect: 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
+                cursor: 'pointer', flex: 1 }}
+                onClick={() => setPosCollapsed(v => !v)}>
+                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600' }}>
+                  Positions
+                </span>
+                {openPositions.length > 0 && (
+                  <span style={{ fontSize: '10px', color: '#00d4aa',
+                    background: 'rgba(0,212,170,0.1)', padding: '1px 6px',
+                    borderRadius: '10px' }}>
+                    {openPositions.length}
                   </span>
                 )}
-                {selectedMarket && (
-                  <span style={{ color: '#374151', marginLeft: '6px', fontWeight: '400' }}>
-                    — {selectedMarket.name}
-                  </span>
-                )}
-              </span>
-              <span style={{ color: '#6b7280', fontSize: '10px' }}>
-                {posCollapsed ? '▲' : '▼'}
-              </span>
+                <span style={{ color: '#4b5563', fontSize: '10px', marginLeft: '4px' }}>
+                  {posCollapsed ? '▲' : '▼'}
+                </span>
+              </div>
+              {openPositions.length > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setManagingPos('close-all') }}
+                  style={{ fontSize: '10px', padding: '2px 10px',
+                    border: '1px solid #ef4444', borderRadius: '4px',
+                    background: 'transparent', color: '#ef4444',
+                    cursor: 'pointer', flexShrink: 0 }}
+                >
+                  Close All
+                </button>
+              )}
             </div>
 
             {!posCollapsed && (
-              <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
-                {matchingPositions.length === 0 ? (
-                  <div style={{ padding: '10px 12px', fontSize: '12px',
-                    color: '#4b5563', textAlign: 'center' }}>
-                    No open positions for {selectedMarket?.name || '—'}
+              <div style={{ maxHeight: '200px', overflowY: 'auto', overflowX: 'auto' }}>
+                {openPositions.length === 0 ? (
+                  <div style={{ padding: '12px', textAlign: 'center',
+                    fontSize: '12px', color: '#4b5563' }}>
+                    No open positions
                   </div>
                 ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse',
+                    fontSize: '11px',
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                    minWidth: '900px' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid #1a1a2e' }}>
-                        {['Side', 'Size', 'Entry', 'Mark', 'PnL', ''].map(h => (
-                          <th key={h} style={{ padding: '4px 8px', color: '#4b5563',
-                            fontWeight: '500', textAlign: h === '' ? 'right' : 'left' }}>
+                        {['Coin', 'Size', 'Value', 'Entry Px', 'Mark Px',
+                          'PnL (ROE%)', 'Liq. Px', 'Margin', 'Funding', 'Actions'].map(h => (
+                          <th key={h} style={{ padding: '4px 10px', color: '#6b7280',
+                            fontWeight: '500', textAlign: 'left', whiteSpace: 'nowrap',
+                            fontSize: '10px', letterSpacing: '0.3px',
+                            fontFamily: 'system-ui, sans-serif' }}>
                             {h}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {matchingPositions.map((pos: any, i: number) => {
-                        const isLong = parseFloat(pos.szi || pos.size || '0') > 0
+                      {openPositions.map((pos: any, i: number) => {
+                        const coin = pos.coin || pos.symbol || '?'
+                        const szi = parseFloat(pos.szi || pos.size || '0')
+                        const isLong = szi > 0
+                        const absSzi = Math.abs(szi)
+                        const entryPx = parseFloat(pos.entryPx || pos.entry_price || '0')
+                        const posMarkPx = parseFloat(pos.markPx || '0') ||
+                          (coin === selectedMarket?.name ? markPrice : 0)
                         const pnl = parseFloat(pos.unrealizedPnl || pos.pnl || '0')
+                        const levVal = pos.leverage?.value || pos.leverage || 1
+                        const margin = parseFloat(pos.marginUsed || '0') ||
+                          (entryPx > 0 ? (absSzi * entryPx) / levVal : 0)
+                        const roe = margin > 0 ? (pnl / margin) * 100 : 0
+                        const liqPx = parseFloat(pos.liquidationPx || pos.liq_price || '0')
+                        const posValue = absSzi * (posMarkPx || entryPx)
+                        const funding = parseFloat(
+                          pos.cumFunding?.sinceOpen || pos.cumFunding?.allTime ||
+                          pos.funding || '0'
+                        )
+                        const levColor = levVal >= 20 ? '#f87171'
+                          : levVal >= 10 ? '#fb923c' : '#a3e635'
                         return (
-                          <tr key={i} style={{ borderBottom: '1px solid #0a0a0f' }}>
-                            <td style={{ padding: '5px 8px',
-                              color: isLong ? '#00d4aa' : '#ef4444', fontWeight: '600' }}>
-                              {isLong ? 'Long' : 'Short'}
+                          <tr key={i} style={{ borderBottom: '1px solid #0a0a0f' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#0f0f1a')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                            {/* Coin + Leverage badge */}
+                            <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px',
+                                fontFamily: 'system-ui, sans-serif' }}>
+                                <span style={{ color: 'white', fontWeight: '600' }}>{coin}</span>
+                                <span style={{ fontSize: '9px', fontWeight: '700',
+                                  background: `${levColor}22`, color: levColor,
+                                  padding: '1px 4px', borderRadius: '3px' }}>
+                                  {levVal}x
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '9px',
+                                color: isLong ? '#34d399' : '#f87171',
+                                fontFamily: 'system-ui, sans-serif', marginTop: '1px' }}>
+                                {isLong ? 'Long' : 'Short'}
+                              </div>
                             </td>
-                            <td style={{ padding: '5px 8px', color: 'white',
-                              fontVariantNumeric: 'tabular-nums' }}>
-                              {Math.abs(parseFloat(pos.szi || pos.size || '0')).toFixed(4)}
+                            {/* Size */}
+                            <td style={{ padding: '5px 10px',
+                              color: isLong ? '#34d399' : '#f87171',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {isLong ? '+' : '-'}{absSzi.toFixed(4)}
                             </td>
-                            <td style={{ padding: '5px 8px', color: '#9ca3af',
-                              fontVariantNumeric: 'tabular-nums' }}>
-                              ${fmt(parseFloat(pos.entryPx || pos.entry_price || '0'))}
+                            {/* Position Value */}
+                            <td style={{ padding: '5px 10px', color: '#9ca3af',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {posValue > 0 ? `$${fmtQty(posValue)}` : '—'}
                             </td>
-                            <td style={{ padding: '5px 8px', color: '#9ca3af',
-                              fontVariantNumeric: 'tabular-nums' }}>
-                              ${fmt(markPrice)}
+                            {/* Entry Px */}
+                            <td style={{ padding: '5px 10px', color: '#9ca3af',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {entryPx > 0 ? `$${fmt(entryPx)}` : '—'}
                             </td>
-                            <td style={{ padding: '5px 8px',
-                              color: pnl >= 0 ? '#00d4aa' : '#ef4444',
-                              fontVariantNumeric: 'tabular-nums' }}>
-                              {fmtPnl(pnl)}
+                            {/* Mark Px */}
+                            <td style={{ padding: '5px 10px', color: 'white',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {posMarkPx > 0 ? `$${fmt(posMarkPx)}` : '—'}
                             </td>
-                            <td style={{ padding: '5px 8px', textAlign: 'right' }}>
-                              <button
-                                onClick={() => setManagingPos(pos)}
-                                style={{ fontSize: '10px', padding: '2px 8px',
-                                  border: '1px solid #374151', borderRadius: '4px',
-                                  background: 'transparent', color: '#9ca3af',
-                                  cursor: 'pointer' }}
-                              >
-                                Manage
-                              </button>
+                            {/* PnL + ROE */}
+                            <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                              <div style={{ color: pnl >= 0 ? '#34d399' : '#f87171',
+                                fontVariantNumeric: 'tabular-nums', fontWeight: '600' }}>
+                                {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
+                              </div>
+                              <div style={{ fontSize: '9px',
+                                color: roe >= 0 ? '#34d399' : '#f87171',
+                                fontVariantNumeric: 'tabular-nums' }}>
+                                ({roe >= 0 ? '+' : ''}{roe.toFixed(2)}%)
+                              </div>
+                            </td>
+                            {/* Liq Px */}
+                            <td style={{ padding: '5px 10px', color: '#f87171',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {liqPx > 0 ? `$${fmt(liqPx)}` : '—'}
+                            </td>
+                            {/* Margin */}
+                            <td style={{ padding: '5px 10px', color: '#9ca3af',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {margin > 0 ? `$${margin.toFixed(2)}` : '—'}
+                            </td>
+                            {/* Funding */}
+                            <td style={{ padding: '5px 10px',
+                              color: funding >= 0 ? '#34d399' : '#f87171',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {funding !== 0
+                                ? `${funding >= 0 ? '+' : ''}${funding.toFixed(4)}`
+                                : '—'}
+                            </td>
+                            {/* Actions */}
+                            <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                              <div style={{ display: 'flex', gap: '4px' }}>
+                                <button
+                                  onClick={() => setManagingPos(pos)}
+                                  style={{ fontSize: '10px', padding: '2px 6px',
+                                    border: '1px solid #374151', borderRadius: '3px',
+                                    background: 'transparent', color: '#9ca3af',
+                                    cursor: 'pointer',
+                                    fontFamily: 'system-ui, sans-serif' }}
+                                >
+                                  TP/SL
+                                </button>
+                                <button
+                                  onClick={() => setManagingPos(pos)}
+                                  style={{ fontSize: '10px', padding: '2px 6px',
+                                    border: '1px solid #ef4444', borderRadius: '3px',
+                                    background: 'transparent', color: '#ef4444',
+                                    cursor: 'pointer',
+                                    fontFamily: 'system-ui, sans-serif' }}
+                                >
+                                  Close
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )
