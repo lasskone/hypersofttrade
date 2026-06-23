@@ -27,6 +27,7 @@ interface Props {
   initialMarket?: { symbol: string, dex: string } | null
   initialInterval?: string
   onMarketConsumed?: () => void
+  onRefresh?: () => void
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ function ResizeDivider({
 // ── Main component ────────────────────────────────────────────────────────────
 export function TradePanel({
   walletAddress, openPositions = [], openOrders = [], spotBalances = [], recentTrades = [],
-  initialMarket = null, initialInterval, onMarketConsumed,
+  initialMarket = null, initialInterval, onMarketConsumed, onRefresh,
 }: Props) {
   // Markets
   const [markets, setMarkets] = useState<Market[]>([])
@@ -1126,7 +1127,7 @@ export function TradePanel({
             pos={managingPos}
             walletAddress={walletAddress}
             onClose={() => setManagingPos(null)}
-            onAction={() => setManagingPos(null)}
+            onAction={() => { setManagingPos(null); onRefresh?.(); }}
           />
         )}
       </div>{/* /.tp-wrapper */}

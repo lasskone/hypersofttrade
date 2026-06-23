@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ApiKeyModal } from '@/components/onboarding/ApiKeyModal';
@@ -40,22 +40,24 @@ function DashboardLayout({
   const [recentTrades, setRecentTrades] = useState<any[]>([])
   const [pendingMarket, setPendingMarket] = useState<{ symbol: string, dex: string, interval?: string } | null>(null)
 
+  const fetchPositions = useCallback(async () => {
+    if (!address) return
+    try {
+      const res = await fetch(`${API_URL}/account/${address}/portfolio`)
+      const data = await res.json()
+      setOpenPositions(data.open_positions ?? [])
+      setOpenOrders(data.open_orders ?? [])
+      setSpotBalances(data.spot_balances ?? [])
+      setRecentTrades(data.recent_fills ?? [])
+    } catch {}
+  }, [address])
+
   useEffect(() => {
     if (!address) return
-    const fetchPositions = async () => {
-      try {
-        const res = await fetch(`${API_URL}/account/${address}/portfolio`)
-        const data = await res.json()
-        setOpenPositions(data.open_positions ?? [])
-        setOpenOrders(data.open_orders ?? [])
-        setSpotBalances(data.spot_balances ?? [])
-        setRecentTrades(data.recent_fills ?? [])
-      } catch {}
-    }
     fetchPositions()
     const interval = setInterval(fetchPositions, 10000)
     return () => clearInterval(interval)
-  }, [address])
+  }, [address, fetchPositions])
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: '#0a0a0f' }}>
@@ -64,7 +66,7 @@ function DashboardLayout({
         <TopBar section={section} />
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} onSelectMarket={(symbol, dex, interval) => setPendingMarket({ symbol, dex, interval })} />}
-          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} openOrders={openOrders} spotBalances={spotBalances} recentTrades={recentTrades} initialMarket={pendingMarket} initialInterval={pendingMarket?.interval ?? '15m'} onMarketConsumed={() => setPendingMarket(null)} />}
+          {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} openOrders={openOrders} spotBalances={spotBalances} recentTrades={recentTrades} initialMarket={pendingMarket} initialInterval={pendingMarket?.interval ?? '15m'} onMarketConsumed={() => setPendingMarket(null)} onRefresh={fetchPositions} />}
           {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
           {section === 'backtest' && <BacktestPanel walletAddress={address} />}
           {section === 'history' && (

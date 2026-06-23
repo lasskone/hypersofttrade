@@ -153,9 +153,16 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
   const [tpPrice, setTpPrice] = useState('');
   const [slPrice, setSlPrice] = useState('');
   const [tpSlLoading, setTpSlLoading] = useState(false);
+  const [inputMode, setInputMode] = useState<'usd' | 'pct'>('usd');
 
   const isLong = parseFloat(pos.size) > 0;
   const absSize = Math.abs(parseFloat(pos.size));
+  const entryPx = parseFloat(String(pos.entry_price ?? 0));
+  const direction = isLong ? 1 : -1;
+  const tpUsdPreview = inputMode === 'pct' && parseFloat(tpPrice) > 0
+    ? entryPx * (1 + direction * parseFloat(tpPrice) / 100) : null;
+  const slUsdPreview = inputMode === 'pct' && parseFloat(slPrice) > 0
+    ? entryPx * (1 - direction * parseFloat(slPrice) / 100) : null;
   const markPrice = parseFloat(pos.mark_price ?? pos.entry_price ?? 0);
   const upnl = parseFloat(pos.unrealized_pnl ?? 0);
 
@@ -192,10 +199,21 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
   };
 
   const handleSetTpSl = async () => {
-    const tpVal = parseFloat(tpPrice)
-    const slVal = parseFloat(slPrice)
-    if (!tpVal && !slVal) return
-    setTpSlLoading(true)
+    let tpVal: number | null = null;
+    let slVal: number | null = null;
+    if (inputMode === 'pct') {
+      const tpPct = parseFloat(tpPrice);
+      const slPct = parseFloat(slPrice);
+      if (tpPct > 0) tpVal = entryPx * (1 + direction * tpPct / 100);
+      if (slPct > 0) slVal = entryPx * (1 - direction * slPct / 100);
+    } else {
+      const tp = parseFloat(tpPrice);
+      const sl = parseFloat(slPrice);
+      if (tp > 0) tpVal = tp;
+      if (sl > 0) slVal = sl;
+    }
+    if (!tpVal && !slVal) return;
+    setTpSlLoading(true);
     try {
       const res = await fetch(`${API_URL}/orders/tp-sl`, {
         method: 'POST',
@@ -206,21 +224,21 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
           is_long: isLong,
           size: absSize,
           sz_decimals: pos.sz_decimals ?? 5,
-          tp_price: tpVal > 0 ? tpVal : null,
-          sl_price: slVal > 0 ? slVal : null,
+          tp_price: tpVal,
+          sl_price: slVal,
         }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail ?? 'Error')
-      const msg = [tpVal > 0 ? `TP: $${tpVal}` : '', slVal > 0 ? `SL: $${slVal}` : ''].filter(Boolean).join(' | ')
-      showToast(`✅ Set ${msg}`)
-      setTpPrice('')
-      setSlPrice('')
-      setTimeout(onAction, 1500)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Error');
+      const msg = [tpVal ? `TP: $${tpVal.toFixed(2)}` : '', slVal ? `SL: $${slVal.toFixed(2)}` : ''].filter(Boolean).join(' | ');
+      showToast(`✅ Set ${msg}`);
+      setTpPrice('');
+      setSlPrice('');
+      setTimeout(onAction, 1500);
     } catch (e: any) {
-      showToast(`❌ ${e.message}`)
+      showToast(`❌ ${e.message}`);
     } finally {
-      setTpSlLoading(false)
+      setTpSlLoading(false);
     }
   };
 
@@ -309,32 +327,56 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
 
         {/* TP / SL */}
         <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: '#13131f', border: '1px solid #1a1a2e' }}>
-          <p className="text-sm font-semibold text-white mb-3">Take Profit / Stop Loss</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-semibold text-white">Take Profit / Stop Loss</p>
+            <div style={{ display: 'flex', background: '#0d0d14', borderRadius: 6, border: '1px solid #1a1a2e', overflow: 'hidden' }}>
+              {(['usd', 'pct'] as const).map(mode => (
+                <button key={mode} onClick={() => { setInputMode(mode); setTpPrice(''); setSlPrice(''); }}
+                  style={{
+                    padding: '3px 10px', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer',
+                    background: inputMode === mode ? '#1a1a2e' : 'transparent',
+                    color: inputMode === mode ? '#00d4aa' : '#6b7280',
+                  }}>
+                  {mode === 'usd' ? '$ USD' : '% Entry'}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex gap-2 mb-3">
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Take Profit (USD)</p>
+              <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                Take Profit {inputMode === 'pct' ? '(% from entry)' : '(USD price)'}
+              </p>
               <input
                 type="number"
-                placeholder="TP Price"
+                placeholder={inputMode === 'pct' ? 'e.g. 5 (%)' : 'TP Price'}
                 value={tpPrice}
                 onChange={e => setTpPrice(e.target.value)}
                 style={{ width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#10b981', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
+              {tpUsdPreview !== null && (
+                <p style={{ fontSize: 10, color: '#10b981', marginTop: 3 }}>≈ ${tpUsdPreview.toFixed(2)}</p>
+              )}
             </div>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Stop Loss (USD)</p>
+              <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                Stop Loss {inputMode === 'pct' ? '(% from entry)' : '(USD price)'}
+              </p>
               <input
                 type="number"
-                placeholder="SL Price"
+                placeholder={inputMode === 'pct' ? 'e.g. 3 (%)' : 'SL Price'}
                 value={slPrice}
                 onChange={e => setSlPrice(e.target.value)}
                 style={{ width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#ef4444', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
+              {slUsdPreview !== null && (
+                <p style={{ fontSize: 10, color: '#ef4444', marginTop: 3 }}>≈ ${slUsdPreview.toFixed(2)}</p>
+              )}
             </div>
           </div>
           <button
             onClick={handleSetTpSl}
-            disabled={tpSlLoading || (!parseFloat(tpPrice) && !parseFloat(slPrice))}
+            disabled={tpSlLoading || (!(parseFloat(tpPrice) > 0) && !(parseFloat(slPrice) > 0))}
             className="w-full py-2.5 rounded-lg text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-50"
             style={{ backgroundColor: '#00d4aa', color: '#000' }}>
             {tpSlLoading ? 'Setting...' : 'Set TP / SL'}
