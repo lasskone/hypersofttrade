@@ -59,6 +59,8 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const candleDataRef   = useRef<any[]>([])
   const priceLineRefs      = useRef<any[]>([])
   const tpslOrderLinesRef  = useRef<any[]>([])
+  const wsRef              = useRef<WebSocket | null>(null)
+  const wsReconnectRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -556,6 +558,84 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     const timer = setInterval(() => setTimeRemaining(computeRemaining()), 1000)
     return () => clearInterval(timer)
   }, [selectedInterval])
+
+  // ── Real-time candle updates via Hyperliquid WebSocket ───────────────────
+  useEffect(() => {
+    if (!chartReady) return
+
+    let destroyed = false
+
+    const connect = () => {
+      if (destroyed) return
+
+      const ws = new WebSocket('wss://api.hyperliquid.xyz/ws')
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          method: 'subscribe',
+          subscription: { type: 'candle', coin: symbol, interval: selectedInterval },
+        }))
+      }
+
+      ws.onmessage = (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data as string)
+          if (msg.channel !== 'candle') return
+          const data = msg.data
+          if (!data || data.isSnapshot === true) return
+
+          const barTime = data.t / 1000
+          const bar = {
+            time: barTime as any,
+            open:  Number(data.o),
+            high:  Number(data.h),
+            low:   Number(data.l),
+            close: Number(data.c),
+          }
+
+          if (candleSeriesRef.current) {
+            candleSeriesRef.current.update(bar)
+          }
+
+          // Keep candleDataRef in sync: replace last if same candle, else append
+          const arr = candleDataRef.current
+          if (arr.length > 0 && arr[arr.length - 1].time === barTime) {
+            arr[arr.length - 1] = {
+              ...arr[arr.length - 1],
+              open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+              volume: Number(data.v),
+            }
+          } else {
+            arr.push({ time: barTime, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: Number(data.v) })
+          }
+
+          setOhlc({ time: barTime, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: Number(data.v) })
+        } catch {}
+      }
+
+      ws.onerror = () => { ws.close() }
+
+      ws.onclose = () => {
+        if (destroyed) return
+        wsReconnectRef.current = setTimeout(connect, 3000)
+      }
+    }
+
+    connect()
+
+    return () => {
+      destroyed = true
+      if (wsReconnectRef.current !== null) {
+        clearTimeout(wsReconnectRef.current)
+        wsReconnectRef.current = null
+      }
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+    }
+  }, [symbol, selectedInterval, chartReady])
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
