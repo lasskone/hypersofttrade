@@ -597,6 +597,19 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           ))}
         </div>
 
+        {/* Candle countdown timer */}
+        {timeRemaining && (
+          <div style={{
+            background: 'rgba(30,30,30,0.85)',
+            border: '1px solid rgba(38,166,154,0.4)',
+            color: '#26a69a',
+            fontFamily: 'monospace', fontSize: '13px', fontWeight: 600,
+            padding: '4px 10px', borderRadius: '6px', flexShrink: 0,
+          }}>
+            ⏱ {selectedInterval} {timeRemaining}
+          </div>
+        )}
+
         {/* Divider */}
         <div style={{ width: '1px', height: '20px', background: '#1a1a2e', flexShrink: 0 }} />
 
@@ -675,16 +688,6 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           </div>
         )}
         <div ref={containerRef} style={{ width: '100%', height: `${mainChartH}px` }} />
-        {timeRemaining && (
-          <div style={{
-            position: 'absolute', top: '8px', right: '8px', zIndex: 20,
-            background: 'rgba(0,0,0,0.6)', color: '#26a69a',
-            fontFamily: 'monospace', fontSize: '12px',
-            padding: '4px 8px', borderRadius: '4px', pointerEvents: 'none',
-          }}>
-            {selectedInterval} {timeRemaining}
-          </div>
-        )}
       </div>
 
       {/* ── RSI pane ──────────────────────────────────────────────────── */}
