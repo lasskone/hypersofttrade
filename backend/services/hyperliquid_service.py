@@ -188,6 +188,10 @@ class HyperliquidService:
         fills       = results[len(dex_names) + 1]
         open_orders = results[len(dex_names) + 2]
 
+        # [tpsl_debug] log 1: raw frontendOpenOrders response
+        _all_orders_list = open_orders if (not isinstance(open_orders, Exception) and isinstance(open_orders, list)) else []
+        print(f"[tpsl_raw] all_orders count={len(_all_orders_list)} sample={_all_orders_list[:5]}")
+
         # Fetch mark prices and sz_decimals for position enrichment
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -265,6 +269,9 @@ class HyperliquidService:
                 if coin_short != coin:
                     tpsl_triggers_by_coin.setdefault(coin_short, []).append(entry)
 
+        # [tpsl_debug] log 2: full tpsl_triggers_by_coin dict after build
+        print(f"[tpsl_dict] keys={list(tpsl_triggers_by_coin.keys())} full={tpsl_triggers_by_coin}")
+
         # Step 3: aggregate perp positions across all DEXes.
         # Account Value and Available to Trade are NOT taken from clearinghouseState —
         # on a unified account the USDC collateral lives in spot, so the perp
@@ -326,6 +333,8 @@ class HyperliquidService:
                     or tpsl_triggers_by_coin.get(coin_key_short)
                     or []
                 )
+                # [tpsl_debug] log 3: lookup result per position
+                print(f"[tpsl_lookup] coin_key={coin_key!r} short={coin_key_short!r} result={tpsl_triggers_by_coin.get(coin_key) or tpsl_triggers_by_coin.get(coin_key_short)}")
                 for trigger in triggers_for_coin:
                     order_info = {
                         "trigger_px": trigger["trigger_px"],
