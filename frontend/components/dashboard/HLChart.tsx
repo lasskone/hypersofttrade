@@ -62,6 +62,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const wsRef              = useRef<WebSocket | null>(null)
   const wsReconnectRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveDebounceRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isProgrammaticRef  = useRef(false)
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -241,7 +242,9 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
               const clampedFrom = Math.max(0, r.from)
               const clampedTo   = Math.min(candles.length - 1, r.to)
               if (clampedTo - clampedFrom >= 10) {
+                isProgrammaticRef.current = true
                 chart.timeScale().setVisibleLogicalRange({ from: clampedFrom, to: clampedTo })
+                setTimeout(() => { isProgrammaticRef.current = false }, 0)
                 restored = true
                 console.log('[HLChart restore] ✅ applied range:', { from: clampedFrom, to: clampedTo })
               } else {
@@ -255,7 +258,9 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           console.log('[HLChart restore] ❌ parse error:', e)
         }
         if (!restored) {
+          isProgrammaticRef.current = true
           chart.timeScale().fitContent()
+          setTimeout(() => { isProgrammaticRef.current = false }, 0)
           console.log('[HLChart restore] → fallback: fitContent()')
         }
 
@@ -264,6 +269,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           console.log('[HLChart save] subscribeVisibleLogicalRangeChange fired, range arg:', range,
             '| getVisibleLogicalRange():', chart.timeScale().getVisibleLogicalRange?.())
           if (!range) return
+          if (isProgrammaticRef.current) return  // skip saves triggered by fitContent/setVisibleLogicalRange
           if (saveDebounceRef.current !== null) clearTimeout(saveDebounceRef.current)
           saveDebounceRef.current = setTimeout(() => {
             try { localStorage.setItem(rangeKey, JSON.stringify(range)) } catch {}
@@ -352,6 +358,18 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
 
     return () => {
       cancelled = true
+      // Synchronously flush the current range before debounce is cancelled and chart destroyed
+      try {
+        if (chartRef.current) {
+          const rangeToSave = chartRef.current.timeScale().getVisibleLogicalRange()
+          if (rangeToSave && isFinite(rangeToSave.from) && isFinite(rangeToSave.to)) {
+            localStorage.setItem(
+              `hlchart_range_${symbol}_${selectedInterval}`,
+              JSON.stringify(rangeToSave)
+            )
+          }
+        }
+      } catch {}
       if (saveDebounceRef.current !== null) {
         clearTimeout(saveDebounceRef.current)
         saveDebounceRef.current = null
