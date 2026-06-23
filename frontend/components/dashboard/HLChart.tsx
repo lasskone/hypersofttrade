@@ -61,6 +61,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const tpslOrderLinesRef  = useRef<any[]>([])
   const wsRef              = useRef<WebSocket | null>(null)
   const wsReconnectRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveDebounceRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -227,7 +228,35 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           }
         })
 
-        chart.timeScale().fitContent()
+        // ── Restore saved viewport or fit all candles ────────────────
+        const rangeKey = `hlchart_range_${symbol}_${selectedInterval}`
+        let restored = false
+        try {
+          const saved = localStorage.getItem(rangeKey)
+          if (saved) {
+            const r = JSON.parse(saved)
+            if (typeof r.from === 'number' && typeof r.to === 'number' &&
+                isFinite(r.from) && isFinite(r.to) && r.from < r.to) {
+              const clampedFrom = Math.max(0, r.from)
+              const clampedTo   = Math.min(candles.length - 1, r.to)
+              if (clampedTo - clampedFrom >= 10) {
+                chart.timeScale().setVisibleLogicalRange({ from: clampedFrom, to: clampedTo })
+                restored = true
+              }
+            }
+          }
+        } catch {}
+        if (!restored) chart.timeScale().fitContent()
+
+        // Save viewport on scroll/zoom — debounced 500ms
+        const saveRangeHandler = (range: any) => {
+          if (!range) return
+          if (saveDebounceRef.current !== null) clearTimeout(saveDebounceRef.current)
+          saveDebounceRef.current = setTimeout(() => {
+            try { localStorage.setItem(rangeKey, JSON.stringify(range)) } catch {}
+          }, 500)
+        }
+        chart.timeScale().subscribeVisibleLogicalRangeChange(saveRangeHandler)
 
         // ── RSI chart ─────────────────────────────────────────────────
         if (showRSI && rsiContainerRef.current) {
@@ -310,6 +339,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
 
     return () => {
       cancelled = true
+      if (saveDebounceRef.current !== null) {
+        clearTimeout(saveDebounceRef.current)
+        saveDebounceRef.current = null
+      }
       setChartReady(false)
       if (chartRef.current) {
         try { chartRef.current.remove() } catch {}
