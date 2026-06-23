@@ -106,12 +106,19 @@ class HyperliquidService:
             )
             return response.json()
 
-    async def get_open_orders(self, wallet_address: str) -> list:
-        """Return all open orders for *wallet_address* (includes TP/SL metadata)."""
+    async def get_open_orders(self, wallet_address: str, dex: str = "") -> list:
+        """Return all open orders for *wallet_address* on *dex* ('' = main).
+
+        frontendOpenOrders is DEX-scoped: HIP-3 TP/SL orders are only returned
+        when the matching dex name is included in the request body.
+        """
+        payload: dict = {"type": "frontendOpenOrders", "user": wallet_address}
+        if dex:
+            payload["dex"] = dex
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(
                 INFO_ENDPOINT,
-                json={"type": "frontendOpenOrders", "user": wallet_address},
+                json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=10.0,
             )
@@ -175,22 +182,26 @@ class HyperliquidService:
             print(f"[portfolio] Main DEX ('') missing from perpDexs — inserted at position 0")
         print(f"[portfolio] Found {len(dex_names)} DEXes: {dex_names}")
 
-        # Step 2: fan-out — all DEX states + spot + fills + orders in parallel
+        # Step 2: fan-out — all DEX states + spot + fills + per-DEX orders in parallel.
+        # frontendOpenOrders is DEX-scoped: HIP-3 TP/SL orders only appear when the
+        # matching dex param is sent.  We call it once per DEX and merge the results.
         tasks = [self.get_clearinghouse_state(wallet_address, dex) for dex in dex_names]
         tasks.append(self.get_spot_state(wallet_address))
         tasks.append(self.get_user_fills(wallet_address))
-        tasks.append(self.get_open_orders(wallet_address))
+        for dex in dex_names:
+            tasks.append(self.get_open_orders(wallet_address, dex))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         perp_states = results[:len(dex_names)]
         spot_state  = results[len(dex_names)]
         fills       = results[len(dex_names) + 1]
-        open_orders = results[len(dex_names) + 2]
-
-        # [tpsl_debug] log 1: raw frontendOpenOrders response
-        _all_orders_list = open_orders if (not isinstance(open_orders, Exception) and isinstance(open_orders, list)) else []
-        print(f"[tpsl_raw] all_orders count={len(_all_orders_list)} sample={_all_orders_list[:5]}")
+        # Merge orders from every DEX into one flat list.
+        open_orders: list = []
+        for _res in results[len(dex_names) + 2:]:
+            if not isinstance(_res, Exception) and isinstance(_res, list):
+                open_orders.extend(_res)
+        print(f"[portfolio] open_orders merged count={len(open_orders)} from {len(dex_names)} DEX(es)")
 
         # Fetch mark prices and sz_decimals for position enrichment
         try:
@@ -269,9 +280,6 @@ class HyperliquidService:
                 if coin_short != coin:
                     tpsl_triggers_by_coin.setdefault(coin_short, []).append(entry)
 
-        # [tpsl_debug] log 2: full tpsl_triggers_by_coin dict after build
-        print(f"[tpsl_dict] keys={list(tpsl_triggers_by_coin.keys())} full={tpsl_triggers_by_coin}")
-
         # Step 3: aggregate perp positions across all DEXes.
         # Account Value and Available to Trade are NOT taken from clearinghouseState —
         # on a unified account the USDC collateral lives in spot, so the perp
@@ -333,8 +341,6 @@ class HyperliquidService:
                     or tpsl_triggers_by_coin.get(coin_key_short)
                     or []
                 )
-                # [tpsl_debug] log 3: lookup result per position
-                print(f"[tpsl_lookup] coin_key={coin_key!r} short={coin_key_short!r} result={tpsl_triggers_by_coin.get(coin_key) or tpsl_triggers_by_coin.get(coin_key_short)}")
                 for trigger in triggers_for_coin:
                     order_info = {
                         "trigger_px": trigger["trigger_px"],
