@@ -271,6 +271,7 @@ class HyperliquidService:
                     "triggers_above": triggers_above,
                     "sz":             float(order.get("sz", "0") or "0"),
                     "orig_sz":        float(order.get("origSz", "0") or "0"),
+                    "oid":            order.get("oid"),
                 }
                 # Index by full coin name (e.g. "xyz:XYZ100") AND by short name ("XYZ100")
                 # so the lookup works regardless of whether clearinghouseState returns the
@@ -346,6 +347,7 @@ class HyperliquidService:
                         "trigger_px": trigger["trigger_px"],
                         "sz":         trigger["sz"],
                         "orig_sz":    trigger["orig_sz"],
+                        "oid":        trigger["oid"],
                     }
                     if trigger["triggers_above"]:
                         if is_long:
@@ -637,6 +639,45 @@ class HyperliquidService:
         exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
         result = await asyncio.to_thread(exchange.cancel, coin, order_id)
         print(f"[cancel_order] result={result}")
+        return result
+
+    async def modify_order(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        oid: int,
+        new_trigger_px: float,
+        is_buy: bool,
+        sz: float,
+        sz_decimals: int,
+        tpsl: str,
+    ) -> dict:
+        """Modify an existing trigger order's triggerPx using the Hyperliquid modify action."""
+        dex_name = coin.split(":")[0] if ":" in coin else None
+        import asyncio
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        factor = 10 ** sz_decimals
+        rounded_sz = math.floor(sz * factor) / factor
+        if rounded_sz <= 0:
+            raise ValueError("Size too small after rounding.")
+
+        account = eth_account.Account.from_key(private_key)
+        dex_list = [dex_name] if dex_name else []
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+
+        px = round(new_trigger_px) if new_trigger_px >= 1000 else round(new_trigger_px, 1) if new_trigger_px >= 10 else round(new_trigger_px, 2)
+
+        result = await asyncio.to_thread(
+            exchange.modify_order,
+            oid, coin, is_buy, rounded_sz, px,
+            {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": tpsl}},
+            True,  # reduce_only
+        )
+        print(f"[modify_order] oid={oid} coin={coin} new_trigger_px={px} tpsl={tpsl} result={result}")
         return result
 
     async def close_position(

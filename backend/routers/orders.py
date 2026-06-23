@@ -70,6 +70,17 @@ class PlaceTpSlRequest(BaseModel):
     sl_price: float | None = None
 
 
+class ModifyOrderRequest(BaseModel):
+    wallet_address: str
+    coin: str
+    oid: int
+    new_trigger_px: float
+    is_buy: bool      # closing side — opposite of position direction
+    sz: float         # current order size to keep
+    sz_decimals: int
+    tpsl: str         # "tp" or "sl"
+
+
 # ---------------------------------------------------------------------------
 # Market data
 # ---------------------------------------------------------------------------
@@ -280,6 +291,38 @@ async def place_tp_sl(body: PlaceTpSlRequest):
         )
     except Exception as exc:
         print(f"[tp_sl] ERROR: {exc}")
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"success": True, "result": result_data}
+
+
+@orders_router.post("/modify")
+async def modify_order(body: ModifyOrderRequest):
+    db = _supabase()
+    result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    encrypted = result.data[0].get("hyperliquid_api_key_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=400, detail="No API key configured")
+    try:
+        private_key = decrypt(encrypted)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
+    try:
+        result_data = await hyperliquid_service.modify_order(
+            private_key=private_key,
+            master_address=body.wallet_address,
+            coin=body.coin,
+            oid=body.oid,
+            new_trigger_px=body.new_trigger_px,
+            is_buy=body.is_buy,
+            sz=body.sz,
+            sz_decimals=body.sz_decimals,
+            tpsl=body.tpsl,
+        )
+    except Exception as exc:
+        print(f"[modify_order] ERROR: {exc}")
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "result": result_data}

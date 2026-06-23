@@ -141,11 +141,12 @@ function Tooltip({ text }: { text: string }) {
 }
 
 // ─── Position management modal ───────────────────────────────────────────────
-export function PositionModal({ pos, walletAddress, onClose, onAction }: {
+export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh }: {
   pos: any;
   walletAddress: string;
   onClose: () => void;
   onAction: () => void;
+  onRefresh: () => void;
 }) {
   const [closePercent, setClosePercent] = useState(100);
   const [loading, setLoading] = useState(false);
@@ -154,6 +155,10 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
   const [slPrice, setSlPrice] = useState('');
   const [tpSlLoading, setTpSlLoading] = useState(false);
   const [inputMode, setInputMode] = useState<'usd' | 'pct'>('usd');
+  const [editingOid, setEditingOid] = useState<number | null>(null);
+  const [editPx, setEditPx] = useState('');
+  const [confirmCancelOid, setConfirmCancelOid] = useState<number | null>(null);
+  const [orderActionLoading, setOrderActionLoading] = useState<number | null>(null);
 
   const isLong = parseFloat(pos.size) > 0;
   const absSize = Math.abs(parseFloat(pos.size));
@@ -239,6 +244,60 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
       showToast(`❌ ${e.message}`);
     } finally {
       setTpSlLoading(false);
+    }
+  };
+
+  const handleModifyTpSl = async (oid: number, newPx: number, sz: number, tpsl: 'tp' | 'sl') => {
+    setOrderActionLoading(oid);
+    try {
+      const res = await fetch(`${API_URL}/orders/modify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          coin: pos.symbol,
+          oid,
+          new_trigger_px: newPx,
+          is_buy: !isLong,
+          sz,
+          sz_decimals: pos.sz_decimals ?? 5,
+          tpsl,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Error');
+      showToast(`✅ Order updated`);
+      setEditingOid(null);
+      setEditPx('');
+      setTimeout(onRefresh, 800);
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setOrderActionLoading(null);
+    }
+  };
+
+  const handleCancelTpSl = async (oid: number) => {
+    setOrderActionLoading(oid);
+    try {
+      const res = await fetch(`${API_URL}/orders/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          coin: pos.symbol,
+          order_id: oid,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Error');
+      showToast(`✅ Order cancelled`);
+      setConfirmCancelOid(null);
+      setTimeout(onRefresh, 800);
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setOrderActionLoading(null);
     }
   };
 
@@ -396,13 +455,88 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
                   const sz = parseFloat(String(o.sz ?? 0));
                   const origSz = parseFloat(String(o.orig_sz ?? 0));
                   const pct = absSize > 0 ? Math.round((sz / absSize) * 100) : null;
+                  const oid: number | null = o.oid ?? null;
+                  const tpsl = o.kind === 'TP' ? 'tp' : 'sl';
+                  const kindColor = o.kind === 'TP' ? '#10b981' : '#ef4444';
+                  const isEditing = oid !== null && editingOid === oid;
+                  const isConfirmingCancel = oid !== null && confirmCancelOid === oid;
+                  const isLoading = oid !== null && orderActionLoading === oid;
+
                   return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 6, backgroundColor: '#0d0d14' }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: o.kind === 'TP' ? '#10b981' : '#ef4444', minWidth: 24 }}>{o.kind}</span>
-                      <span style={{ fontSize: 12, color: '#e5e7eb', flex: 1 }}>${fmt(o.trigger_px)}</span>
-                      <span style={{ fontSize: 11, color: '#9ca3af', textAlign: 'right' }}>
-                        {fmt(sz, 4)} / {fmt(origSz, 4)}{pct !== null ? ` (${pct}%)` : ''}
-                      </span>
+                    <div key={oid ?? i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderRadius: 6, backgroundColor: '#0d0d14', minHeight: 32 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: kindColor, minWidth: 24 }}>{o.kind}</span>
+
+                      {isConfirmingCancel ? (
+                        <>
+                          <span style={{ fontSize: 11, color: '#9ca3af', flex: 1 }}>Cancel this order?</span>
+                          <button
+                            onClick={() => { if (!isLoading && oid !== null) handleCancelTpSl(oid); }}
+                            disabled={isLoading}
+                            style={{ fontSize: 11, fontWeight: 600, color: '#ef4444', background: '#ef444418', border: '1px solid #ef444433', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', opacity: isLoading ? 0.5 : 1 }}>
+                            {isLoading ? '…' : 'Yes'}
+                          </button>
+                          <button
+                            onClick={() => setConfirmCancelOid(null)}
+                            disabled={isLoading}
+                            style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', background: 'transparent', border: '1px solid #2a2a3e', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}>
+                            No
+                          </button>
+                        </>
+                      ) : isEditing ? (
+                        <>
+                          <input
+                            type="number"
+                            value={editPx}
+                            onChange={e => setEditPx(e.target.value)}
+                            autoFocus
+                            style={{ flex: 1, background: '#13131f', border: `1px solid ${kindColor}44`, borderRadius: 5, padding: '3px 7px', color: kindColor, fontSize: 12, outline: 'none', minWidth: 0, boxSizing: 'border-box' }}
+                          />
+                          <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                            {fmt(sz, 4)}{pct !== null ? ` (${pct}%)` : ''}
+                          </span>
+                          <button
+                            onClick={() => { const v = parseFloat(editPx); if (v > 0 && oid !== null) handleModifyTpSl(oid, v, sz, tpsl as 'tp' | 'sl'); }}
+                            disabled={isLoading || !(parseFloat(editPx) > 0)}
+                            title="Confirm new price"
+                            style={{ fontSize: 14, color: '#00d4aa', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', opacity: (isLoading || !(parseFloat(editPx) > 0)) ? 0.4 : 1, lineHeight: 1 }}>
+                            {isLoading ? '…' : '✓'}
+                          </button>
+                          <button
+                            onClick={() => { setEditingOid(null); setEditPx(''); }}
+                            disabled={isLoading}
+                            title="Cancel edit"
+                            style={{ fontSize: 15, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', lineHeight: 1 }}>
+                            ✕
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ fontSize: 12, color: '#e5e7eb', flex: 1 }}>${fmt(o.trigger_px)}</span>
+                          <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                            {fmt(sz, 4)} / {fmt(origSz, 4)}{pct !== null ? ` (${pct}%)` : ''}
+                          </span>
+                          {oid !== null && (
+                            <>
+                              <button
+                                onClick={() => { setEditingOid(oid); setEditPx(String(o.trigger_px)); setConfirmCancelOid(null); }}
+                                title="Edit trigger price"
+                                style={{ fontSize: 13, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', lineHeight: 1 }}
+                                onMouseEnter={e => (e.currentTarget.style.color = '#00d4aa')}
+                                onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}>
+                                ✏
+                              </button>
+                              <button
+                                onClick={() => { setConfirmCancelOid(oid); setEditingOid(null); setEditPx(''); }}
+                                title="Cancel this order"
+                                style={{ fontSize: 16, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', lineHeight: 1 }}
+                                onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                                onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}>
+                                ×
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
@@ -1018,6 +1152,7 @@ export function OverviewPanel({
           walletAddress={walletAddress}
           onClose={() => setManagingPos(null)}
           onAction={() => { setManagingPos(null); fetchPortfolio(); }}
+          onRefresh={fetchPortfolio}
         />
       )}
     </div>

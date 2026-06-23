@@ -1128,6 +1128,7 @@ export function TradePanel({
             walletAddress={walletAddress}
             onClose={() => setManagingPos(null)}
             onAction={() => { setManagingPos(null); onRefresh?.(); }}
+            onRefresh={() => onRefresh?.()}
           />
         )}
       </div>{/* /.tp-wrapper */}
