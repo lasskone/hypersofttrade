@@ -47,7 +47,8 @@
       "WebFetch(domain:hyperliquid.gitbook.io)",
       "Bash(python -m py_compile bots/passivbot_dca/strategy.py)",
       "Bash(python -m py_compile services/bot_manager.py)",
-      "Bash(python -m py_compile backend/services/hyperliquid_service.py)"
+      "Bash(python -m py_compile backend/services/hyperliquid_service.py)",
+      "Bash(npm run *)"
     ]
   }
 }

@@ -178,7 +178,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         const candles: Candle[] = await res.json()
 
         if (cancelled || !containerRef.current) { loadingRef.current = false; return }
-        if (!candles || candles.length === 0) {
+        if (!Array.isArray(candles) || candles.length === 0) {
           setLoading(false)
           loadingRef.current = false
           return
