@@ -80,6 +80,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const [loading, setLoading]                       = useState(true)
   const [ohlc, setOhlc]                             = useState<Candle | null>(null)
   const [chartReady, setChartReady]                 = useState(false)
+  const [timeRemaining, setTimeRemaining]           = useState('')
 
   // Close EMA period dropdown on outside click
   useEffect(() => {
@@ -528,6 +529,34 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     })
   }, [chartReady, positions, openOrders, symbol])
 
+  // ── Candle countdown timer ────────────────────────────────────────────────
+  useEffect(() => {
+    const intervalMs: Record<string, number> = {
+      '1m': 60000, '5m': 300000, '15m': 900000, '30m': 1800000,
+      '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '1d': 86400000,
+    }
+    const ms = intervalMs[selectedInterval] ?? 900000
+
+    const computeRemaining = () => {
+      const now = Date.now()
+      const candleOpen = Math.floor(now / ms) * ms
+      const nextCandle = candleOpen + ms
+      const remaining = Math.max(0, nextCandle - now)
+      const totalSec = Math.floor(remaining / 1000)
+      const hours = Math.floor(totalSec / 3600)
+      const mins = Math.floor((totalSec % 3600) / 60)
+      const secs = totalSec % 60
+      const pad = (n: number) => String(n).padStart(2, '0')
+      return ms >= 3600000
+        ? `${hours}:${pad(mins)}:${pad(secs)}`
+        : `${pad(mins)}:${pad(secs)}`
+    }
+
+    setTimeRemaining(computeRemaining())
+    const timer = setInterval(() => setTimeRemaining(computeRemaining()), 1000)
+    return () => clearInterval(timer)
+  }, [selectedInterval])
+
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
 
@@ -646,6 +675,16 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           </div>
         )}
         <div ref={containerRef} style={{ width: '100%', height: `${mainChartH}px` }} />
+        {timeRemaining && (
+          <div style={{
+            position: 'absolute', top: '8px', right: '8px', zIndex: 20,
+            background: 'rgba(0,0,0,0.6)', color: '#26a69a',
+            fontFamily: 'monospace', fontSize: '12px',
+            padding: '4px 8px', borderRadius: '4px', pointerEvents: 'none',
+          }}>
+            {selectedInterval} {timeRemaining}
+          </div>
+        )}
       </div>
 
       {/* ── RSI pane ──────────────────────────────────────────────────── */}
