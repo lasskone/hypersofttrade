@@ -254,6 +254,8 @@ class HyperliquidService:
                 entry = {
                     "trigger_px":     trigger_px,
                     "triggers_above": triggers_above,
+                    "sz":             float(order.get("sz", "0") or "0"),
+                    "orig_sz":        float(order.get("origSz", "0") or "0"),
                 }
                 # Index by full coin name (e.g. "xyz:XYZ100") AND by short name ("XYZ100")
                 # so the lookup works regardless of whether clearinghouseState returns the
@@ -315,6 +317,8 @@ class HyperliquidService:
                 is_long = szi > 0
                 tp_price = None
                 sl_price = None
+                tp_orders: list[dict] = []
+                sl_orders: list[dict] = []
                 # Try full coin name first, fall back to short name (strips DEX prefix).
                 coin_key_short = coin_key.split(":")[-1] if ":" in coin_key else coin_key
                 triggers_for_coin = (
@@ -323,16 +327,29 @@ class HyperliquidService:
                     or []
                 )
                 for trigger in triggers_for_coin:
+                    order_info = {
+                        "trigger_px": trigger["trigger_px"],
+                        "sz":         trigger["sz"],
+                        "orig_sz":    trigger["orig_sz"],
+                    }
                     if trigger["triggers_above"]:
                         if is_long:
-                            tp_price = trigger["trigger_px"]
+                            if tp_price is None:
+                                tp_price = trigger["trigger_px"]
+                            tp_orders.append(order_info)
                         else:
-                            sl_price = trigger["trigger_px"]
+                            if sl_price is None:
+                                sl_price = trigger["trigger_px"]
+                            sl_orders.append(order_info)
                     else:
                         if is_long:
-                            sl_price = trigger["trigger_px"]
+                            if sl_price is None:
+                                sl_price = trigger["trigger_px"]
+                            sl_orders.append(order_info)
                         else:
-                            tp_price = trigger["trigger_px"]
+                            if tp_price is None:
+                                tp_price = trigger["trigger_px"]
+                            tp_orders.append(order_info)
                 all_positions.append({
                     "dex":               dex_label,
                     "symbol":            coin_key,
@@ -349,6 +366,8 @@ class HyperliquidService:
                     "roe_pct":           roe_pct,
                     "tp_price":          tp_price,
                     "sl_price":          sl_price,
+                    "tp_orders":         tp_orders,
+                    "sl_orders":         sl_orders,
                     "opened_at":         None,
                 })
 

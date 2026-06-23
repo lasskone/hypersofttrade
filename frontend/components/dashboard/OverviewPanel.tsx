@@ -381,6 +381,34 @@ export function PositionModal({ pos, walletAddress, onClose, onAction }: {
             style={{ backgroundColor: '#00d4aa', color: '#000' }}>
             {tpSlLoading ? 'Setting...' : 'Set TP / SL'}
           </button>
+
+          {/* Active TP/SL Orders */}
+          {((pos.tp_orders && pos.tp_orders.length > 0) || (pos.sl_orders && pos.sl_orders.length > 0)) && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #1a1a2e' }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Active TP/SL Orders
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {[
+                  ...(pos.tp_orders ?? []).map((o: any) => ({ ...o, kind: 'TP' as const })),
+                  ...(pos.sl_orders ?? []).map((o: any) => ({ ...o, kind: 'SL' as const })),
+                ].map((o: any, i: number) => {
+                  const sz = parseFloat(String(o.sz ?? 0));
+                  const origSz = parseFloat(String(o.orig_sz ?? 0));
+                  const pct = absSize > 0 ? Math.round((sz / absSize) * 100) : null;
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 6, backgroundColor: '#0d0d14' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: o.kind === 'TP' ? '#10b981' : '#ef4444', minWidth: 24 }}>{o.kind}</span>
+                      <span style={{ fontSize: 12, color: '#e5e7eb', flex: 1 }}>${fmt(o.trigger_px)}</span>
+                      <span style={{ fontSize: 11, color: '#9ca3af', textAlign: 'right' }}>
+                        {fmt(sz, 4)} / {fmt(origSz, 4)}{pct !== null ? ` (${pct}%)` : ''}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
