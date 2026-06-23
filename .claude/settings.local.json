@@ -48,7 +48,8 @@
       "Bash(python -m py_compile bots/passivbot_dca/strategy.py)",
       "Bash(python -m py_compile services/bot_manager.py)",
       "Bash(python -m py_compile backend/services/hyperliquid_service.py)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(python -c \"import services.hyperliquid_service\")"
     ]
   }
 }

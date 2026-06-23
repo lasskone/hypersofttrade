@@ -251,10 +251,17 @@ class HyperliquidService:
                     continue
                 condition = (order.get("triggerCondition") or "").lower()
                 triggers_above = "above" in condition  # False means "below"
-                tpsl_triggers_by_coin.setdefault(coin, []).append({
+                entry = {
                     "trigger_px":     trigger_px,
                     "triggers_above": triggers_above,
-                })
+                }
+                # Index by full coin name (e.g. "xyz:XYZ100") AND by short name ("XYZ100")
+                # so the lookup works regardless of whether clearinghouseState returns the
+                # prefixed or un-prefixed form.
+                tpsl_triggers_by_coin.setdefault(coin, []).append(entry)
+                coin_short = coin.split(":")[-1] if ":" in coin else coin
+                if coin_short != coin:
+                    tpsl_triggers_by_coin.setdefault(coin_short, []).append(entry)
 
         # Step 3: aggregate perp positions across all DEXes.
         # Account Value and Available to Trade are NOT taken from clearinghouseState —
@@ -308,7 +315,14 @@ class HyperliquidService:
                 is_long = szi > 0
                 tp_price = None
                 sl_price = None
-                for trigger in tpsl_triggers_by_coin.get(coin_key, []):
+                # Try full coin name first, fall back to short name (strips DEX prefix).
+                coin_key_short = coin_key.split(":")[-1] if ":" in coin_key else coin_key
+                triggers_for_coin = (
+                    tpsl_triggers_by_coin.get(coin_key)
+                    or tpsl_triggers_by_coin.get(coin_key_short)
+                    or []
+                )
+                for trigger in triggers_for_coin:
                     if trigger["triggers_above"]:
                         if is_long:
                             tp_price = trigger["trigger_px"]
@@ -434,6 +448,13 @@ class HyperliquidService:
         opened_at_map = await self._sync_position_opens(wallet_address, current_coins)
         for p in all_positions:
             p["opened_at"] = opened_at_map.get(p["symbol"])
+
+        # Verify TP/SL extraction in Railway logs before values reach the frontend.
+        for p in all_positions:
+            print(
+                f"[portfolio] position_tpsl — coin={p['symbol']!r} "
+                f"tp_price={p['tp_price']} sl_price={p['sl_price']}"
+            )
 
         return {
             "wallet_address":       wallet_address,
