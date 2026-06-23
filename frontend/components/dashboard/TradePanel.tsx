@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import HLChart from './HLChart'
+import { PositionModal } from './OverviewPanel'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ||
   'https://hypersofttrade-backend-production.up.railway.app'
@@ -29,6 +30,9 @@ interface Props {
 const fmt = (n: number, dec = 2) =>
   n.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: Math.max(dec, 4) })
 
+const fmtPnl = (n: number) =>
+  (n >= 0 ? '+' : '') + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
 export function TradePanel({ walletAddress, openPositions = [], openOrders = [], initialMarket = null, initialInterval, onMarketConsumed }: Props) {
@@ -52,14 +56,14 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
 
   // Market data
   const [orderbook, setOrderbook] = useState<{ bids: string[][]; asks: string[][] }>({ bids: [], asks: [] })
-  const [recentTrades, setRecentTrades] = useState<any[]>([])
   const [markPrice, setMarkPrice] = useState(0)
   const [prevMarkPrice, setPrevMarkPrice] = useState(0)
 
-  // Chart resize
-  const [chartHeight, setChartHeight] = useState(420)
-  const [isResizing, setIsResizing] = useState(false)
-  const resizeRef = useRef<HTMLDivElement>(null)
+  // UI state
+  const [obCollapsed, setObCollapsed] = useState(false)
+  const [posCollapsed, setPosCollapsed] = useState(false)
+  const [managingPos, setManagingPos] = useState<any>(null)
+
   const marketSelectorRef = useRef<HTMLDivElement>(null)
 
   // Load all markets on mount
@@ -112,7 +116,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
         const ob = await obRes.json()
         const prices = await pricesRes.json()
         setOrderbook(ob)
-        // Derive mid price from orderbook (works for ALL assets including HIP-3)
         let newPrice: string | undefined
         if (ob?.bids?.length && ob?.asks?.length) {
           const bestBid = parseFloat(ob.bids[0]?.[0] || '0')
@@ -121,15 +124,11 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
             newPrice = ((bestBid + bestAsk) / 2).toString()
           }
         }
-        // Fallback to /market/prices for top 10 assets if orderbook mid unavailable
         if (!newPrice) {
           newPrice = prices.prices?.[selectedMarket.name] ||
             prices.prices?.[selectedMarket.display_name]
         }
-
-        // Final fallback: stale market price
         if (!newPrice) newPrice = selectedMarket.mark_price?.toString()
-
         if (newPrice) {
           const parsed = parseFloat(newPrice)
           if (parsed > 0) {
@@ -141,21 +140,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
     }
     poll()
     const interval = setInterval(poll, 3000)
-    return () => clearInterval(interval)
-  }, [selectedMarket])
-
-  // Poll recent trades every 5 seconds
-  useEffect(() => {
-    if (!selectedMarket) return
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_URL}/market/trades/${encodeURIComponent(selectedMarket.name)}`)
-        const data = await res.json()
-        setRecentTrades(data)
-      } catch { /* silent */ }
-    }
-    poll()
-    const interval = setInterval(poll, 5000)
     return () => clearInterval(interval)
   }, [selectedMarket])
 
@@ -174,6 +158,14 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
     : 0
   const change24hColor = change24h >= 0 ? '#00d4aa' : '#ef4444'
   const fundingPct = selectedMarket ? (selectedMarket.funding * 100).toFixed(4) : '0.0000'
+
+  const spread = orderbook.bids.length > 0 && orderbook.asks.length > 0
+    ? parseFloat(orderbook.asks[0]?.[0] || '0') - parseFloat(orderbook.bids[0]?.[0] || '0')
+    : 0
+
+  const matchingPositions = openPositions.filter(p =>
+    (p.coin || p.symbol) === selectedMarket?.name
+  )
 
   // Unique DEX groups (in order of first appearance)
   const dexGroupsSet: { [key: string]: boolean } = {}
@@ -197,7 +189,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
   const handlePlaceOrder = async () => {
     if (!selectedMarket || sizeNum <= 0) return
 
-    // Round size client-side to catch zero-size before hitting the API
     const szDec = selectedMarket.sz_decimals || 5
     const factor = Math.pow(10, szDec)
     const roundedSize = Math.floor(assetSize * factor) / factor
@@ -209,7 +200,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
     setPlacing(true)
     setOrderMessage(null)
     try {
-      // Set leverage on Hyperliquid before placing order
       try {
         await fetch(`${API_URL}/orders/set-leverage`, {
           method: 'POST',
@@ -222,7 +212,7 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
           }),
         })
       } catch {
-        // non-blocking — proceed even if leverage set fails
+        // non-blocking
       }
       const res = await fetch(`${API_URL}/orders/place`, {
         method: 'POST',
@@ -244,17 +234,14 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
         setOrderMessage({ type: 'error', text: data.detail || 'Order failed' })
         return
       }
-      // Check for Hyperliquid-level order rejection (HTTP 200 but error in payload)
       const statuses = data?.result?.response?.data?.statuses
       const firstStatus = Array.isArray(statuses) ? statuses[0] : null
       if (firstStatus?.error) {
         setOrderMessage({ type: 'error', text: firstStatus.error })
         return
       }
-      // Genuine success
       setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
       setSize('')
-      // Place TP/SL if set
       const tpVal = parseFloat(tpPrice)
       const slVal = parseFloat(slPrice)
       if ((tpVal > 0 || slVal > 0) && selectedMarket) {
@@ -289,28 +276,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
 
   const maxLev = selectedMarket?.max_leverage || 50
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizing(true)
-    const startY = e.clientY
-    const startHeight = chartHeight
-
-    const handleMouseMove = (ev: MouseEvent) => {
-      const delta = ev.clientY - startY
-      const newHeight = Math.max(200, Math.min(700, startHeight + delta))
-      setChartHeight(newHeight)
-    }
-
-    const handleMouseUp = () => {
-      setIsResizing(false)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column',
       height: 'calc(100vh - 60px)', overflow: 'hidden' }}>
@@ -334,7 +299,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
           )}
         </div>
 
-        {/* Divider */}
         <div style={{ width: '1px', height: '28px', background: '#1a1a2e' }} />
 
         {/* Mark price */}
@@ -374,12 +338,13 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
       </div>
 
       {/* ── CONTENT ROW ──────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', gap: '16px',
-        padding: '16px', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* ── LEFT COLUMN — Order Form (320px) ─────────────────────────── */}
-        <div style={{ width: '320px', flexShrink: 0, display: 'flex',
-          flexDirection: 'column', gap: '12px', overflowY: 'auto', paddingBottom: '20px' }}>
+        {/* ── LEFT COLUMN — Order Form (280px) ─────────────────────────── */}
+        <div style={{ width: '280px', flexShrink: 0, display: 'flex',
+          flexDirection: 'column', gap: '12px', overflowY: 'auto',
+          padding: '12px', paddingBottom: '20px',
+          borderRight: '1px solid #1a1a2e' }}>
 
           {/* Market Selector */}
           <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
@@ -398,7 +363,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
             </div>
 
             <div ref={marketSelectorRef} style={{ position: 'relative' }}>
-              {/* Display vs search toggle */}
               {showSearch ? (
                 <input
                   autoFocus
@@ -437,9 +401,9 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
                 <div style={{ position: 'fixed',
                   top: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().bottom + 4 : 0,
                   left: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().left : 0,
-                  width: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().width : 320,
+                  width: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().width : 280,
                   background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
-                  maxHeight: '300px', overflowY: 'auto', zIndex: 9999, marginTop: '0px' }}>
+                  maxHeight: '300px', overflowY: 'auto', zIndex: 9999 }}>
                   {dexGroups.map(dexName => {
                     const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
                     if (dexMarkets.length === 0) return null
@@ -595,7 +559,6 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
                 onChange={e => setLeverage(parseInt(e.target.value))}
                 style={{ width: '100%', accentColor: '#00d4aa', margin: '4px 0' }}
               />
-              {/* Tick marks */}
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
                 {LEVERAGE_TICKS.filter(v => v <= maxLev).map(v => (
                   <button
@@ -709,169 +672,236 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
           </button>
         </div>
 
-        {/* ── RIGHT COLUMN — Chart + Orderbook ─────────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
-          overflow: 'hidden', minWidth: 0,
-          cursor: isResizing ? 'row-resize' : 'default' }}>
-
-          {/* Chart */}
-          {selectedMarket && (
-            <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
-              borderRadius: '8px', overflow: 'hidden', flexShrink: 0,
-              height: chartHeight }}>
-              <HLChart symbol={selectedMarket.name} height={chartHeight} positions={openPositions} openOrders={openOrders} initialInterval={initialInterval} />
-            </div>
-          )}
-
-          {/* Drag-to-resize handle */}
-          <div
-            ref={resizeRef}
-            onMouseDown={handleMouseDown}
-            style={{ height: '6px', background: '#1a1a2e', cursor: 'row-resize',
-              borderRadius: '3px', margin: '6px 0', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-          >
-            <div style={{ width: '40px', height: '3px',
-              background: '#374151', borderRadius: '2px' }} />
+        {/* ── MIDDLE COLUMN — Order Book (collapsible) ─────────────────── */}
+        <div style={{
+          width: obCollapsed ? '28px' : '160px', flexShrink: 0,
+          borderRight: '1px solid #1a1a2e',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+          transition: 'width 0.15s ease',
+        }}>
+          {/* Header */}
+          <div style={{
+            display: 'flex', alignItems: 'center',
+            justifyContent: obCollapsed ? 'center' : 'space-between',
+            padding: obCollapsed ? '10px 0' : '8px 10px',
+            borderBottom: '1px solid #1a1a2e', flexShrink: 0,
+          }}>
+            {!obCollapsed && (
+              <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600',
+                letterSpacing: '1px', whiteSpace: 'nowrap' }}>
+                ORDER BOOK
+              </span>
+            )}
+            <button
+              onClick={() => setObCollapsed(v => !v)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer',
+                color: '#6b7280', fontSize: '14px', padding: '0', lineHeight: 1 }}
+            >
+              {obCollapsed ? '›' : '‹'}
+            </button>
           </div>
 
-          {/* Orderbook + Recent Trades */}
-          <div style={{ display: 'flex', gap: '12px', flex: 1, minHeight: '200px',
-            overflow: 'hidden' }}>
+          {/* Book content */}
+          {!obCollapsed && (
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {/* Column headers */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                padding: '4px 10px', fontSize: '9px', color: '#4b5563', flexShrink: 0 }}>
+                <span>Price</span>
+                <span style={{ textAlign: 'right' }}>Size</span>
+              </div>
 
-            {/* Orderbook */}
-            <div style={{ flex: 1, background: '#0d0d14', border: '1px solid #1a1a2e',
-              borderRadius: '8px', padding: '12px', overflow: 'hidden' }}>
-              {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600',
-                  textTransform: 'uppercase', letterSpacing: '1px' }}>
-                  Order Book
+              {/* Asks (reversed — lowest ask at bottom, near spread) */}
+              <div style={{ flex: 1, overflow: 'hidden', display: 'flex',
+                flexDirection: 'column', justifyContent: 'flex-end' }}>
+                {(() => {
+                  const asks = orderbook.asks.slice(0, 10)
+                  const maxAsk = asks.length > 0
+                    ? Math.max(...asks.map((a: any) => parseFloat(a[1])))
+                    : 1
+                  return [...asks].reverse().map((ask: any, i: number) => (
+                    <div key={i} style={{ position: 'relative', padding: '1px 10px' }}>
+                      <div style={{
+                        position: 'absolute', left: 0, top: 0, bottom: 0,
+                        width: `${(parseFloat(ask[1]) / maxAsk) * 100}%`,
+                        background: 'rgba(239,68,68,0.12)',
+                      }} />
+                      <div style={{ position: 'relative', display: 'grid',
+                        gridTemplateColumns: '1fr 1fr', fontSize: '11px' }}>
+                        <span style={{ color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
+                          {parseFloat(ask[0]).toLocaleString('en-US',
+                            { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                        </span>
+                        <span style={{ color: '#6b7280', textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums' }}>
+                          {parseFloat(ask[1]).toFixed(3)}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                })()}
+              </div>
+
+              {/* Spread row */}
+              <div style={{ padding: '4px 10px', background: '#0a0a0f', flexShrink: 0,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                borderTop: '1px solid #1a1a2e', borderBottom: '1px solid #1a1a2e' }}>
+                <span style={{ fontSize: '11px', color: 'white', fontWeight: '600',
+                  fontVariantNumeric: 'tabular-nums' }}>
+                  ${markPrice > 0 ? fmt(markPrice) : '—'}
                 </span>
-                {orderbook.bids.length > 0 && orderbook.asks.length > 0 && (
-                  <span style={{ fontSize: '11px', color: '#6b7280' }}>
-                    Spread: ${(
-                      parseFloat(orderbook.asks[0]?.[0] || '0') -
-                      parseFloat(orderbook.bids[0]?.[0] || '0')
-                    ).toFixed(2)}
+                {spread > 0 && (
+                  <span style={{ fontSize: '9px', color: '#4b5563',
+                    fontVariantNumeric: 'tabular-nums' }}>
+                    {spread.toFixed(2)}
                   </span>
                 )}
               </div>
 
-              {/* Cumulative depth */}
-              <div style={{ display: 'flex', justifyContent: 'space-between',
-                padding: '3px 6px', marginBottom: '6px', fontSize: '11px',
-                background: '#0a0a0f', borderRadius: '4px' }}>
-                <span style={{ color: '#00d4aa' }}>
-                  B: ${orderbook.bids.slice(0, 12).reduce((sum: number, b: any) =>
-                    sum + parseFloat(b[1]) * parseFloat(b[0]), 0).toFixed(0)}
-                </span>
-                <span style={{ color: '#ef4444' }}>
-                  A: ${orderbook.asks.slice(0, 12).reduce((sum: number, a: any) =>
-                    sum + parseFloat(a[1]) * parseFloat(a[0]), 0).toFixed(0)}
-                </span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                {/* Bids */}
+              {/* Bids */}
+              <div style={{ flex: 1, overflow: 'hidden' }}>
                 {(() => {
-                  const maxBidSize = Math.max(...orderbook.bids.slice(0, 12).map((b: any) => parseFloat(b[1])))
-                  return (
-                    <div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                        fontSize: '10px', color: '#4b5563', marginBottom: '4px',
-                        paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
-                        <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
+                  const bids = orderbook.bids.slice(0, 10)
+                  const maxBid = bids.length > 0
+                    ? Math.max(...bids.map((b: any) => parseFloat(b[1])))
+                    : 1
+                  return bids.map((bid: any, i: number) => (
+                    <div key={i} style={{ position: 'relative', padding: '1px 10px' }}>
+                      <div style={{
+                        position: 'absolute', right: 0, top: 0, bottom: 0,
+                        width: `${(parseFloat(bid[1]) / maxBid) * 100}%`,
+                        background: 'rgba(0,212,170,0.12)',
+                      }} />
+                      <div style={{ position: 'relative', display: 'grid',
+                        gridTemplateColumns: '1fr 1fr', fontSize: '11px' }}>
+                        <span style={{ color: '#00d4aa', fontVariantNumeric: 'tabular-nums' }}>
+                          {parseFloat(bid[0]).toLocaleString('en-US',
+                            { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                        </span>
+                        <span style={{ color: '#6b7280', textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums' }}>
+                          {parseFloat(bid[1]).toFixed(3)}
+                        </span>
                       </div>
-                      {orderbook.bids.slice(0, 12).map((bid: any, i: number) => (
-                        <div key={i} style={{ position: 'relative', padding: '2px 0' }}>
-                          <div style={{
-                            position: 'absolute', right: 0, top: 0, bottom: 0,
-                            width: `${(parseFloat(bid[1]) / maxBidSize) * 100}%`,
-                            background: 'rgba(0,212,170,0.12)', borderRadius: '2px',
-                          }} />
-                          <div style={{
-                            position: 'relative', zIndex: 1,
-                            display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '12px',
-                          }}>
-                            <span style={{ color: '#00d4aa', fontVariantNumeric: 'tabular-nums' }}>
-                              {parseFloat(bid[0]).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                            </span>
-                            <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                              {parseFloat(bid[1]).toFixed(4)}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
                     </div>
-                  )
-                })()}
-
-                {/* Asks */}
-                {(() => {
-                  const maxAskSize = Math.max(...orderbook.asks.slice(0, 12).map((a: any) => parseFloat(a[1])))
-                  return (
-                    <div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                        fontSize: '10px', color: '#4b5563', marginBottom: '4px',
-                        paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
-                        <span>Price</span><span style={{ textAlign: 'right' }}>Size</span>
-                      </div>
-                      {orderbook.asks.slice(0, 12).map((ask: any, i: number) => (
-                        <div key={i} style={{ position: 'relative', padding: '2px 0' }}>
-                          <div style={{
-                            position: 'absolute', left: 0, top: 0, bottom: 0,
-                            width: `${(parseFloat(ask[1]) / maxAskSize) * 100}%`,
-                            background: 'rgba(239,68,68,0.12)', borderRadius: '2px',
-                          }} />
-                          <div style={{
-                            position: 'relative', zIndex: 1,
-                            display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '12px',
-                          }}>
-                            <span style={{ color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
-                              {parseFloat(ask[0]).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                            </span>
-                            <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                              {parseFloat(ask[1]).toFixed(4)}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )
+                  ))
                 })()}
               </div>
             </div>
+          )}
+        </div>
 
-            {/* Recent Trades */}
-            <div style={{ width: '220px', flexShrink: 0, background: '#0d0d14',
-              border: '1px solid #1a1a2e', borderRadius: '8px', padding: '12px',
-              overflow: 'hidden' }}>
-              <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600',
-                textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
-                Recent Trades
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-                fontSize: '10px', color: '#4b5563', marginBottom: '4px',
-                paddingBottom: '3px', borderBottom: '1px solid #1a1a2e' }}>
-                <span>Price</span><span>Size</span><span>Time</span>
-              </div>
-              {recentTrades.slice(0, 15).map((trade: any, i: number) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-                  fontSize: '11px', padding: '2px 0', fontVariantNumeric: 'tabular-nums' }}>
-                  <span style={{ color: trade.side === 'B' ? '#00d4aa' : '#ef4444' }}>
-                    {parseFloat(trade.price).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+        {/* ── RIGHT COLUMN — Chart + Open Positions ────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+          overflow: 'hidden', minWidth: 0 }}>
+
+          {/* Chart */}
+          <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            {selectedMarket && (
+              <HLChart
+                symbol={selectedMarket.name}
+                height={undefined}
+                positions={openPositions}
+                openOrders={openOrders}
+                initialInterval={initialInterval}
+              />
+            )}
+          </div>
+
+          {/* Open Positions */}
+          <div style={{ borderTop: '1px solid #1a1a2e', flexShrink: 0,
+            background: '#0d0d14' }}>
+            {/* Header */}
+            <div
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 12px', cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => setPosCollapsed(v => !v)}
+            >
+              <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600',
+                letterSpacing: '1px' }}>
+                OPEN POSITIONS
+                {matchingPositions.length > 0 && (
+                  <span style={{ color: '#00d4aa', marginLeft: '6px' }}>
+                    ({matchingPositions.length})
                   </span>
-                  <span style={{ color: '#6b7280' }}>
-                    {parseFloat(trade.size).toFixed(3)}
+                )}
+                {selectedMarket && (
+                  <span style={{ color: '#374151', marginLeft: '6px', fontWeight: '400' }}>
+                    — {selectedMarket.name}
                   </span>
-                  <span style={{ color: '#4b5563' }}>
-                    {new Date(trade.time).toLocaleTimeString('en-US',
-                      { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                </div>
-              ))}
+                )}
+              </span>
+              <span style={{ color: '#6b7280', fontSize: '10px' }}>
+                {posCollapsed ? '▲' : '▼'}
+              </span>
             </div>
+
+            {!posCollapsed && (
+              <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                {matchingPositions.length === 0 ? (
+                  <div style={{ padding: '10px 12px', fontSize: '12px',
+                    color: '#4b5563', textAlign: 'center' }}>
+                    No open positions for {selectedMarket?.name || '—'}
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #1a1a2e' }}>
+                        {['Side', 'Size', 'Entry', 'Mark', 'PnL', ''].map(h => (
+                          <th key={h} style={{ padding: '4px 8px', color: '#4b5563',
+                            fontWeight: '500', textAlign: h === '' ? 'right' : 'left' }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matchingPositions.map((pos: any, i: number) => {
+                        const isLong = parseFloat(pos.szi || pos.size || '0') > 0
+                        const pnl = parseFloat(pos.unrealizedPnl || pos.pnl || '0')
+                        return (
+                          <tr key={i} style={{ borderBottom: '1px solid #0a0a0f' }}>
+                            <td style={{ padding: '5px 8px',
+                              color: isLong ? '#00d4aa' : '#ef4444', fontWeight: '600' }}>
+                              {isLong ? 'Long' : 'Short'}
+                            </td>
+                            <td style={{ padding: '5px 8px', color: 'white',
+                              fontVariantNumeric: 'tabular-nums' }}>
+                              {Math.abs(parseFloat(pos.szi || pos.size || '0')).toFixed(4)}
+                            </td>
+                            <td style={{ padding: '5px 8px', color: '#9ca3af',
+                              fontVariantNumeric: 'tabular-nums' }}>
+                              ${fmt(parseFloat(pos.entryPx || pos.entry_price || '0'))}
+                            </td>
+                            <td style={{ padding: '5px 8px', color: '#9ca3af',
+                              fontVariantNumeric: 'tabular-nums' }}>
+                              ${fmt(markPrice)}
+                            </td>
+                            <td style={{ padding: '5px 8px',
+                              color: pnl >= 0 ? '#00d4aa' : '#ef4444',
+                              fontVariantNumeric: 'tabular-nums' }}>
+                              {fmtPnl(pnl)}
+                            </td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right' }}>
+                              <button
+                                onClick={() => setManagingPos(pos)}
+                                style={{ fontSize: '10px', padding: '2px 8px',
+                                  border: '1px solid #374151', borderRadius: '4px',
+                                  background: 'transparent', color: '#9ca3af',
+                                  cursor: 'pointer' }}
+                              >
+                                Manage
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -881,6 +911,16 @@ export function TradePanel({ walletAddress, openPositions = [], openOrders = [],
         <div
           style={{ position: 'fixed', inset: 0, zIndex: 100 }}
           onClick={() => { setShowSearch(false); setMarketSearch('') }}
+        />
+      )}
+
+      {/* Position Manager Modal */}
+      {managingPos && selectedMarket && (
+        <PositionModal
+          pos={managingPos}
+          walletAddress={walletAddress}
+          onClose={() => setManagingPos(null)}
+          onAction={() => setManagingPos(null)}
         />
       )}
     </div>

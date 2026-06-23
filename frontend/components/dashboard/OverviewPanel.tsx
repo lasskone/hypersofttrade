@@ -141,7 +141,7 @@ function Tooltip({ text }: { text: string }) {
 }
 
 // ─── Position management modal ───────────────────────────────────────────────
-function PositionModal({ pos, walletAddress, onClose, onAction }: {
+export function PositionModal({ pos, walletAddress, onClose, onAction }: {
   pos: any;
   walletAddress: string;
   onClose: () => void;
