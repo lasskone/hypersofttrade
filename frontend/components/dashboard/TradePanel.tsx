@@ -155,10 +155,9 @@ export function TradePanel({
 
   // UI state
   const [obCollapsed, setObCollapsed] = useState(false)
-  const [posCollapsed, setPosCollapsed] = useState(false)
   const [managingPos, setManagingPos] = useState<any>(null)
   const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set())
-  const [activeTab, setActiveTab] = useState<'orders' | 'spot' | 'trades'>('orders')
+  const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'spot' | 'trades'>('positions')
 
   const marketSelectorRef = useRef<HTMLDivElement>(null)
 
@@ -389,589 +388,640 @@ export function TradePanel({
   const maxLev = selectedMarket?.max_leverage || 50
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column',
-      height: 'calc(100vh - 60px)', overflow: 'hidden' }}>
+    <>
+      {/* ── Responsive styles ─────────────────────────────────────────────── */}
+      <style>{`
+        .tp-wrapper {
+          display: flex; flex-direction: column;
+          height: calc(100vh - 60px); overflow: hidden;
+        }
+        .tp-content-row {
+          flex: 1; display: flex; overflow: hidden;
+        }
+        /* Left side: Form + OB side-by-side on desktop */
+        .tp-left-side {
+          display: flex; flex-direction: row; flex-shrink: 0;
+        }
+        .tp-form-col {
+          width: 280px; flex-shrink: 0;
+        }
+        .tp-ob-col {
+          width: 160px; flex-shrink: 0;
+        }
+        .tp-right-col {
+          flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+        }
 
-      {/* ── TOP BAR ──────────────────────────────────────────────────────── */}
-      <div style={{ background: '#0d0d14', borderBottom: '1px solid #1a1a2e',
-        padding: '10px 20px', display: 'flex', alignItems: 'center',
-        gap: '28px', flexShrink: 0 }}>
+        /* Tablet: stack Form above OB on the left */
+        @media (max-width: 1023px) and (min-width: 768px) {
+          .tp-left-side { flex-direction: column; width: 280px; }
+          .tp-ob-col { width: 280px !important; border-right: none !important; border-top: 1px solid rgba(255,255,255,0.08) !important; }
+        }
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: 'white', fontWeight: '700', fontSize: '16px' }}>
-            {selectedMarket?.name || '—'}
-          </span>
-          {selectedMarket && (
-            <span style={{ fontSize: '10px', color: '#6b7280',
-              background: '#1a1a2e', padding: '2px 6px', borderRadius: '4px',
-              fontWeight: '600', letterSpacing: '0.5px' }}>
-              {selectedMarket.dex === 'main' ? 'HL' : selectedMarket.dex.toUpperCase()}
+        /* Mobile: single column, chart first */
+        @media (max-width: 767px) {
+          .tp-wrapper { height: auto !important; overflow-y: auto !important; }
+          .tp-content-row { flex-direction: column; overflow: visible !important; flex: none !important; }
+          .tp-right-col { order: 1; min-height: 300px; flex: none !important; }
+          .tp-left-side { order: 2; flex-direction: column; width: 100% !important; }
+          .tp-form-col { width: 100% !important; border-right: none !important; border-bottom: 1px solid rgba(255,255,255,0.08) !important; }
+          .tp-ob-col { width: 100% !important; border-right: none !important; height: 320px !important; }
+          .tp-bottom-panel { max-height: none !important; }
+        }
+      `}</style>
+
+      <div className="tp-wrapper">
+
+        {/* ── TOP BAR ──────────────────────────────────────────────────────── */}
+        <div style={{ background: '#0d0d14', borderBottom: '1px solid rgba(255,255,255,0.08)',
+          padding: '10px 20px', display: 'flex', alignItems: 'center',
+          gap: '28px', flexShrink: 0 }}>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: 'white', fontWeight: '700', fontSize: '16px' }}>
+              {selectedMarket?.name || '—'}
             </span>
+            {selectedMarket && (
+              <span style={{ fontSize: '10px', color: '#6b7280',
+                background: '#1a1a2e', padding: '2px 6px', borderRadius: '4px',
+                fontWeight: '600', letterSpacing: '0.5px' }}>
+                {selectedMarket.dex === 'main' ? 'HL' : selectedMarket.dex.toUpperCase()}
+              </span>
+            )}
+          </div>
+
+          <div style={{ width: '1px', height: '28px', background: 'rgba(255,255,255,0.08)' }} />
+
+          <div>
+            <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Mark Price</div>
+            <div style={{ color: priceColor, fontWeight: '700', fontSize: '18px', fontVariantNumeric: 'tabular-nums' }}>
+              ${markPrice > 0 ? fmt(markPrice) : '—'}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>24h Change</div>
+            <div style={{ color: change24hColor, fontWeight: '600', fontSize: '14px' }}>
+              {change24h !== 0 ? `${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%` : '—'}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Funding (8h)</div>
+            <div style={{ color: parseFloat(fundingPct) >= 0 ? '#00d4aa' : '#ef4444',
+              fontWeight: '600', fontSize: '14px' }}>
+              {selectedMarket ? `${parseFloat(fundingPct) >= 0 ? '+' : ''}${fundingPct}%` : '—'}
+            </div>
+          </div>
+
+          {selectedMarket && (
+            <div>
+              <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Max Leverage</div>
+              <div style={{ color: 'white', fontWeight: '600', fontSize: '14px' }}>
+                {selectedMarket.max_leverage}x
+              </div>
+            </div>
           )}
         </div>
 
-        <div style={{ width: '1px', height: '28px', background: '#1a1a2e' }} />
+        {/* ── CONTENT ROW ──────────────────────────────────────────────────── */}
+        <div className="tp-content-row">
 
-        <div>
-          <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Mark Price</div>
-          <div style={{ color: priceColor, fontWeight: '700', fontSize: '18px', fontVariantNumeric: 'tabular-nums' }}>
-            ${markPrice > 0 ? fmt(markPrice) : '—'}
-          </div>
-        </div>
+          {/* ── LEFT SIDE: Form + Order Book ─────────────────────────────── */}
+          <div className="tp-left-side">
 
-        <div>
-          <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>24h Change</div>
-          <div style={{ color: change24hColor, fontWeight: '600', fontSize: '14px' }}>
-            {change24h !== 0 ? `${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%` : '—'}
-          </div>
-        </div>
+            {/* ── ORDER FORM ─────────────────────────────────────────────── */}
+            <div className="tp-form-col" style={{
+              display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto',
+              padding: '12px', paddingBottom: '20px',
+              borderRight: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(255,255,255,0.01)',
+            }}>
 
-        <div>
-          <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Funding (8h)</div>
-          <div style={{ color: parseFloat(fundingPct) >= 0 ? '#00d4aa' : '#ef4444',
-            fontWeight: '600', fontSize: '14px' }}>
-            {selectedMarket ? `${parseFloat(fundingPct) >= 0 ? '+' : ''}${fundingPct}%` : '—'}
-          </div>
-        </div>
-
-        {selectedMarket && (
-          <div>
-            <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Max Leverage</div>
-            <div style={{ color: 'white', fontWeight: '600', fontSize: '14px' }}>
-              {selectedMarket.max_leverage}x
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── CONTENT ROW ──────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-
-        {/* ── LEFT COLUMN — Order Form (280px) ─────────────────────────── */}
-        <div style={{ width: '280px', flexShrink: 0, display: 'flex',
-          flexDirection: 'column', gap: '12px', overflowY: 'auto',
-          padding: '12px', paddingBottom: '20px',
-          borderRight: '1px solid #1a1a2e' }}>
-
-          {/* Market Selector */}
-          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
-            borderRadius: '8px', padding: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between',
-              alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', letterSpacing: '1px' }}>
-                MARKET
-              </span>
-              {!marketsLoading && (
-                <span style={{ fontSize: '10px', color: '#4b5563' }}>{markets.length} markets</span>
-              )}
-            </div>
-            <div ref={marketSelectorRef} style={{ position: 'relative' }}>
-              {showSearch ? (
-                <input autoFocus type="text" value={marketSearch}
-                  onChange={e => setMarketSearch(e.target.value)}
-                  placeholder="Search markets…"
-                  style={{ width: '100%', background: '#0a0a0f', border: '1px solid #00d4aa',
-                    borderRadius: '6px', padding: '10px 12px', color: 'white',
-                    fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
-                />
-              ) : (
-                <div onClick={() => setShowSearch(true)}
-                  style={{ background: '#0a0a0f', border: '1px solid #1a1a2e',
-                    borderRadius: '6px', padding: '10px 12px', cursor: 'pointer',
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <span style={{ color: marketsLoading ? '#6b7280' : 'white',
-                      fontWeight: '700', fontSize: '15px' }}>
-                      {marketsLoading ? 'Loading markets…' : (selectedMarket?.name || 'Select Market')}
-                    </span>
-                    {selectedMarket && (
-                      <span style={{ fontSize: '10px', color: '#6b7280',
-                        background: '#1a1a2e', padding: '2px 6px', borderRadius: '4px' }}>
-                        {selectedMarket.dex === 'main' ? 'HL' : selectedMarket.dex.toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                  <span style={{ color: '#6b7280', fontSize: '10px' }}>▼</span>
+              {/* Market Selector */}
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '12px', padding: '12px', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between',
+                  alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', letterSpacing: '1px' }}>
+                    MARKET
+                  </span>
+                  {!marketsLoading && (
+                    <span style={{ fontSize: '10px', color: '#4b5563' }}>{markets.length} markets</span>
+                  )}
                 </div>
-              )}
-              {showSearch && (
-                <div style={{ position: 'fixed',
-                  top: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().bottom + 4 : 0,
-                  left: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().left : 0,
-                  width: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().width : 280,
-                  background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '6px',
-                  maxHeight: '300px', overflowY: 'auto', zIndex: 9999 }}>
-                  {dexGroups.map(dexName => {
-                    const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
-                    if (dexMarkets.length === 0) return null
-                    return (
-                      <div key={dexName}>
-                        <div style={{ padding: '4px 12px', fontSize: '10px', color: '#6b7280',
-                          background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: '1px',
-                          position: 'sticky', top: 0 }}>
-                          {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'}
-                          <span style={{ marginLeft: '6px', color: '#374151' }}>({dexMarkets.length})</span>
-                        </div>
-                        {dexMarkets.map(market => (
-                          <div key={market.name} onClick={() => handleSelectMarket(market)}
-                            style={{ padding: '8px 12px', cursor: 'pointer',
-                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                              background: selectedMarket?.name === market.name ? '#1a1a2e' : 'transparent' }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
-                            onMouseLeave={e => (e.currentTarget.style.background =
-                              selectedMarket?.name === market.name ? '#1a1a2e' : 'transparent')}>
-                            <span style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>
-                              {market.name}
-                            </span>
-                            <span style={{ color: '#6b7280', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
-                              {market.mark_price > 0 ? `$${fmt(market.mark_price)}` : '—'}
-                            </span>
-                          </div>
-                        ))}
+                <div ref={marketSelectorRef} style={{ position: 'relative' }}>
+                  {showSearch ? (
+                    <input autoFocus type="text" value={marketSearch}
+                      onChange={e => setMarketSearch(e.target.value)}
+                      placeholder="Search markets…"
+                      style={{ width: '100%', background: '#0a0a0f', border: '1px solid #00d4aa',
+                        borderRadius: '6px', padding: '10px 12px', color: 'white',
+                        fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
+                    />
+                  ) : (
+                    <div onClick={() => setShowSearch(true)}
+                      style={{ background: '#0a0a0f', border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '6px', padding: '10px 12px', cursor: 'pointer',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ color: marketsLoading ? '#6b7280' : 'white',
+                          fontWeight: '700', fontSize: '15px' }}>
+                          {marketsLoading ? 'Loading markets…' : (selectedMarket?.name || 'Select Market')}
+                        </span>
+                        {selectedMarket && (
+                          <span style={{ fontSize: '10px', color: '#6b7280',
+                            background: '#1a1a2e', padding: '2px 6px', borderRadius: '4px' }}>
+                            {selectedMarket.dex === 'main' ? 'HL' : selectedMarket.dex.toUpperCase()}
+                          </span>
+                        )}
                       </div>
-                    )
-                  })}
-                  {filteredMarkets.length === 0 && (
-                    <div style={{ padding: '16px', textAlign: 'center', fontSize: '13px', color: '#6b7280' }}>
-                      No markets found
+                      <span style={{ color: '#6b7280', fontSize: '10px' }}>▼</span>
+                    </div>
+                  )}
+                  {showSearch && (
+                    <div style={{ position: 'fixed',
+                      top: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().bottom + 4 : 0,
+                      left: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().left : 0,
+                      width: marketSelectorRef.current ? marketSelectorRef.current.getBoundingClientRect().width : 280,
+                      background: '#0d0d14', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px',
+                      maxHeight: '300px', overflowY: 'auto', zIndex: 9999 }}>
+                      {dexGroups.map(dexName => {
+                        const dexMarkets = filteredMarkets.filter(m => m.dex === dexName)
+                        if (dexMarkets.length === 0) return null
+                        return (
+                          <div key={dexName}>
+                            <div style={{ padding: '4px 12px', fontSize: '10px', color: '#6b7280',
+                              background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: '1px',
+                              position: 'sticky', top: 0 }}>
+                              {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'}
+                              <span style={{ marginLeft: '6px', color: '#374151' }}>({dexMarkets.length})</span>
+                            </div>
+                            {dexMarkets.map(market => (
+                              <div key={market.name} onClick={() => handleSelectMarket(market)}
+                                style={{ padding: '8px 12px', cursor: 'pointer',
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                  background: selectedMarket?.name === market.name ? '#1a1a2e' : 'transparent' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                                onMouseLeave={e => (e.currentTarget.style.background =
+                                  selectedMarket?.name === market.name ? '#1a1a2e' : 'transparent')}>
+                                <span style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>
+                                  {market.name}
+                                </span>
+                                <span style={{ color: '#6b7280', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
+                                  {market.mark_price > 0 ? `$${fmt(market.mark_price)}` : '—'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
+                      {filteredMarkets.length === 0 && (
+                        <div style={{ padding: '16px', textAlign: 'center', fontSize: '13px', color: '#6b7280' }}>
+                          No markets found
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Order Type */}
-          <div style={{ display: 'flex', background: '#0d0d14', border: '1px solid #1a1a2e',
-            borderRadius: '8px', overflow: 'hidden', position: 'relative', zIndex: 1, flexShrink: 0 }}>
-            {(['market', 'limit'] as const).map(type => (
-              <button key={type}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSearch(false); setMarketSearch(''); setOrderType(type) }}
-                style={{ flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
-                  background: orderType === type ? '#1a1a2e' : 'transparent',
-                  color: orderType === type ? '#00d4aa' : '#6b7280',
-                  fontSize: '13px', fontWeight: '600', textTransform: 'capitalize' }}>
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {/* Side */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => { setShowSearch(false); setMarketSearch(''); setSide('buy') }}
-              style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px',
-                fontWeight: '700', fontSize: '14px',
-                background: side === 'buy' ? '#00d4aa' : '#0d0d14',
-                color: side === 'buy' ? '#0a0a0f' : '#6b7280',
-                border: `1px solid ${side === 'buy' ? '#00d4aa' : '#1a1a2e'}` }}>
-              Buy / Long
-            </button>
-            <button onClick={() => { setShowSearch(false); setMarketSearch(''); setSide('sell') }}
-              style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px',
-                fontWeight: '700', fontSize: '14px',
-                background: side === 'sell' ? '#ef4444' : '#0d0d14',
-                color: side === 'sell' ? 'white' : '#6b7280',
-                border: `1px solid ${side === 'sell' ? '#ef4444' : '#1a1a2e'}` }}>
-              Sell / Short
-            </button>
-          </div>
-
-          {/* Inputs */}
-          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e',
-            borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {orderType === 'limit' && (
-              <div>
-                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block',
-                  marginBottom: '4px', letterSpacing: '0.5px' }}>LIMIT PRICE (USD)</label>
-                <input type="number" value={limitPrice}
-                  onChange={e => setLimitPrice(e.target.value)}
-                  placeholder={markPrice > 0 ? markPrice.toFixed(2) : '0.00'}
-                  style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e',
-                    borderRadius: '6px', padding: '8px 12px', color: 'white',
-                    fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
-                  onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
-                  onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
-                />
               </div>
-            )}
-            <div>
-              <label style={{ fontSize: '11px', color: '#6b7280', display: 'block',
-                marginBottom: '4px', letterSpacing: '0.5px' }}>SIZE (USD)</label>
-              <input type="number" value={size} onChange={e => setSize(e.target.value)}
-                placeholder="0.00"
-                style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1a1a2e',
-                  borderRadius: '6px', padding: '8px 12px', color: 'white',
-                  fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
-                onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
-              />
-              {sizeNum > 0 && selectedMarket && (
-                <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
-                  ≈ {assetSize.toFixed(selectedMarket.sz_decimals)} {selectedMarket.display_name}
-                </div>
-              )}
-            </div>
-            {/* Leverage */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                <label style={{ fontSize: '11px', color: '#6b7280', letterSpacing: '0.5px' }}>LEVERAGE</label>
-                <span style={{ fontSize: '13px', color: '#00d4aa', fontWeight: '700' }}>{leverage}x</span>
-              </div>
-              <input type="range" min={1} max={maxLev} value={leverage}
-                onChange={e => setLeverage(parseInt(e.target.value))}
-                style={{ width: '100%', accentColor: '#00d4aa', margin: '4px 0' }}
-              />
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                {LEVERAGE_TICKS.filter(v => v <= maxLev).map(v => (
-                  <button key={v} type="button" onClick={() => setLeverage(v)}
-                    style={{ fontSize: '10px', padding: '2px 4px', border: 'none',
-                      borderRadius: '3px', cursor: 'pointer',
-                      background: leverage === v ? '#00d4aa22' : 'transparent',
-                      color: leverage === v ? '#00d4aa' : '#4b5563',
-                      fontWeight: leverage === v ? '700' : '400' }}>
-                    {v}x
+
+              {/* Order Type */}
+              <div style={{ display: 'flex', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '12px', overflow: 'hidden', position: 'relative', zIndex: 1, flexShrink: 0 }}>
+                {(['market', 'limit'] as const).map(type => (
+                  <button key={type}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSearch(false); setMarketSearch(''); setOrderType(type) }}
+                    style={{ flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
+                      background: orderType === type ? '#1a1a2e' : 'transparent',
+                      color: orderType === type ? '#00d4aa' : '#6b7280',
+                      fontSize: '13px', fontWeight: '600', textTransform: 'capitalize' }}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
                   </button>
                 ))}
-                {maxLev > 50 && (
-                  <button type="button" onClick={() => setLeverage(maxLev)}
-                    style={{ fontSize: '10px', padding: '2px 4px', border: 'none',
-                      borderRadius: '3px', cursor: 'pointer',
-                      background: leverage === maxLev ? '#00d4aa22' : 'transparent',
-                      color: leverage === maxLev ? '#00d4aa' : '#4b5563' }}>
-                    {maxLev}x
-                  </button>
+              </div>
+
+              {/* Side */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => { setShowSearch(false); setMarketSearch(''); setSide('buy') }}
+                  style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px',
+                    fontWeight: '700', fontSize: '14px',
+                    background: side === 'buy' ? '#00d4aa' : '#0d0d14',
+                    color: side === 'buy' ? '#0a0a0f' : '#6b7280',
+                    border: `1px solid ${side === 'buy' ? '#00d4aa' : 'rgba(255,255,255,0.08)'}` }}>
+                  Buy / Long
+                </button>
+                <button onClick={() => { setShowSearch(false); setMarketSearch(''); setSide('sell') }}
+                  style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px',
+                    fontWeight: '700', fontSize: '14px',
+                    background: side === 'sell' ? '#ef4444' : '#0d0d14',
+                    color: side === 'sell' ? 'white' : '#6b7280',
+                    border: `1px solid ${side === 'sell' ? '#ef4444' : 'rgba(255,255,255,0.08)'}` }}>
+                  Sell / Short
+                </button>
+              </div>
+
+              {/* Inputs */}
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '12px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden' }}>
+                {orderType === 'limit' && (
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block',
+                      marginBottom: '4px', letterSpacing: '0.5px' }}>LIMIT PRICE (USD)</label>
+                    <input type="number" value={limitPrice}
+                      onChange={e => setLimitPrice(e.target.value)}
+                      placeholder={markPrice > 0 ? markPrice.toFixed(2) : '0.00'}
+                      style={{ width: '100%', background: '#0a0a0f', border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '6px', padding: '8px 12px', color: 'white',
+                        fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
+                      onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
+                      onBlur={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}
+                    />
+                  </div>
                 )}
-              </div>
-            </div>
-          </div>
-
-          {/* Order Summary */}
-          <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: '8px', padding: '12px' }}>
-            {([
-              ['Entry Price', entryPrice > 0 ? `$${fmt(entryPrice)}` : '—'],
-              ['Size', sizeNum > 0 ? `$${sizeNum.toFixed(2)}` : '—'],
-              ['Leverage', `${leverage}x`],
-              ['Est. Liq. Price', sizeNum > 0 && entryPrice > 0 ? `$${fmt(liqPrice)}` : '—'],
-              [`Fee (${orderType === 'market' ? '0.035%' : '0.01%'})`, sizeNum > 0 ? `$${fee.toFixed(4)}` : '—'],
-              ['Funding Rate (8h)', `${parseFloat(fundingPct) >= 0 ? '+' : ''}${fundingPct}%`],
-            ] as [string, string][]).map(([label, value]) => (
-              <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
-                padding: '4px 0', borderBottom: '1px solid #0a0a0f' }}>
-                <span style={{ fontSize: '11px', color: '#6b7280' }}>{label}</span>
-                <span style={{ fontSize: '11px', color: 'white' }}>{value}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* TP / SL */}
-          <div style={{ marginBottom: 12 }}>
-            <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 6, fontWeight: 600, letterSpacing: '0.05em' }}>
-              TAKE PROFIT / STOP LOSS{' '}
-              <span style={{ fontWeight: 400, color: '#4b5563' }}>(optional)</span>
-            </p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Take Profit (USD)</p>
-                <input type="number" placeholder="TP Price" value={tpPrice}
-                  onChange={e => setTpPrice(e.target.value)}
-                  style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e',
-                    borderRadius: 6, padding: '6px 10px', color: '#10b981',
-                    fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-                />
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Stop Loss (USD)</p>
-                <input type="number" placeholder="SL Price" value={slPrice}
-                  onChange={e => setSlPrice(e.target.value)}
-                  style={{ width: '100%', background: '#13131f', border: '1px solid #1a1a2e',
-                    borderRadius: 6, padding: '6px 10px', color: '#ef4444',
-                    fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {orderMessage && (
-            <div style={{ padding: '10px', borderRadius: '6px', fontSize: '13px', textAlign: 'center',
-              background: orderMessage.type === 'success' ? 'rgba(0,212,170,0.1)' : 'rgba(239,68,68,0.1)',
-              border: `1px solid ${orderMessage.type === 'success' ? '#00d4aa' : '#ef4444'}`,
-              color: orderMessage.type === 'success' ? '#00d4aa' : '#ef4444' }}>
-              {orderMessage.text}
-            </div>
-          )}
-
-          <button onClick={handlePlaceOrder}
-            disabled={placing || sizeNum <= 0 || !selectedMarket}
-            style={{ width: '100%', padding: '14px', border: 'none', cursor: 'pointer',
-              borderRadius: '8px', fontWeight: '700', fontSize: '15px',
-              background: placing || sizeNum <= 0 ? '#1a1a2e' : side === 'buy' ? '#00d4aa' : '#ef4444',
-              color: placing || sizeNum <= 0 ? '#6b7280' : side === 'buy' ? '#0a0a0f' : 'white' }}>
-            {placing ? 'Placing…' : `Place ${side === 'buy' ? 'Buy' : 'Sell'} Order`}
-          </button>
-        </div>
-
-        {/* ── MIDDLE COLUMN — Order Book (collapsible ~180px) ─────────── */}
-        <div style={{ width: obCollapsed ? '28px' : '180px', flexShrink: 0,
-          borderRight: '1px solid #1a1a2e', display: 'flex', flexDirection: 'column',
-          overflow: 'hidden', transition: 'width 0.15s ease' }}>
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center',
-            justifyContent: obCollapsed ? 'center' : 'space-between',
-            padding: obCollapsed ? '10px 0' : '6px 8px',
-            borderBottom: '1px solid #1a1a2e', flexShrink: 0, minHeight: '32px' }}>
-            {!obCollapsed && (
-              <div style={{ overflow: 'hidden' }}>
-                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600' }}>Order Book</span>
-                {spread > 0 && markPrice > 0 && (
-                  <span style={{ fontSize: '9px', color: '#4b5563', marginLeft: '5px', whiteSpace: 'nowrap' }}>
-                    {spread.toFixed(2)} | {((spread / markPrice) * 100).toFixed(3)}%
-                  </span>
-                )}
-              </div>
-            )}
-            <button onClick={() => setObCollapsed(v => !v)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer',
-                color: '#6b7280', fontSize: '14px', padding: '0', lineHeight: 1, flexShrink: 0 }}>
-              {obCollapsed ? '›' : '‹'}
-            </button>
-          </div>
-
-          {!obCollapsed && (
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column',
-              fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr',
-                padding: '3px 6px', fontSize: '9px', color: '#4b5563', flexShrink: 0,
-                borderBottom: '1px solid #0d0d14' }}>
-                <span>Price</span>
-                <span style={{ textAlign: 'right' }}>Size</span>
-                <span style={{ textAlign: 'right' }}>Total</span>
-              </div>
-
-              {/* Asks — lowest at bottom */}
-              <div style={{ flex: 1, overflow: 'hidden', display: 'flex',
-                flexDirection: 'column', justifyContent: 'flex-end' }}>
-                {(() => {
-                  const asks = orderbook.asks.slice(0, 10)
-                  let cum = 0
-                  const withCum = asks.map((a: any) => {
-                    cum += parseFloat(a[0]) * parseFloat(a[1])
-                    return { price: a[0], size: a[1], total: cum }
-                  })
-                  const maxCum = cum || 1
-                  return [...withCum].reverse().map((ask, i) => (
-                    <div key={i} style={{ position: 'relative', height: '22px', display: 'flex', alignItems: 'center' }}>
-                      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0,
-                        width: `${(ask.total / maxCum) * 100}%`, background: 'rgba(239,68,68,0.10)' }} />
-                      <div style={{ position: 'relative', width: '100%',
-                        display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr', padding: '0 6px', fontSize: '11px' }}>
-                        <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(ask.price).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                        </span>
-                        <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(ask.size).toFixed(3)}
-                        </span>
-                        <span style={{ color: '#6b7280', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>
-                          {fmtQty(ask.total)}
-                        </span>
-                      </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: '#6b7280', display: 'block',
+                    marginBottom: '4px', letterSpacing: '0.5px' }}>SIZE (USD)</label>
+                  <input type="number" value={size} onChange={e => setSize(e.target.value)}
+                    placeholder="0.00"
+                    style={{ width: '100%', background: '#0a0a0f', border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '6px', padding: '8px 12px', color: 'white',
+                      fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
+                    onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
+                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}
+                  />
+                  {sizeNum > 0 && selectedMarket && (
+                    <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                      ≈ {assetSize.toFixed(selectedMarket.sz_decimals)} {selectedMarket.display_name}
                     </div>
-                  ))
-                })()}
-              </div>
-
-              {/* Spread divider */}
-              <div style={{ padding: '4px 6px', background: '#0a0a0f', flexShrink: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                borderTop: '1px solid #1a1a2e', borderBottom: '1px solid #1a1a2e' }}>
-                <span style={{ fontSize: '12px', color: priceColor, fontWeight: '700', fontVariantNumeric: 'tabular-nums' }}>
-                  {markPrice > 0 ? fmt(markPrice) : '—'}
-                </span>
-                {spread > 0 && markPrice > 0 && (
-                  <span style={{ fontSize: '9px', color: '#4b5563' }}>
-                    {((spread / markPrice) * 100).toFixed(3)}%
-                  </span>
-                )}
-              </div>
-
-              {/* Bids — highest at top */}
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                {(() => {
-                  const bids = orderbook.bids.slice(0, 10)
-                  let cum = 0
-                  const withCum = bids.map((b: any) => {
-                    cum += parseFloat(b[0]) * parseFloat(b[1])
-                    return { price: b[0], size: b[1], total: cum }
-                  })
-                  const maxCum = cum || 1
-                  return withCum.map((bid, i) => (
-                    <div key={i} style={{ position: 'relative', height: '22px', display: 'flex', alignItems: 'center' }}>
-                      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0,
-                        width: `${(bid.total / maxCum) * 100}%`, background: 'rgba(0,212,170,0.10)' }} />
-                      <div style={{ position: 'relative', width: '100%',
-                        display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr', padding: '0 6px', fontSize: '11px' }}>
-                        <span style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(bid.price).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                        </span>
-                        <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {parseFloat(bid.size).toFixed(3)}
-                        </span>
-                        <span style={{ color: '#6b7280', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>
-                          {fmtQty(bid.total)}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                })()}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── RIGHT COLUMN — Chart + Bottom Panel ──────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-
-          {/* Chart */}
-          <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-            {selectedMarket && (
-              <HLChart
-                symbol={selectedMarket.name}
-                height={undefined}
-                positions={openPositions}
-                openOrders={openOrders}
-                initialInterval={initialInterval}
-              />
-            )}
-          </div>
-
-          {/* ── BOTTOM PANEL — Positions + Tabbed section ────────────── */}
-          <div style={{ borderTop: '1px solid #1a1a2e', flexShrink: 0,
-            background: '#0d0d14', maxHeight: '340px', overflowY: 'auto' }}>
-
-            {/* Open Positions header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '5px 12px', borderBottom: '1px solid #1a1a2e',
-              position: 'sticky', top: 0, background: '#0d0d14', zIndex: 2,
-              userSelect: 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
-                cursor: 'pointer', flex: 1 }}
-                onClick={() => setPosCollapsed(v => !v)}>
-                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600' }}>
-                  Open Positions ({openPositions.length})
-                </span>
-                <span style={{ color: '#4b5563', fontSize: '10px' }}>
-                  {posCollapsed ? '▲' : '▼'}
-                </span>
-              </div>
-            </div>
-
-            {/* Open Positions table — exact copy of OverviewPanel */}
-            {!posCollapsed && (
-              openPositions.length === 0 ? (
-                <div style={{ padding: '10px 20px', fontSize: '12px', color: '#4b5563' }}>
-                  No open positions
+                  )}
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
-                        <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH>
-                        <TH>Entry Price</TH><TH>Mark Price</TH>
-                        <TH>Notional <Tooltip text="Full leveraged exposure — size × mark price." /></TH>
-                        <TH>Margin <Tooltip text="Cash committed — marginUsed from Hyperliquid." /></TH>
-                        <TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
-                        <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {openPositions.map((pos: any, i: number) => {
-                        const upnl    = parseFloat(String(pos?.unrealized_pnl ?? 0))
-                        const posPos  = upnl >= 0
-                        const liqPx   = parseFloat(String(pos?.liquidation_price ?? 0))
-                        const roe     = parseFloat(String(pos?.roe_pct ?? 0))
-                        const tpPx    = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null
-                        const slPx    = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null
-                        const notional = parseFloat(String(pos?.position_value ?? 0))
-                        const margin   = parseFloat(String(pos?.margin_used ?? 0))
-                        return (
-                          <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                            style={{ borderColor: '#1a1a2e' }}>
-                            <td className="px-5 py-3">
-                              <span className="text-xs px-2 py-0.5 rounded font-medium"
-                                style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>
-                                {pos?.dex ?? '—'}
-                              </span>
-                            </td>
-                            <TD><span className="font-semibold text-white">{pos?.symbol ?? '—'}</span></TD>
-                            <td className="px-5 py-3">
-                              <span className="text-xs px-2 py-0.5 rounded font-semibold"
-                                style={{
-                                  backgroundColor: parseFloat(pos?.size) > 0 ? '#00d4aa18' : '#ef444418',
-                                  color: parseFloat(pos?.size) > 0 ? '#00d4aa' : '#ef4444',
-                                }}>
-                                {parseFloat(pos?.size) > 0 ? 'Buy' : 'Sell'}
-                              </span>
-                            </td>
-                            <TD>{fmt(pos?.size, 4)}</TD>
-                            <TD>${fmt(pos?.entry_price)}</TD>
-                            <TD>${fmt(pos?.mark_price ?? 0)}</TD>
-                            <TD>${fmt(notional)}</TD>
-                            <TD color="#9ca3af">${fmt(margin)}</TD>
-                            <td className="px-5 py-3">
-                              <p className="text-sm" style={{ color: posPos ? '#10b981' : '#ef4444' }}>
-                                {fmtPnl(upnl)}
-                              </p>
-                              <p className="text-xs mt-0.5" style={{ color: roe >= 0 ? '#10b981' : '#ef4444' }}>
-                                {roe >= 0 ? '+' : ''}{fmt(roe, 2)}%
-                              </p>
-                            </td>
-                            <td className="px-5 py-3">
-                              {tpPx ? <p className="text-xs" style={{ color: '#10b981' }}>TP ${fmt(tpPx)}</p> : null}
-                              {slPx ? <p className="text-xs mt-0.5" style={{ color: '#ef4444' }}>SL ${fmt(slPx)}</p> : null}
-                              {!tpPx && !slPx ? <span className="text-xs text-gray-600">—</span> : null}
-                            </td>
-                            <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
-                            <TD>{liqPx > 0 ? `$${fmt(liqPx)}` : '—'}</TD>
-                            <td className="px-5 py-3">
-                              <p className="text-xs text-gray-400">{fmtOpened(pos?.opened_at)}</p>
-                            </td>
-                            <td className="px-5 py-3">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setManagingPos(pos) }}
-                                className="text-xs font-semibold px-3 py-1 rounded-lg transition-opacity hover:opacity-80"
-                                style={{ backgroundColor: '#00d4aa18', color: '#00d4aa', border: '1px solid #00d4aa44' }}>
-                                Manage
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                {/* Leverage */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '11px', color: '#6b7280', letterSpacing: '0.5px' }}>LEVERAGE</label>
+                    <span style={{ fontSize: '13px', color: '#00d4aa', fontWeight: '700' }}>{leverage}x</span>
+                  </div>
+                  <input type="range" min={1} max={maxLev} value={leverage}
+                    onChange={e => setLeverage(parseInt(e.target.value))}
+                    style={{ width: '100%', accentColor: '#00d4aa', margin: '4px 0' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                    {LEVERAGE_TICKS.filter(v => v <= maxLev).map(v => (
+                      <button key={v} type="button" onClick={() => setLeverage(v)}
+                        style={{ fontSize: '10px', padding: '2px 4px', border: 'none',
+                          borderRadius: '3px', cursor: 'pointer',
+                          background: leverage === v ? '#00d4aa22' : 'transparent',
+                          color: leverage === v ? '#00d4aa' : '#4b5563',
+                          fontWeight: leverage === v ? '700' : '400' }}>
+                        {v}x
+                      </button>
+                    ))}
+                    {maxLev > 50 && (
+                      <button type="button" onClick={() => setLeverage(maxLev)}
+                        style={{ fontSize: '10px', padding: '2px 4px', border: 'none',
+                          borderRadius: '3px', cursor: 'pointer',
+                          background: leverage === maxLev ? '#00d4aa22' : 'transparent',
+                          color: leverage === maxLev ? '#00d4aa' : '#4b5563' }}>
+                        {maxLev}x
+                      </button>
+                    )}
+                  </div>
                 </div>
-              )
-            )}
+              </div>
 
-            {/* ── TABS — Open Orders / Spot Balances / Recent Trades ──── */}
-            <div style={{ borderTop: '1px solid #1a1a2e' }}>
-              {/* Tab bar */}
-              <div style={{ display: 'flex', gap: '2px', padding: '6px 12px',
-                borderBottom: '1px solid #1a1a2e',
-                position: 'sticky', top: 38, background: '#0d0d14', zIndex: 1 }}>
+              {/* Order Summary */}
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '12px', overflow: 'hidden' }}>
                 {([
-                  ['orders', `Open Orders (${openOrders.length})`],
-                  ['spot',   'Spot Balances'],
-                  ['trades', `Recent Trades (${recentTrades.length})`],
+                  ['Entry Price', entryPrice > 0 ? `$${fmt(entryPrice)}` : '—'],
+                  ['Size', sizeNum > 0 ? `$${sizeNum.toFixed(2)}` : '—'],
+                  ['Leverage', `${leverage}x`],
+                  ['Est. Liq. Price', sizeNum > 0 && entryPrice > 0 ? `$${fmt(liqPrice)}` : '—'],
+                  [`Fee (${orderType === 'market' ? '0.035%' : '0.01%'})`, sizeNum > 0 ? `$${fee.toFixed(4)}` : '—'],
+                  ['Funding Rate (8h)', `${parseFloat(fundingPct) >= 0 ? '+' : ''}${fundingPct}%`],
+                ] as [string, string][]).map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
+                    padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <span style={{ fontSize: '11px', color: '#6b7280' }}>{label}</span>
+                    <span style={{ fontSize: '11px', color: 'white' }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* TP / SL */}
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 6, fontWeight: 600, letterSpacing: '0.05em' }}>
+                  TAKE PROFIT / STOP LOSS{' '}
+                  <span style={{ fontWeight: 400, color: '#4b5563' }}>(optional)</span>
+                </p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Take Profit (USD)</p>
+                    <input type="number" placeholder="TP Price" value={tpPrice}
+                      onChange={e => setTpPrice(e.target.value)}
+                      style={{ width: '100%', background: '#13131f', border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 6, padding: '6px 10px', color: '#10b981',
+                        fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Stop Loss (USD)</p>
+                    <input type="number" placeholder="SL Price" value={slPrice}
+                      onChange={e => setSlPrice(e.target.value)}
+                      style={{ width: '100%', background: '#13131f', border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 6, padding: '6px 10px', color: '#ef4444',
+                        fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {orderMessage && (
+                <div style={{ padding: '10px', borderRadius: '6px', fontSize: '13px', textAlign: 'center',
+                  background: orderMessage.type === 'success' ? 'rgba(0,212,170,0.1)' : 'rgba(239,68,68,0.1)',
+                  border: `1px solid ${orderMessage.type === 'success' ? '#00d4aa' : '#ef4444'}`,
+                  color: orderMessage.type === 'success' ? '#00d4aa' : '#ef4444' }}>
+                  {orderMessage.text}
+                </div>
+              )}
+
+              <button onClick={handlePlaceOrder}
+                disabled={placing || sizeNum <= 0 || !selectedMarket}
+                style={{ width: '100%', padding: '14px', border: 'none', cursor: 'pointer',
+                  borderRadius: '8px', fontWeight: '700', fontSize: '15px',
+                  background: placing || sizeNum <= 0 ? '#1a1a2e' : side === 'buy' ? '#00d4aa' : '#ef4444',
+                  color: placing || sizeNum <= 0 ? '#6b7280' : side === 'buy' ? '#0a0a0f' : 'white' }}>
+                {placing ? 'Placing…' : `Place ${side === 'buy' ? 'Buy' : 'Sell'} Order`}
+              </button>
+            </div>{/* /.tp-form-col */}
+
+            {/* ── ORDER BOOK ─────────────────────────────────────────────── */}
+            <div className="tp-ob-col" style={{
+              flexShrink: 0, display: 'flex', flexDirection: 'column',
+              borderRight: '1px solid rgba(255,255,255,0.08)',
+              overflow: 'hidden', transition: 'width 0.15s ease',
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              height: '100%',
+              width: obCollapsed ? '28px' : undefined,
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center',
+                justifyContent: obCollapsed ? 'center' : 'space-between',
+                padding: obCollapsed ? '10px 0' : '6px 8px',
+                borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0, minHeight: '32px' }}>
+                {!obCollapsed && (
+                  <div style={{ overflow: 'hidden' }}>
+                    <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600' }}>Order Book</span>
+                    {spread > 0 && markPrice > 0 && (
+                      <span style={{ fontSize: '9px', color: '#4b5563', marginLeft: '5px', whiteSpace: 'nowrap' }}>
+                        {spread.toFixed(2)} | {((spread / markPrice) * 100).toFixed(3)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                <button onClick={() => setObCollapsed(v => !v)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer',
+                    color: '#6b7280', fontSize: '14px', padding: '0', lineHeight: 1, flexShrink: 0 }}>
+                  {obCollapsed ? '›' : '‹'}
+                </button>
+              </div>
+
+              {!obCollapsed && (
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+                  fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr',
+                    padding: '3px 6px', fontSize: '9px', color: '#4b5563', flexShrink: 0,
+                    borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <span>Price</span>
+                    <span style={{ textAlign: 'right' }}>Size</span>
+                    <span style={{ textAlign: 'right' }}>Total</span>
+                  </div>
+
+                  {/* Asks — lowest at bottom (FIX 3: flex:1 overflowY:auto) */}
+                  <div style={{ flex: 1, overflowY: 'auto', display: 'flex',
+                    flexDirection: 'column', justifyContent: 'flex-end' }}>
+                    {(() => {
+                      const asks = orderbook.asks.slice(0, 10)
+                      let cum = 0
+                      const withCum = asks.map((a: any) => {
+                        cum += parseFloat(a[0]) * parseFloat(a[1])
+                        return { price: a[0], size: a[1], total: cum }
+                      })
+                      const maxCum = cum || 1
+                      return [...withCum].reverse().map((ask, i) => (
+                        <div key={i} style={{ position: 'relative', height: '22px', display: 'flex', alignItems: 'center' }}>
+                          <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0,
+                            width: `${(ask.total / maxCum) * 100}%`, background: 'rgba(239,68,68,0.10)' }} />
+                          <div style={{ position: 'relative', width: '100%',
+                            display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr', padding: '0 6px', fontSize: '11px' }}>
+                            <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(ask.price).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                            </span>
+                            <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(ask.size).toFixed(3)}
+                            </span>
+                            <span style={{ color: '#6b7280', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>
+                              {fmtQty(ask.total)}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    })()}
+                  </div>
+
+                  {/* Spread divider */}
+                  <div style={{ padding: '4px 6px', background: 'rgba(0,0,0,0.3)', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    borderTop: '1px solid rgba(255,255,255,0.08)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                    <span style={{ fontSize: '12px', color: priceColor, fontWeight: '700', fontVariantNumeric: 'tabular-nums' }}>
+                      {markPrice > 0 ? fmt(markPrice) : '—'}
+                    </span>
+                    {spread > 0 && markPrice > 0 && (
+                      <span style={{ fontSize: '9px', color: '#4b5563' }}>
+                        {((spread / markPrice) * 100).toFixed(3)}%
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Bids — highest at top (FIX 3: flex:1 overflowY:auto) */}
+                  <div style={{ flex: 1, overflowY: 'auto' }}>
+                    {(() => {
+                      const bids = orderbook.bids.slice(0, 10)
+                      let cum = 0
+                      const withCum = bids.map((b: any) => {
+                        cum += parseFloat(b[0]) * parseFloat(b[1])
+                        return { price: b[0], size: b[1], total: cum }
+                      })
+                      const maxCum = cum || 1
+                      return withCum.map((bid, i) => (
+                        <div key={i} style={{ position: 'relative', height: '22px', display: 'flex', alignItems: 'center' }}>
+                          <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0,
+                            width: `${(bid.total / maxCum) * 100}%`, background: 'rgba(0,212,170,0.10)' }} />
+                          <div style={{ position: 'relative', width: '100%',
+                            display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr', padding: '0 6px', fontSize: '11px' }}>
+                            <span style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(bid.price).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                            </span>
+                            <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {parseFloat(bid.size).toFixed(3)}
+                            </span>
+                            <span style={{ color: '#6b7280', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>
+                              {fmtQty(bid.total)}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>{/* /.tp-ob-col */}
+
+          </div>{/* /.tp-left-side */}
+
+          {/* ── RIGHT COLUMN — Chart + Bottom Panel ──────────────────────── */}
+          <div className="tp-right-col">
+
+            {/* Chart */}
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              {selectedMarket && (
+                <HLChart
+                  symbol={selectedMarket.name}
+                  height={undefined}
+                  positions={openPositions}
+                  openOrders={openOrders}
+                  initialInterval={initialInterval}
+                />
+              )}
+            </div>
+
+            {/* ── BOTTOM PANEL — Unified 4-tab section (FIX 2 + FIX 4) ── */}
+            <div className="tp-bottom-panel" style={{
+              flexShrink: 0,
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '0 0 12px 12px',
+              borderTop: '1px solid rgba(255,255,255,0.08)',
+              maxHeight: '340px',
+              overflowY: 'auto',
+            }}>
+
+              {/* Tab bar — all 4 tabs on ONE line */}
+              <div style={{
+                display: 'flex', alignItems: 'center',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+                position: 'sticky', top: 0,
+                background: 'rgba(10,10,15,0.96)', zIndex: 2,
+                padding: '0 6px',
+              }}>
+                {([
+                  ['positions', `Open Positions (${openPositions.length})`],
+                  ['orders',    `Open Orders (${openOrders.length})`],
+                  ['spot',      'Spot Balances'],
+                  ['trades',    `Recent Trades (${recentTrades.length})`],
                 ] as const).map(([tab, label]) => (
                   <button key={tab} onClick={() => setActiveTab(tab)}
-                    style={{ fontSize: '11px', fontWeight: '600', padding: '4px 12px',
-                      borderRadius: '6px', border: 'none', cursor: 'pointer',
-                      background: activeTab === tab ? '#00d4aa' : 'transparent',
-                      color: activeTab === tab ? '#0a0a0f' : '#6b7280' }}>
+                    style={{
+                      fontSize: '11px', fontWeight: '600', padding: '10px 14px',
+                      border: 'none', cursor: 'pointer', background: 'transparent',
+                      color: activeTab === tab ? '#00d4aa' : '#6b7280',
+                      borderBottom: activeTab === tab ? '2px solid #00d4aa' : '2px solid transparent',
+                      marginBottom: '-1px', transition: 'color 0.15s',
+                      whiteSpace: 'nowrap',
+                    }}>
                     {label}
                   </button>
                 ))}
               </div>
+
+              {/* Tab: Open Positions */}
+              {activeTab === 'positions' && (
+                openPositions.length === 0 ? (
+                  <div style={{ padding: '10px 20px', fontSize: '12px', color: '#4b5563' }}>
+                    No open positions
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                          <TH>DEX</TH><TH>Symbol</TH><TH>Side</TH><TH>Size</TH>
+                          <TH>Entry Price</TH><TH>Mark Price</TH>
+                          <TH>Notional <Tooltip text="Full leveraged exposure — size × mark price." /></TH>
+                          <TH>Margin <Tooltip text="Cash committed — marginUsed from Hyperliquid." /></TH>
+                          <TH>PnL / ROE%</TH><TH>TP / SL</TH><TH>Leverage</TH>
+                          <TH>Liq. Price</TH><TH>Opened</TH><TH>Actions</TH>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {openPositions.map((pos: any, i: number) => {
+                          const upnl    = parseFloat(String(pos?.unrealized_pnl ?? 0))
+                          const posPos  = upnl >= 0
+                          const liqPx   = parseFloat(String(pos?.liquidation_price ?? 0))
+                          const roe     = parseFloat(String(pos?.roe_pct ?? 0))
+                          const tpPx    = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null
+                          const slPx    = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null
+                          const notional = parseFloat(String(pos?.position_value ?? 0))
+                          const margin   = parseFloat(String(pos?.margin_used ?? 0))
+                          return (
+                            <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                              style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                              <td className="px-5 py-3">
+                                <span className="text-xs px-2 py-0.5 rounded font-medium"
+                                  style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>
+                                  {pos?.dex ?? '—'}
+                                </span>
+                              </td>
+                              <TD><span className="font-semibold text-white">{pos?.symbol ?? '—'}</span></TD>
+                              <td className="px-5 py-3">
+                                <span className="text-xs px-2 py-0.5 rounded font-semibold"
+                                  style={{
+                                    backgroundColor: parseFloat(pos?.size) > 0 ? '#00d4aa18' : '#ef444418',
+                                    color: parseFloat(pos?.size) > 0 ? '#00d4aa' : '#ef4444',
+                                  }}>
+                                  {parseFloat(pos?.size) > 0 ? 'Buy' : 'Sell'}
+                                </span>
+                              </td>
+                              <TD>{fmt(pos?.size, 4)}</TD>
+                              <TD>${fmt(pos?.entry_price)}</TD>
+                              <TD>${fmt(pos?.mark_price ?? 0)}</TD>
+                              <TD>${fmt(notional)}</TD>
+                              <TD color="#9ca3af">${fmt(margin)}</TD>
+                              <td className="px-5 py-3">
+                                <p className="text-sm" style={{ color: posPos ? '#10b981' : '#ef4444' }}>
+                                  {fmtPnl(upnl)}
+                                </p>
+                                <p className="text-xs mt-0.5" style={{ color: roe >= 0 ? '#10b981' : '#ef4444' }}>
+                                  {roe >= 0 ? '+' : ''}{fmt(roe, 2)}%
+                                </p>
+                              </td>
+                              <td className="px-5 py-3">
+                                {tpPx ? <p className="text-xs" style={{ color: '#10b981' }}>TP ${fmt(tpPx)}</p> : null}
+                                {slPx ? <p className="text-xs mt-0.5" style={{ color: '#ef4444' }}>SL ${fmt(slPx)}</p> : null}
+                                {!tpPx && !slPx ? <span className="text-xs text-gray-600">—</span> : null}
+                              </td>
+                              <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
+                              <TD>{liqPx > 0 ? `$${fmt(liqPx)}` : '—'}</TD>
+                              <td className="px-5 py-3">
+                                <p className="text-xs text-gray-400">{fmtOpened(pos?.opened_at)}</p>
+                              </td>
+                              <td className="px-5 py-3">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setManagingPos(pos) }}
+                                  className="text-xs font-semibold px-3 py-1 rounded-lg transition-opacity hover:opacity-80"
+                                  style={{ backgroundColor: '#00d4aa18', color: '#00d4aa', border: '1px solid #00d4aa44' }}>
+                                  Manage
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
 
               {/* Tab: Open Orders */}
               {activeTab === 'orders' && (
@@ -982,7 +1032,7 @@ export function TradePanel({
                 ) : (
                   <>
                     <div className="flex items-center justify-between px-5 py-2 border-b"
-                      style={{ borderColor: '#1a1a2e' }}>
+                      style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                       <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-500">
                         <input type="checkbox"
                           checked={selectedOrders.size === openOrders.length && openOrders.length > 0}
@@ -1005,7 +1055,7 @@ export function TradePanel({
                     <div className="overflow-x-auto">
                       <table className="w-full">
                         <thead>
-                          <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
+                          <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                             <TH> </TH><TH>Coin</TH><TH>Side</TH><TH>Type</TH>
                             <TH>Price</TH><TH>Size</TH><TH>Time</TH><TH>Source</TH><TH>Action</TH>
                           </tr>
@@ -1022,7 +1072,7 @@ export function TradePanel({
                             const isTrigger = o?.is_trigger || o?.is_position_tpsl
                             return (
                               <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                                style={{ borderColor: '#1a1a2e' }}>
+                                style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                                 <td className="px-4 py-3">
                                   <input type="checkbox"
                                     checked={selectedOrders.has(o?.order_id)}
@@ -1083,14 +1133,14 @@ export function TradePanel({
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead>
-                        <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
+                        <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                           <TH>Coin</TH><TH>Total</TH><TH>Hold</TH>
                         </tr>
                       </thead>
                       <tbody>
                         {spotBalances.map((b: any, i: number) => (
                           <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                            style={{ borderColor: '#1a1a2e' }}>
+                            style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                             <td className="px-5 py-3 font-semibold text-white text-sm">{b?.coin ?? '—'}</td>
                             <TD>{fmt(b?.total, 6)}</TD>
                             <TD>{parseFloat(String(b?.hold ?? 0)) > 0 ? fmt(b?.hold, 6) : '—'}</TD>
@@ -1112,7 +1162,7 @@ export function TradePanel({
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead>
-                        <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
+                        <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                           <TH>Coin</TH><TH>Side</TH><TH>Price</TH><TH>Size</TH>
                           <TH>Closed PnL</TH><TH>Fee</TH><TH>Time</TH>
                         </tr>
@@ -1123,7 +1173,7 @@ export function TradePanel({
                           const cpnl = parseFloat(String(f?.closed_pnl ?? 0))
                           return (
                             <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                              style={{ borderColor: '#1a1a2e' }}>
+                              style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                               <td className="px-5 py-3 font-semibold text-white text-sm">{f?.coin ?? '—'}</td>
                               <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
                               <TD>${fmt(f?.price)}</TD>
@@ -1141,27 +1191,28 @@ export function TradePanel({
                   </div>
                 )
               )}
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Click outside to close market search */}
-      {showSearch && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 100 }}
-          onClick={() => { setShowSearch(false); setMarketSearch('') }}
-        />
-      )}
+            </div>{/* /.tp-bottom-panel */}
+          </div>{/* /.tp-right-col */}
+        </div>{/* /.tp-content-row */}
 
-      {/* Position Manager Modal */}
-      {managingPos && typeof managingPos === 'object' && (
-        <PositionModal
-          pos={managingPos}
-          walletAddress={walletAddress}
-          onClose={() => setManagingPos(null)}
-          onAction={() => setManagingPos(null)}
-        />
-      )}
-    </div>
+        {/* Click outside to close market search */}
+        {showSearch && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 100 }}
+            onClick={() => { setShowSearch(false); setMarketSearch('') }}
+          />
+        )}
+
+        {/* Position Manager Modal */}
+        {managingPos && typeof managingPos === 'object' && (
+          <PositionModal
+            pos={managingPos}
+            walletAddress={walletAddress}
+            onClose={() => setManagingPos(null)}
+            onAction={() => setManagingPos(null)}
+          />
+        )}
+      </div>{/* /.tp-wrapper */}
+    </>
   )
 }
