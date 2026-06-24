@@ -200,6 +200,8 @@ class BotManager:
         def log_callback(level: str, message: str):
             self._add_log(bot_id, level, message)
 
+        sides = config.get("sides") or ["long"]
+
         bot = EnvelopeBot(
             private_key=private_key,
             master_address=master_address,
@@ -212,6 +214,7 @@ class BotManager:
             leverage=leverage,
             interval=interval,
             dex=dex,
+            sides=sides,
             log_callback=log_callback,
         )
 
