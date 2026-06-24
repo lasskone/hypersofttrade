@@ -3,17 +3,21 @@ Envelope DCA Bot — live trading strategy for Hyperliquid.
 Faithful port of CryptoRobotFr Live-Tools-V2 strategy, adapted from Bitget to Hyperliquid.
 
 Strategy logic per candle close:
-  1. Cancel ALL open orders for this coin (entries, TP, SL — clean slate each tick).
-  2. Fetch real position from API.
-  3. Compute SMA(close, ma_period) shifted 1 bar (no lookahead).
-  4. If in position:
+  1. Count non-reduce open buy/sell orders BEFORE cancelling (detects how many DCA levels
+     were already filled — those orders disappeared from the book).
+  2. Cancel ALL open orders for this coin (entries, TP, SL — clean slate each tick).
+  3. Fetch real position from API.
+  4. Compute SMA(close, ma_period) shifted 1 bar (no lookahead).
+  5. If in position:
        - TP:  reduce-only GTC limit at ma_base
        - SL:  reduce-only stop-market at entry_price ± sl_pct%
-  5. If NOT in position (per configured side):
-       - Long  entries: trigger BUY at ma_base*(1 - env_i), trigger_px = limit*1.005
-       - Short entries: trigger SELL at ma_base*(1 + high_env_i), trigger_px = limit*0.995
+       - Remaining long  entries: levels [n_levels - canceled_orders_buy  : n_levels]
+       - Remaining short entries: levels [n_levels - canceled_orders_sell : n_levels]
+  6. If NOT in position (per configured side):
+       - Long  entries (ALL levels): trigger BUY  at ma_base*(1 - env_i),       trigger_px = limit*1.005
+       - Short entries (ALL levels): trigger SELL at ma_base*(1 + high_env_i),  trigger_px = limit*0.995
          where high_env_i = round(1/(1-env_i) - 1, 3)  (inverse of long envelope)
-  6. Sleep until the next candle boundary (exact wall-clock alignment).
+  7. Sleep until the next candle boundary (exact wall-clock alignment).
 
 Sides config: "sides" param — ["long"], ["short"], or ["long", "short"].
 Default: ["long"] for backward compatibility.
@@ -230,6 +234,44 @@ class EnvelopeBot:
         except Exception as e:
             self.log("warning", f"Cancel all orders failed: {e}")
 
+    async def _count_open_entry_orders(self) -> tuple[int, int]:
+        """
+        Count non-reduce-only open buy and sell orders for this coin.
+        Must be called BEFORE _cancel_all_orders() each tick so we can infer how many
+        DCA levels were already filled (filled entries disappear from the book and are
+        therefore absent from the pre-cancel count).
+
+        Returns (buy_count, sell_count) where:
+          buy_count  = pending non-reduce buy  orders (remaining long  entry triggers)
+          sell_count = pending non-reduce sell orders (remaining short entry triggers)
+        """
+        coin_short = self.coin.split(":")[-1] if ":" in self.coin else self.coin
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "frontendOpenOrders", "user": self.master_address},
+                )
+                orders = resp.json()
+            if not isinstance(orders, list):
+                return 0, 0
+            coin_orders = [
+                o for o in orders
+                if isinstance(o, dict) and o.get("coin") in (self.coin, coin_short)
+            ]
+            buy_count = sum(
+                1 for o in coin_orders
+                if o.get("side") == "B" and not o.get("reduceOnly", False)
+            )
+            sell_count = sum(
+                1 for o in coin_orders
+                if o.get("side") == "A" and not o.get("reduceOnly", False)
+            )
+            return buy_count, sell_count
+        except Exception as e:
+            self.log("warning", f"Count open entry orders failed: {e}")
+            return 0, 0
+
     async def _place_trigger_entry(
         self,
         is_buy: bool,
@@ -360,10 +402,19 @@ class EnvelopeBot:
 
         while self._running:
             try:
-                # ── Step 1: cancel ALL open orders — clean slate every candle ──────
+                # ── Step 1: count pending entry orders BEFORE cancelling ───────────
+                # This tells us how many DCA levels are still waiting to fill.
+                # Filled levels disappear from the book, so:
+                #   filled_buy  = n_levels - canceled_orders_buy
+                #   filled_sell = n_levels - canceled_orders_sell
+                canceled_orders_buy, canceled_orders_sell = await self._count_open_entry_orders()
+                self.log("info",
+                    f"Pre-cancel entry orders — buy={canceled_orders_buy} sell={canceled_orders_sell}")
+
+                # ── Step 2: cancel ALL open orders — clean slate every candle ──────
                 await self._cancel_all_orders()
 
-                # ── Step 2: fetch real position + candles in parallel ──────────────
+                # ── Step 3: fetch real position + candles in parallel ──────────────
                 real_pos, candles = await asyncio.gather(
                     self._fetch_real_position(),
                     self._fetch_candles(limit=self.ma_period + 10),
@@ -375,7 +426,7 @@ class EnvelopeBot:
                 has_short = real_szi < 0
                 has_pos   = has_long or has_short
 
-                # ── Step 3: compute MA (shifted 1 bar — no lookahead) ─────────────
+                # ── Step 4: compute MA (shifted 1 bar — no lookahead) ─────────────
                 if len(candles) < self.ma_period + 2:
                     self.log("warning", "Not enough candles — waiting 5 min...")
                     await asyncio.sleep(300)
@@ -400,7 +451,7 @@ class EnvelopeBot:
                     f"has_long={has_long} | has_short={has_short}"
                 ))
 
-                # ── Step 4: manage open position ──────────────────────────────────
+                # ── Step 5: manage open position ──────────────────────────────────
                 if has_pos:
                     is_long  = has_long
                     close_sz = round_size(abs(real_szi), self.sz_decimals)
@@ -418,14 +469,19 @@ class EnvelopeBot:
                             sl_px = real_entry_px * (1.0 + self.stop_loss_pct / 100.0)
                         await self._place_stop_market(close_is_buy, close_sz, sl_px)
 
-                # ── Step 5: place entry trigger orders ────────────────────────────
-                # Long entries: trigger BUY at ma_base * (1 - env_i)
-                # Only placed when not currently in a long position.
-                if "long" in self.sides and not has_long:
-                    for i, env in enumerate(self.envelopes):
+                # ── Step 6: place entry trigger orders ────────────────────────────
+                # Original CryptoRobotFr DCA logic:
+                #   - When flat: place ALL n_levels entries.
+                #   - When in position: place only REMAINING levels — those whose
+                #     trigger orders were not in the book before cancel (meaning they
+                #     were already filled).  start = n_levels - canceled_orders_buy/sell.
+                if "long" in self.sides:
+                    long_start = max(0, n_levels - canceled_orders_buy) if has_long else 0
+                    for i in range(long_start, n_levels):
+                        env        = self.envelopes[i]
                         limit_px   = ma_base * (1.0 - env)
                         trigger_px = limit_px * 1.005   # trigger slightly above limit
-                        size = (per_level * self.leverage) / limit_px
+                        size       = (per_level * self.leverage) / limit_px
                         self.log("info", (
                             f"Long level {i}: env={env:.3f} "
                             f"limit={round_price(limit_px):.4f} "
@@ -438,13 +494,14 @@ class EnvelopeBot:
 
                 # Short entries: trigger SELL at ma_base * (1 + high_env_i)
                 # high_env_i = round(1/(1 - env_i) - 1, 3)  — inverse of long envelope
-                # Only placed when not currently in a short position.
-                if "short" in self.sides and not has_short:
-                    for i, env in enumerate(self.envelopes):
+                if "short" in self.sides:
+                    short_start = max(0, n_levels - canceled_orders_sell) if has_short else 0
+                    for i in range(short_start, n_levels):
+                        env        = self.envelopes[i]
                         high_env   = round(1.0 / (1.0 - env) - 1.0, 3)
                         limit_px   = ma_base * (1.0 + high_env)
                         trigger_px = limit_px * 0.995   # trigger slightly below limit
-                        size = (per_level * self.leverage) / limit_px
+                        size       = (per_level * self.leverage) / limit_px
                         self.log("info", (
                             f"Short level {i}: env={env:.3f} high_env={high_env:.3f} "
                             f"limit={round_price(limit_px):.4f} "
