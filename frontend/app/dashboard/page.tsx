@@ -83,7 +83,7 @@ function DashboardLayout({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const { address, isConnected, status } = useAccount();
+  const { address, isConnected, status, isReconnecting } = useAccount();
 
   const [step, setStep] = useState<FlowStep>('connect');
   const [section, setSection] = useState<string>('overview');
@@ -147,13 +147,10 @@ export default function DashboardPage() {
     setAffiliateClicked(true);
   };
 
-  if (!mounted || status === 'reconnecting' || status === 'connecting') {
+  if (!mounted || isReconnecting || status === 'connecting') {
     return (
       <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm" style={{ color: '#6b7280' }}>Loading terminal...</p>
-        </div>
+        <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
