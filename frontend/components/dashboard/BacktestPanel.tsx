@@ -57,6 +57,7 @@ const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: s
       { key: 'envelope_2_pct', label: 'Envelope 2 %', default: 10, hint: 'Second buy level. Set 0 to disable this level.' },
       { key: 'envelope_3_pct', label: 'Envelope 3 %', default: 15, hint: 'Third buy level. Set 0 to disable this level.' },
       { key: 'stop_loss_pct', label: 'Stop Loss %', default: 10, hint: 'Exit all positions if portfolio drops by this %. Set 0 to disable.' },
+      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage. Amplifies both gains and losses.' },
     ],
   },
   bb_rsi: {
@@ -218,6 +219,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
 
   const [botType, setBotType] = useState('grid')
   const [pbDirection, setPbDirection] = useState('long')
+  const [envelopeSides, setEnvelopeSides] = useState<string[]>(['long'])
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
   const [params, setParams] = useState<Record<string, number>>({})
@@ -327,12 +329,16 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   }) => {
     setLoading(true); setError(''); setResult(null)
     try {
+      const date_range_days = Math.max(1, Math.ceil(
+        (new Date(cfg.ed).getTime() - new Date(cfg.sd).getTime()) / (1000 * 60 * 60 * 24)
+      ))
       const body: Record<string, any> = {
         bot_type: cfg.bot_type,
         symbol: cfg.market.name,
         dex: cfg.market.dex === 'main' ? '' : cfg.market.dex,
         interval: cfg.iv,
         limit: computeLimit(cfg.iv, cfg.sd, cfg.ed),
+        date_range_days,
         allocation: cfg.alloc,
         start_date: cfg.sd,
         end_date: cfg.ed,
@@ -355,6 +361,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
     if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
+    if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
     await runBacktestWithConfig({
       market: selectedMarket,
       bot_type: botType,
@@ -371,6 +378,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
     if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
+    if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
     return {
       bot_type: botType,
       symbol: selectedMarket?.name ?? '',
@@ -460,6 +468,9 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     const savedParams = cfg.params ?? {}
     if (cfg.bot_type === 'passivbot_dca' && savedParams['direction']) {
       setPbDirection(String(savedParams['direction']))
+    }
+    if (cfg.bot_type === 'envelope_dca' && savedParams['sides']) {
+      setEnvelopeSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long'])
     }
     setParams(savedParams)
 
@@ -681,6 +692,31 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips below price. Short: sells rallies above price.</p>
                 </div>
               )}
+              {botType === 'envelope_dca' && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={s.label}>SIDES</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {([
+                      { label: 'Long only', value: ['long'] },
+                      { label: 'Short only', value: ['short'] },
+                      { label: 'Both', value: ['long', 'short'] },
+                    ] as const).map(opt => {
+                      const active = JSON.stringify(envelopeSides.slice().sort()) === JSON.stringify(opt.value.slice().sort())
+                      return (
+                        <button key={opt.label} type="button" onClick={() => setEnvelopeSides([...opt.value])}
+                          style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                            borderColor: active ? '#8b5cf6' : '#1a1a2e',
+                            backgroundColor: active ? '#8b5cf618' : '#0a0a0f',
+                            color: active ? '#8b5cf6' : '#6b7280',
+                          }}>
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys envelope dips. Short: sells envelope rallies.</p>
+                </div>
+              )}
               {config.fields.map(f => (
                 <div key={f.key} style={{ marginBottom: 12 }}>
                   <label style={s.label}>{f.label.toUpperCase()}</label>
@@ -694,11 +730,15 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
             {error && <p style={{ fontSize: 12, color: '#ef4444' }}>{error}</p>}
 
             <button onClick={handleRun} disabled={loading || !selectedMarket}
-              style={{ width: '100%', padding: '13px 0', borderRadius: 8, fontWeight: 800, fontSize: 14, cursor: loading ? 'wait' : 'pointer', border: 'none', opacity: loading ? 0.7 : 1, transition: 'opacity 0.2s',
-                background: loading ? '#1a1a2e' : config.color,
-                color: loading ? '#6b7280' : (botType === 'grid' ? '#000' : '#fff'),
+              style={{ width: '100%', padding: '13px 0', borderRadius: 8, fontWeight: 800, fontSize: 14,
+                cursor: loading ? 'wait' : (!selectedMarket ? 'not-allowed' : 'pointer'),
+                border: 'none',
+                opacity: (loading || !selectedMarket) ? 0.5 : 1,
+                transition: 'opacity 0.2s',
+                background: (loading || !selectedMarket) ? '#1a1a2e' : config.color,
+                color: (loading || !selectedMarket) ? '#6b7280' : (botType === 'grid' ? '#000' : '#fff'),
               }}>
-              {loading ? '⏳ Running simulation...' : '▶  Run Backtest'}
+              {loading ? '⏳ Running simulation...' : (!selectedMarket ? 'Select a market first' : '▶  Run Backtest')}
             </button>
           </div>
 
