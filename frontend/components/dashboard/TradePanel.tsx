@@ -154,6 +154,8 @@ export function TradePanel({
   const [obCollapsed, setObCollapsed] = useState(false)
   const [managingPos, setManagingPos] = useState<any>(null)
   const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set())
+  const [confirmingOrderId, setConfirmingOrderId] = useState<number | null>(null)
+  const [confirmingBulk, setConfirmingBulk] = useState(false)
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'spot' | 'trades'>('positions')
 
   // ── Resize state ────────────────────────────────────────────────────────────
@@ -878,7 +880,7 @@ export function TradePanel({
                   ['spot',      'Spot Balances'],
                   ['trades',    `Recent Trades (${recentTrades.length})`],
                 ] as const).map(([tab, label]) => (
-                  <button key={tab} onClick={() => setActiveTab(tab)}
+                  <button key={tab} onClick={() => { setActiveTab(tab); setConfirmingOrderId(null); setConfirmingBulk(false) }}
                     style={{
                       fontSize: '11px', fontWeight: '600', padding: '10px 14px',
                       border: 'none', cursor: 'pointer', background: 'transparent',
@@ -983,10 +985,29 @@ export function TradePanel({
                         Select all
                       </label>
                       {selectedOrders.size > 0 && (
-                        <button onClick={handleCancelSelected} className="text-xs px-3 py-1.5 rounded font-semibold"
-                          style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
-                          Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}
-                        </button>
+                        confirmingBulk ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+                            <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                              Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}?
+                            </span>
+                            <button
+                              onClick={async () => { setConfirmingBulk(false); await handleCancelSelected(); onRefresh?.() }}
+                              style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#ef4444', color: 'white' }}>
+                              Yes
+                            </button>
+                            <button
+                              onClick={() => setConfirmingBulk(false)}
+                              style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, fontWeight: 700, cursor: 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: '#6b7280' }}>
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => { setConfirmingBulk(true); setConfirmingOrderId(null) }}
+                            className="text-xs px-3 py-1.5 rounded font-semibold"
+                            style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                            Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}
+                          </button>
+                        )
                       )}
                     </div>
                     <div className="overflow-x-auto">
@@ -1033,11 +1054,28 @@ export function TradePanel({
                                   <span className="text-xs px-2 py-0.5 rounded font-medium" style={{ backgroundColor: '#1a1a2e', color: '#6b7280' }}>Manual</span>
                                 </td>
                                 <td className="px-5 py-3">
-                                  <button onClick={() => handleCancelOrder(o?.coin, o?.order_id)}
-                                    className="text-xs px-3 py-1 rounded font-semibold transition-opacity hover:opacity-80"
-                                    style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
-                                    Cancel
-                                  </button>
+                                  {confirmingOrderId === o?.order_id ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={e => e.stopPropagation()}>
+                                      <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>Cancel order?</span>
+                                      <button
+                                        onClick={async () => { setConfirmingOrderId(null); await handleCancelOrder(o?.coin, o?.order_id); onRefresh?.() }}
+                                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#ef4444', color: 'white' }}>
+                                        Yes
+                                      </button>
+                                      <button
+                                        onClick={() => setConfirmingOrderId(null)}
+                                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 700, cursor: 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: '#6b7280' }}>
+                                        No
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => { setConfirmingOrderId(o?.order_id); setConfirmingBulk(false) }}
+                                      className="text-xs px-3 py-1 rounded font-semibold transition-opacity hover:opacity-80"
+                                      style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                                      Cancel
+                                    </button>
+                                  )}
                                 </td>
                               </tr>
                             )
