@@ -23,9 +23,13 @@ Supabase deduplication SQL (run once in Supabase SQL Editor if duplicates exist)
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -89,6 +93,7 @@ def _get_user(db, wallet_address: str):
 @router.post("/verify-affiliation")
 async def verify_affiliation(body: VerifyAffiliationRequest):
     wallet = body.wallet_address
+    logger.info(f"POST /account/verify-affiliation wallet={wallet}")
     print(f"[verify] wallet={wallet}")
     is_affiliated = await hyperliquid_service.check_affiliation(
         wallet, settings.hyperliquid_referral
@@ -116,6 +121,7 @@ async def verify_affiliation(body: VerifyAffiliationRequest):
 @router.get("/{wallet_address}/status")
 async def get_account_status(wallet_address: str):
     """Return complete user status in one call. Never raises 404 — returns defaults for unknown wallets."""
+    logger.info(f"GET /account/{wallet_address}/status")
     db = _supabase()
     user = _get_user(db, wallet_address)
 
@@ -146,6 +152,7 @@ async def get_account_status(wallet_address: str):
 @router.get("/{wallet_address}/portfolio")
 async def get_portfolio(wallet_address: str):
     """Return complete portfolio across all DEXes, spot, fills, and open orders."""
+    logger.info(f"GET /account/{wallet_address}/portfolio")
     db = _supabase()
     user = _get_user(db, wallet_address)
 
@@ -153,15 +160,22 @@ async def get_portfolio(wallet_address: str):
         return {"error": "no_api_key"}
 
     try:
-        data = await hyperliquid_service.get_complete_portfolio(wallet_address)
+        data = await asyncio.wait_for(
+            hyperliquid_service.get_complete_portfolio(wallet_address),
+            timeout=10.0,
+        )
         return data
+    except asyncio.TimeoutError:
+        logger.error(f"[portfolio] {wallet_address} timed out after 10s")
+        raise HTTPException(status_code=503, detail="Portfolio fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
-        print(f"[portfolio] ERROR: {exc}")
+        logger.error(f"[portfolio] {wallet_address} ERROR: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/save-api-key")
 async def save_api_key(body: SaveApiKeyRequest):
+    logger.info(f"POST /account/save-api-key wallet={body.wallet_address}")
     wallet = body.wallet_address
 
     try:

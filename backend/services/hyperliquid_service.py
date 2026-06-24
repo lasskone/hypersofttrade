@@ -4,6 +4,7 @@ Hyperliquid service — async HTTP wrapper around the Hyperliquid public REST AP
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 from datetime import datetime, timezone
@@ -14,6 +15,8 @@ from supabase import create_client
 
 MAINNET_API_URL = "https://api.hyperliquid.xyz"
 INFO_ENDPOINT = f"{MAINNET_API_URL}/info"
+
+logger = logging.getLogger("hyperliquid_service")
 
 
 def _supabase():
@@ -32,23 +35,31 @@ class HyperliquidService:
 
     async def get_all_mids(self) -> dict:
         """Return a dict of symbol -> mid price for all assets."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"})
-            resp.raise_for_status()
-        return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"})
+                resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"[get_all_mids] failed: {e}")
+            return {}
 
     async def get_orderbook(self, symbol: str) -> dict:
         """Return top-of-book bids and asks for *symbol*."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                INFO_ENDPOINT, json={"type": "l2Book", "coin": symbol}
-            )
-            resp.raise_for_status()
-        data = resp.json()
-        levels = data.get("levels", [[], []])
-        bids = levels[0] if len(levels) > 0 else []
-        asks = levels[1] if len(levels) > 1 else []
-        return {"bids": bids, "asks": asks}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    INFO_ENDPOINT, json={"type": "l2Book", "coin": symbol}
+                )
+                resp.raise_for_status()
+            data = resp.json()
+            levels = data.get("levels", [[], []])
+            bids = levels[0] if len(levels) > 0 else []
+            asks = levels[1] if len(levels) > 1 else []
+            return {"bids": bids, "asks": asks}
+        except Exception as e:
+            logger.error(f"[get_orderbook] {symbol} failed: {e}")
+            return {"bids": [], "asks": []}
 
     # ------------------------------------------------------------------
     # Per-DEX account queries
@@ -56,55 +67,71 @@ class HyperliquidService:
 
     async def get_all_perp_dexes(self) -> list[str]:
         """Return all perp DEX identifiers: '' for main, name string for HIP-3."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                INFO_ENDPOINT,
-                json={"type": "perpDexs"},
-                headers={"Content-Type": "application/json"},
-            )
-            dexes = response.json()
-        dex_names: list[str] = []
-        for dex in dexes:
-            if dex is None:
-                dex_names.append("")        # empty string = main dex
-            elif isinstance(dex, dict) and "name" in dex:
-                dex_names.append(dex["name"])
-        return dex_names
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "perpDexs"},
+                    headers={"Content-Type": "application/json"},
+                )
+                dexes = response.json()
+            dex_names: list[str] = []
+            for dex in dexes:
+                if dex is None:
+                    dex_names.append("")        # empty string = main dex
+                elif isinstance(dex, dict) and "name" in dex:
+                    dex_names.append(dex["name"])
+            return dex_names
+        except Exception as e:
+            logger.error(f"[get_all_perp_dexes] failed: {e}")
+            return [""]
 
     async def get_clearinghouse_state(self, wallet_address: str, dex: str = "") -> dict:
         """Return clearinghouse state for a specific DEX ('' = main)."""
-        payload: dict = {"type": "clearinghouseState", "user": wallet_address}
-        if dex:
-            payload["dex"] = dex
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                INFO_ENDPOINT,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            return response.json()
+        try:
+            payload: dict = {"type": "clearinghouseState", "user": wallet_address}
+            if dex:
+                payload["dex"] = dex
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                return response.json()
+        except Exception as e:
+            logger.error(f"[get_clearinghouse_state] {wallet_address} dex={dex!r} failed: {e}")
+            return {}
 
     async def get_spot_state(self, wallet_address: str) -> dict:
         """Return spot balances for *wallet_address*."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                INFO_ENDPOINT,
-                json={"type": "spotClearinghouseState", "user": wallet_address},
-                headers={"Content-Type": "application/json"},
-                timeout=10.0,
-            )
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "spotClearinghouseState", "user": wallet_address},
+                    headers={"Content-Type": "application/json"},
+                    timeout=10.0,
+                )
+                return response.json()
+        except Exception as e:
+            logger.error(f"[get_spot_state] {wallet_address} failed: {e}")
+            return {}
 
     async def get_user_fills(self, wallet_address: str) -> list:
         """Return full trade history for *wallet_address*."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                INFO_ENDPOINT,
-                json={"type": "userFills", "user": wallet_address},
-                headers={"Content-Type": "application/json"},
-                timeout=10.0,
-            )
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "userFills", "user": wallet_address},
+                    headers={"Content-Type": "application/json"},
+                    timeout=10.0,
+                )
+                return response.json()
+        except Exception as e:
+            logger.error(f"[get_user_fills] {wallet_address} failed: {e}")
+            return []
 
     async def get_open_orders(self, wallet_address: str, dex: str = "") -> list:
         """Return all open orders for *wallet_address* on *dex* ('' = main).
@@ -112,17 +139,21 @@ class HyperliquidService:
         frontendOpenOrders is DEX-scoped: HIP-3 TP/SL orders are only returned
         when the matching dex name is included in the request body.
         """
-        payload: dict = {"type": "frontendOpenOrders", "user": wallet_address}
-        if dex:
-            payload["dex"] = dex
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                INFO_ENDPOINT,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10.0,
-            )
-            return response.json()
+        try:
+            payload: dict = {"type": "frontendOpenOrders", "user": wallet_address}
+            if dex:
+                payload["dex"] = dex
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=10.0,
+                )
+                return response.json()
+        except Exception as e:
+            logger.error(f"[get_open_orders] {wallet_address} dex={dex!r} failed: {e}")
+            return []
 
     async def _sync_position_opens(self, wallet_address: str, current_coins: set[str]) -> dict[str, str]:
         """
@@ -828,110 +859,117 @@ async def get_all_markets() -> list:
     Mark prices for the main DEX come from metaAndAssetCtxs → [meta, ctxs].
     Prices for HIP-3 coins fall back to allMids.
     """
-    async with httpx.AsyncClient() as client:
-        # Flat list of meta dicts, one per DEX
-        metas_resp = await client.post(
-            INFO_ENDPOINT,
-            json={"type": "allPerpMetas"},
-            headers={"Content-Type": "application/json"},
-            timeout=15.0,
-        )
-        all_metas = metas_resp.json()
-
-        # Main DEX mark prices: returns [meta_dict, [ctx1, ctx2, ...]]
-        ctxs_resp = await client.post(
-            INFO_ENDPOINT,
-            json={"type": "metaAndAssetCtxs"},
-            headers={"Content-Type": "application/json"},
-            timeout=10.0,
-        )
-        main_ctxs_data = ctxs_resp.json()
-        main_ctxs = main_ctxs_data[1] if len(main_ctxs_data) > 1 else []
-        main_universe = main_ctxs_data[0].get("universe", []) if main_ctxs_data else []
-
-        # name → markPx / prevDayPx / funding for the main DEX
-        main_price_map: dict[str, float] = {}
-        main_ctx_map: dict[str, dict] = {}
-        for i, asset in enumerate(main_universe):
-            if i < len(main_ctxs):
-                ctx = main_ctxs[i]
-                px = ctx.get("markPx")
-                if px:
-                    main_price_map[asset["name"]] = float(px)
-                main_ctx_map[asset["name"]] = {
-                    "prev_day_px": float(ctx.get("prevDayPx", 0) or 0),
-                    "funding": float(ctx.get("funding", 0) or 0),
-                }
-
-        # Fallback prices for HIP-3 coins
-        mids_resp = await client.post(
-            INFO_ENDPOINT,
-            json={"type": "allMids"},
-            headers={"Content-Type": "application/json"},
-            timeout=10.0,
-        )
-        all_mids = mids_resp.json()
-
-    print(f"[markets] allPerpMetas len={len(all_metas)}")
-    print(f"[markets] main price map size={len(main_price_map)}")
-
-    markets = []
-    for meta in all_metas:
-        if not isinstance(meta, dict):
-            continue
-        universe = meta.get("universe", [])
-
-        for asset in universe:
-            name = asset.get("name", "")
-            if not name or asset.get("isDelisted"):
-                continue
-
-            mark_px = (
-                main_price_map.get(name)
-                or float(all_mids.get(name, 0) or 0)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Flat list of meta dicts, one per DEX
+            metas_resp = await client.post(
+                INFO_ENDPOINT,
+                json={"type": "allPerpMetas"},
+                headers={"Content-Type": "application/json"},
+                timeout=15.0,
             )
+            all_metas = metas_resp.json()
 
-            dex = name.split(":")[0] if ":" in name else "main"
-            display = name.split(":")[-1] if ":" in name else name
-            ctx_data = main_ctx_map.get(name, {})
+            # Main DEX mark prices: returns [meta_dict, [ctx1, ctx2, ...]]
+            ctxs_resp = await client.post(
+                INFO_ENDPOINT,
+                json={"type": "metaAndAssetCtxs"},
+                headers={"Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            main_ctxs_data = ctxs_resp.json()
+            main_ctxs = main_ctxs_data[1] if len(main_ctxs_data) > 1 else []
+            main_universe = main_ctxs_data[0].get("universe", []) if main_ctxs_data else []
 
-            markets.append({
-                "name": name,
-                "display_name": display,
-                "max_leverage": asset.get("maxLeverage", 50),
-                "sz_decimals": asset.get("szDecimals", 4),
-                "mark_price": mark_px,
-                "dex": dex,
-                "only_isolated": asset.get("onlyIsolated", False),
-                "prev_day_px": ctx_data.get("prev_day_px", 0),
-                "funding": ctx_data.get("funding", 0),
-            })
+            # name → markPx / prevDayPx / funding for the main DEX
+            main_price_map: dict[str, float] = {}
+            main_ctx_map: dict[str, dict] = {}
+            for i, asset in enumerate(main_universe):
+                if i < len(main_ctxs):
+                    ctx = main_ctxs[i]
+                    px = ctx.get("markPx")
+                    if px:
+                        main_price_map[asset["name"]] = float(px)
+                    main_ctx_map[asset["name"]] = {
+                        "prev_day_px": float(ctx.get("prevDayPx", 0) or 0),
+                        "funding": float(ctx.get("funding", 0) or 0),
+                    }
 
-    markets.sort(key=lambda x: (x["dex"] != "main", -x["mark_price"]))
-    print(f"[markets] Total markets found: {len(markets)}")
-    return markets
+            # Fallback prices for HIP-3 coins
+            mids_resp = await client.post(
+                INFO_ENDPOINT,
+                json={"type": "allMids"},
+                headers={"Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            all_mids = mids_resp.json()
+
+        logger.info(f"[get_all_markets] allPerpMetas len={len(all_metas)} main price map size={len(main_price_map)}")
+
+        markets = []
+        for meta in all_metas:
+            if not isinstance(meta, dict):
+                continue
+            universe = meta.get("universe", [])
+
+            for asset in universe:
+                name = asset.get("name", "")
+                if not name or asset.get("isDelisted"):
+                    continue
+
+                mark_px = (
+                    main_price_map.get(name)
+                    or float(all_mids.get(name, 0) or 0)
+                )
+
+                dex = name.split(":")[0] if ":" in name else "main"
+                display = name.split(":")[-1] if ":" in name else name
+                ctx_data = main_ctx_map.get(name, {})
+
+                markets.append({
+                    "name": name,
+                    "display_name": display,
+                    "max_leverage": asset.get("maxLeverage", 50),
+                    "sz_decimals": asset.get("szDecimals", 4),
+                    "mark_price": mark_px,
+                    "dex": dex,
+                    "only_isolated": asset.get("onlyIsolated", False),
+                    "prev_day_px": ctx_data.get("prev_day_px", 0),
+                    "funding": ctx_data.get("funding", 0),
+                })
+
+        markets.sort(key=lambda x: (x["dex"] != "main", -x["mark_price"]))
+        logger.info(f"[get_all_markets] total markets={len(markets)}")
+        return markets
+    except Exception as e:
+        logger.error(f"[get_all_markets] failed: {e}")
+        return []
 
 
 async def get_recent_trades(coin: str) -> list:
     """Get the last 20 recent trades for *coin*."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            INFO_ENDPOINT,
-            json={"type": "recentTrades", "coin": coin},
-            headers={"Content-Type": "application/json"},
-            timeout=10.0,
-        )
-        data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                INFO_ENDPOINT,
+                json={"type": "recentTrades", "coin": coin},
+                headers={"Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            data = response.json()
 
-    trades = []
-    for trade in data[:20]:
-        trades.append({
-            "price": float(trade.get("px", 0)),
-            "size": float(trade.get("sz", 0)),
-            "side": trade.get("side", ""),
-            "time": trade.get("time", 0),
-        })
-    return trades
+        trades = []
+        for trade in data[:20]:
+            trades.append({
+                "price": float(trade.get("px", 0)),
+                "size": float(trade.get("sz", 0)),
+                "side": trade.get("side", ""),
+                "time": trade.get("time", 0),
+            })
+        return trades
+    except Exception as e:
+        logger.error(f"[get_recent_trades] {coin} failed: {e}")
+        return []
 
 
 async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
@@ -940,52 +978,56 @@ async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
     coin:     full name e.g. "BTC" or "xyz:XYZ100"
     interval: "1m","3m","5m","15m","30m","1h","2h","4h","8h","12h","1d","1w"
     """
-    import time as _time
-    end_time = int(_time.time() * 1000)
+    try:
+        import time as _time
+        end_time = int(_time.time() * 1000)
 
-    interval_ms = {
-        "1m":  60_000,
-        "3m":  180_000,
-        "5m":  300_000,
-        "15m": 900_000,
-        "30m": 1_800_000,
-        "1h":  3_600_000,
-        "2h":  7_200_000,
-        "4h":  14_400_000,
-        "8h":  28_800_000,
-        "12h": 43_200_000,
-        "1d":  86_400_000,
-        "3d":  259_200_000,
-        "1w":  604_800_000,
-    }
-    ms = interval_ms.get(interval, 900_000)
-    start_time = end_time - ms * limit
+        interval_ms = {
+            "1m":  60_000,
+            "3m":  180_000,
+            "5m":  300_000,
+            "15m": 900_000,
+            "30m": 1_800_000,
+            "1h":  3_600_000,
+            "2h":  7_200_000,
+            "4h":  14_400_000,
+            "8h":  28_800_000,
+            "12h": 43_200_000,
+            "1d":  86_400_000,
+            "3d":  259_200_000,
+            "1w":  604_800_000,
+        }
+        ms = interval_ms.get(interval, 900_000)
+        start_time = end_time - ms * limit
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            INFO_ENDPOINT,
-            json={
-                "type": "candleSnapshot",
-                "req": {
-                    "coin": coin,
-                    "interval": interval,
-                    "startTime": start_time,
-                    "endTime": end_time,
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                INFO_ENDPOINT,
+                json={
+                    "type": "candleSnapshot",
+                    "req": {
+                        "coin": coin,
+                        "interval": interval,
+                        "startTime": start_time,
+                        "endTime": end_time,
+                    },
                 },
-            },
-            headers={"Content-Type": "application/json"},
-            timeout=15.0,
-        )
-        candles = response.json()
+                headers={"Content-Type": "application/json"},
+                timeout=15.0,
+            )
+            candles = response.json()
 
-    result = []
-    for c in candles:
-        result.append({
-            "time":   int(c["t"]) // 1000,  # ms → seconds for lightweight-charts
-            "open":   float(c["o"]),
-            "high":   float(c["h"]),
-            "low":    float(c["l"]),
-            "close":  float(c["c"]),
-            "volume": float(c["v"]),
-        })
-    return result
+        result = []
+        for c in candles:
+            result.append({
+                "time":   int(c["t"]) // 1000,  # ms → seconds for lightweight-charts
+                "open":   float(c["o"]),
+                "high":   float(c["h"]),
+                "low":    float(c["l"]),
+                "close":  float(c["c"]),
+                "volume": float(c["v"]),
+            })
+        return result
+    except Exception as e:
+        logger.error(f"[get_candles] {coin}/{interval} failed: {e}")
+        return []

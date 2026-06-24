@@ -50,7 +50,8 @@
       "Bash(python -m py_compile backend/services/hyperliquid_service.py)",
       "Bash(npm run *)",
       "Bash(python -c \"import services.hyperliquid_service\")",
-      "Bash(npx --yes tsc --noEmit)"
+      "Bash(npx --yes tsc --noEmit)",
+      "Bash(python -m py_compile backend/main.py backend/services/hyperliquid_service.py backend/routers/account.py backend/routers/orders.py backend/routers/bots.py backend/routers/saved_backtests.py)"
     ]
   }
 }

@@ -1,7 +1,12 @@
 """Orders router — market data and order placement."""
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -88,8 +93,11 @@ class ModifyOrderRequest(BaseModel):
 @router.get("/prices")
 async def get_market_prices():
     """Return mid prices for the top 10 assets."""
+    logger.info("GET /market/prices")
     try:
-        all_mids = await hyperliquid_service.get_all_mids()
+        all_mids = await asyncio.wait_for(hyperliquid_service.get_all_mids(), timeout=10.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Prices fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -104,8 +112,11 @@ async def get_market_prices():
 @router.get("/all")
 async def get_all_markets_route():
     """Return all available trading pairs from all DEXes with current prices."""
+    logger.info("GET /market/all")
     try:
-        markets = await get_all_markets()
+        markets = await asyncio.wait_for(get_all_markets(), timeout=10.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Markets fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return markets
@@ -114,8 +125,11 @@ async def get_all_markets_route():
 @router.get("/orderbook/{symbol:path}")
 async def get_orderbook(symbol: str):
     """Return top 12 bids and asks for *symbol* (supports xyz:XYZ100 style names)."""
+    logger.info(f"GET /market/orderbook/{symbol}")
     try:
-        book = await hyperliquid_service.get_orderbook(symbol)
+        book = await asyncio.wait_for(hyperliquid_service.get_orderbook(symbol), timeout=10.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Orderbook fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -133,8 +147,11 @@ async def get_orderbook(symbol: str):
 @router.get("/trades/{symbol:path}")
 async def get_trades(symbol: str):
     """Return last 20 recent trades for *symbol*."""
+    logger.info(f"GET /market/trades/{symbol}")
     try:
-        trades = await get_recent_trades(symbol)
+        trades = await asyncio.wait_for(get_recent_trades(symbol), timeout=10.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Trades fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return trades
@@ -147,8 +164,11 @@ async def get_candles_route(
     limit: int = 500,
 ):
     """Return OHLCV candles for *symbol* (supports HIP-3 names like xyz:XYZ100)."""
+    logger.info(f"GET /market/candles/{symbol} interval={interval} limit={limit}")
     try:
-        candles = await get_candles(symbol, interval, limit)
+        candles = await asyncio.wait_for(get_candles(symbol, interval, limit), timeout=10.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Candles fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return candles
@@ -161,6 +181,7 @@ async def get_candles_route(
 @orders_router.post("/place")
 async def place_order(body: PlaceOrderRequest):
     """Place an order on Hyperliquid using the user's stored API key."""
+    logger.info(f"POST /orders/place wallet={body.wallet_address} coin={body.coin} type={body.order_type}")
     # 1. Fetch user from Supabase
     db = _supabase()
     result = (
@@ -209,6 +230,7 @@ async def place_order(body: PlaceOrderRequest):
 
 @orders_router.post("/cancel")
 async def cancel_order(body: CancelOrderRequest):
+    logger.info(f"POST /orders/cancel wallet={body.wallet_address} coin={body.coin} oid={body.order_id}")
     db = _supabase()
     result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
     if not result.data:
@@ -234,6 +256,7 @@ async def cancel_order(body: CancelOrderRequest):
 
 @orders_router.post("/close")
 async def close_position(body: ClosePositionRequest):
+    logger.info(f"POST /orders/close wallet={body.wallet_address} coin={body.coin} pct={body.percentage}%")
     db = _supabase()
     result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
     if not result.data:
@@ -267,6 +290,7 @@ async def close_position(body: ClosePositionRequest):
 
 @orders_router.post("/tp-sl")
 async def place_tp_sl(body: PlaceTpSlRequest):
+    logger.info(f"POST /orders/tp-sl wallet={body.wallet_address} coin={body.coin} tp={body.tp_price} sl={body.sl_price}")
     db = _supabase()
     result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
     if not result.data:
@@ -298,6 +322,7 @@ async def place_tp_sl(body: PlaceTpSlRequest):
 
 @orders_router.post("/modify")
 async def modify_order(body: ModifyOrderRequest):
+    logger.info(f"POST /orders/modify wallet={body.wallet_address} coin={body.coin} oid={body.oid} tpsl={body.tpsl}")
     db = _supabase()
     result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
     if not result.data:
@@ -330,6 +355,7 @@ async def modify_order(body: ModifyOrderRequest):
 
 @orders_router.post("/set-leverage")
 async def set_leverage(body: SetLeverageRequest):
+    logger.info(f"POST /orders/set-leverage wallet={body.wallet_address} coin={body.coin} leverage={body.leverage}x")
     db = _supabase()
     result = db.table("users").select("hyperliquid_api_key_encrypted").ilike("wallet_address", body.wallet_address).limit(1).execute()
     if not result.data:

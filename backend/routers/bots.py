@@ -2,6 +2,7 @@
 Bot management routes — /bots prefix
 """
 from __future__ import annotations
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 def _supabase():
@@ -32,6 +34,7 @@ class BotActionRequest(BaseModel):
 
 @router.get("/")
 async def list_bots(wallet_address: str):
+    logger.info(f"GET /bots/ wallet={wallet_address}")
     db = _supabase()
     user = db.table("users").select("id").ilike("wallet_address", wallet_address).limit(1).execute()
     if not user.data:
@@ -51,6 +54,7 @@ async def list_bots(wallet_address: str):
 
 @router.post("/")
 async def create_bot(body: CreateBotRequest):
+    logger.info(f"POST /bots/ wallet={body.wallet_address} type={body.bot_type} symbol={body.symbol}")
     db = _supabase()
     user = db.table("users").select("id").ilike("wallet_address", body.wallet_address).limit(1).execute()
     if not user.data:
@@ -76,6 +80,7 @@ async def create_bot(body: CreateBotRequest):
 
 @router.post("/{bot_id}/start")
 async def start_bot(bot_id: str, body: BotActionRequest):
+    logger.info(f"POST /bots/{bot_id}/start")
     db = _supabase()
     bot = db.table("bots").select("id, desired_status").eq("id", bot_id).limit(1).execute()
     if not bot.data:
@@ -97,6 +102,7 @@ async def start_bot(bot_id: str, body: BotActionRequest):
 
 @router.post("/{bot_id}/stop")
 async def stop_bot(bot_id: str):
+    logger.info(f"POST /bots/{bot_id}/stop")
     db = _supabase()
     # Write desired_status='stopped' — the Worker will cancel the running task
     # on its next reconciliation pass (within POLL_INTERVAL seconds).
@@ -112,6 +118,7 @@ async def stop_bot(bot_id: str):
 
 @router.delete("/{bot_id}")
 async def delete_bot(bot_id: str):
+    logger.info(f"DELETE /bots/{bot_id}")
     db = _supabase()
     # Signal the Worker to stop before deleting the record.  The Worker will
     # cancel the task on its next cycle; we proceed with deletion immediately.
@@ -127,6 +134,7 @@ async def delete_bot(bot_id: str):
 
 @router.put("/{bot_id}")
 async def update_bot(bot_id: str, body: dict):
+    logger.info(f"PUT /bots/{bot_id}")
     wallet_address = body.get("wallet_address")
     new_config = body.get("config")
     if not wallet_address or not new_config:
@@ -161,6 +169,7 @@ async def update_bot(bot_id: str, body: dict):
 
 @router.get("/{bot_id}/logs")
 async def get_bot_logs(bot_id: str, limit: int = 50):
+    logger.info(f"GET /bots/{bot_id}/logs limit={limit}")
     db = _supabase()
     logs = db.table("bot_logs").select("*").eq("bot_id", bot_id).order("created_at", desc=True).limit(limit).execute()
     return {"logs": logs.data}

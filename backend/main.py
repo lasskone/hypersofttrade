@@ -1,16 +1,38 @@
-from fastapi import FastAPI, HTTPException
+import asyncio
+import logging
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from core.config import settings
 from routers import account, bots
 from routers.orders import router as market_router, orders_router
 from routers.saved_backtests import router as saved_backtests_router
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("hypersofttrade")
+
 app = FastAPI(
     title="HyperSoftTrade API",
     description="Backend API for the HyperSoftTrade crypto trading terminal.",
     version="0.1.0",
 )
+
+
+# ---------------------------------------------------------------------------
+# Global exception handler — catch ALL unhandled exceptions as JSON 500
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        raise exc
+    logger.error(f"Unhandled exception on {request.url}: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
 
 # ---------------------------------------------------------------------------
 # CORS — allow the Next.js frontend (and localhost for development)
@@ -41,6 +63,7 @@ app.include_router(saved_backtests_router,  prefix="/backtest/saved",  tags=["ba
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["health"])
 async def health() -> dict:
+    logger.info("GET /health")
     return {"status": "ok", "service": "hypersofttrade-api"}
 
 
@@ -50,6 +73,7 @@ async def health() -> dict:
 @app.get("/admin/bots", tags=["admin"])
 async def admin_list_all_bots():
     """Admin route — returns ALL bots across all users with wallet_address joined."""
+    logger.info("GET /admin/bots")
     from supabase import create_client
     import os
     from services.bot_manager import bot_manager
@@ -79,10 +103,14 @@ async def run_backtest(body: dict):
     limit = int(body.get("limit", 500))
     allocation = float(body.get("allocation", 1000))
 
+    logger.info(f"POST /backtest bot_type={bot_type} symbol={symbol} interval={interval}")
+
     coin = f"{dex}:{symbol}" if dex else symbol
 
     try:
-        candles = await get_candles(coin, interval, limit)
+        candles = await asyncio.wait_for(get_candles(coin, interval, limit), timeout=10.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Candle fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch candles: {exc}")
 
