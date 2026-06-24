@@ -157,6 +157,7 @@ export function TradePanel({
   const [confirmingOrderId, setConfirmingOrderId] = useState<number | null>(null)
   const [confirmingBulk, setConfirmingBulk] = useState(false)
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'spot' | 'trades'>('positions')
+  const [chartInterval, setChartInterval] = useState(initialInterval ?? '15m')
 
   // ── Resize state ────────────────────────────────────────────────────────────
   const [formWidth, setFormWidth] = useState(280)
@@ -412,6 +413,28 @@ export function TradePanel({
       ))
       setSelectedOrders(new Set())
     } catch (e: any) { console.error('Cancel selected failed:', e) }
+  }
+
+  const handlePositionRowClick = async (pos: any) => {
+    const posSymbol: string = pos?.symbol ?? ''
+    const posDex: string = pos?.dex ?? 'main'
+    // Switch chart to clicked position's market
+    const market = markets.find(m => m.name === posSymbol && m.dex === (posDex || 'main'))
+    if (market) handleSelectMarket(market)
+    // Look up the bot's configured interval for this symbol; fall back to 15m
+    let interval = '15m'
+    try {
+      const res = await fetch(`${API_URL}/bots/?wallet_address=${walletAddress}`)
+      if (res.ok) {
+        const data = await res.json()
+        const bots: any[] = data.bots ?? []
+        const bot =
+          bots.find((b: any) => b.symbol === posSymbol && (b.status === 'running' || b.desired_status === 'running')) ??
+          bots.find((b: any) => b.symbol === posSymbol)
+        if (bot?.config?.interval) interval = bot.config.interval
+      }
+    } catch { /* non-blocking */ }
+    setChartInterval(interval)
   }
 
   const maxLev = selectedMarket?.max_leverage || 50
@@ -846,7 +869,7 @@ export function TradePanel({
                     height={undefined}
                     positions={openPositions}
                     openOrders={openOrders}
-                    initialInterval={initialInterval}
+                    initialInterval={chartInterval}
                   />
                 )}
               </div>
@@ -922,7 +945,9 @@ export function TradePanel({
                           const margin = parseFloat(String(pos?.margin_used ?? 0))
                           return (
                             <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                              style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                              style={{ borderColor: 'rgba(255,255,255,0.08)', cursor: 'pointer' }}
+                              onClick={() => handlePositionRowClick(pos)}
+                              title="Click to switch chart to this symbol">
                               <td className="px-5 py-3">
                                 <span className="text-xs px-2 py-0.5 rounded font-medium" style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>{pos?.dex ?? '—'}</span>
                               </td>
