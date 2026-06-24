@@ -15,7 +15,7 @@ import BacktestPanel from '@/components/dashboard/BacktestPanel';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
 
-type FlowStep = 'checking' | 'connect' | 'api_setup' | 'dashboard';
+type FlowStep = 'loading' | 'checking' | 'connect' | 'api_setup' | 'dashboard';
 
 async function fetchStatus(address: string): Promise<{ is_affiliated: boolean; has_api_key: boolean }> {
   const res = await fetch(`${API_URL}/account/${address}/status`);
@@ -90,7 +90,7 @@ function DashboardLayout({
 export default function DashboardPage() {
   const { address, isConnected, status, isReconnecting } = useAccount();
 
-  const [step, setStep] = useState<FlowStep>('checking');
+  const [step, setStep] = useState<FlowStep>('loading');
   const [section, setSection] = useState<string>('overview');
   const [affiliationError, setAffiliationError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
@@ -101,17 +101,22 @@ export default function DashboardPage() {
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    // Clear error every time this runs
+    // Wait until mounted and wagmi has finished rehydrating before making
+    // any routing decision. During this window step stays 'loading' and the
+    // branded loading screen is shown — never the connect screen.
+    if (!mounted || isReconnecting || status === 'connecting') return;
+
     setAffiliationError('');
 
-    // No wallet — stay on connect screen, do nothing else
+    // Wallet is truly disconnected (not just mid-rehydration)
     if (!isConnected || !address) {
-      if (mounted) setStep('connect');
+      setStep('connect');
       return;
     }
 
-    // Wallet connected — now check status
-    // Small delay to let RainbowKit modal close gracefully
+    // Wallet connected — show 'checking' (same branded loading screen) while
+    // we hit the API. Small delay lets the RainbowKit modal close gracefully.
+    setStep('checking');
     const timer = setTimeout(() => {
       const checkStatus = async () => {
         setIsChecking(true);
@@ -130,7 +135,7 @@ export default function DashboardPage() {
             setStep('dashboard');
           }
         } catch {
-          // Network error — stay on connect, no error shown
+          // Network error — fall back to connect screen
           setStep('connect');
         } finally {
           setIsChecking(false);
@@ -139,7 +144,7 @@ export default function DashboardPage() {
       checkStatus();
     }, 1000);
     return () => clearTimeout(timer);
-  }, [address, isConnected]);
+  }, [address, isConnected, mounted, isReconnecting, status]);
 
   // Show hint 2 seconds after a connect attempt if still on connect screen
   useEffect(() => {
@@ -152,10 +157,27 @@ export default function DashboardPage() {
     setAffiliateClicked(true);
   };
 
-  if (!mounted || step === 'checking' || isReconnecting || status === 'connecting') {
+  // Branded loading screen — shown during initial mount, wagmi rehydration,
+  // and while the affiliation/API-key check is in flight.
+  if (step === 'loading' || step === 'checking') {
     return (
-      <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
-        <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+      <div
+        className="flex min-h-screen flex-col items-center justify-center gap-4"
+        style={{ backgroundColor: '#0a0a0f' }}
+      >
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl mb-2"
+          style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
+        >
+          H
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#26a69a' }}>
+          HyperSoftTrade
+        </h1>
+        <p className="text-sm" style={{ color: '#6b7280' }}>
+          Initializing terminal…
+        </p>
+        <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin mt-2" />
       </div>
     );
   }
