@@ -234,7 +234,6 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         let restored = false
         try {
           const saved = localStorage.getItem(rangeKey)
-          console.log('[HLChart restore] key:', rangeKey, '| raw localStorage value:', saved)
           if (saved) {
             const r = JSON.parse(saved)
             if (typeof r.from === 'number' && typeof r.to === 'number' &&
@@ -246,28 +245,18 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
                 chart.timeScale().setVisibleLogicalRange({ from: clampedFrom, to: clampedTo })
                 setTimeout(() => { isProgrammaticRef.current = false }, 0)
                 restored = true
-                console.log('[HLChart restore] ✅ applied range:', { from: clampedFrom, to: clampedTo })
-              } else {
-                console.log('[HLChart restore] ❌ range too narrow after clamp:', { clampedFrom, clampedTo })
               }
-            } else {
-              console.log('[HLChart restore] ❌ invalid range values in storage:', r)
             }
           }
-        } catch (e) {
-          console.log('[HLChart restore] ❌ parse error:', e)
-        }
+        } catch {}
         if (!restored) {
           isProgrammaticRef.current = true
           chart.timeScale().fitContent()
           setTimeout(() => { isProgrammaticRef.current = false }, 0)
-          console.log('[HLChart restore] → fallback: fitContent()')
         }
 
         // Save viewport on scroll/zoom — debounced 500ms
         const saveRangeHandler = (range: any) => {
-          console.log('[HLChart save] subscribeVisibleLogicalRangeChange fired, range arg:', range,
-            '| getVisibleLogicalRange():', chart.timeScale().getVisibleLogicalRange?.())
           if (!range) return
           if (isProgrammaticRef.current) return  // skip saves triggered by fitContent/setVisibleLogicalRange
           if (saveDebounceRef.current !== null) clearTimeout(saveDebounceRef.current)

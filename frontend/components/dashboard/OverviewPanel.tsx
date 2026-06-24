@@ -625,7 +625,7 @@ export function OverviewPanel({
     if (!walletAddress) return;
     fetch(`${API_URL}/bots/?wallet_address=${walletAddress}`)
       .then(r => r.json())
-      .then(d => setBots(d.bots ?? []))
+      .then(d => setBots(Array.isArray(d?.bots) ? d.bots : []))
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
@@ -645,7 +645,8 @@ export function OverviewPanel({
         const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`);
         if (!res.ok) return;
         const json = await res.json();
-        if (json?.error) return;
+        if (!json || typeof json !== 'object' || Array.isArray(json)) return;
+        if (json.error) return;
         setData((prev: any) => ({
           ...prev,
           unrealized_pnl:       json.unrealized_pnl,

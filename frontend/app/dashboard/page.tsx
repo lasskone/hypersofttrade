@@ -44,11 +44,16 @@ function DashboardLayout({
     if (!address) return
     try {
       const res = await fetch(`${API_URL}/account/${address}/portfolio`)
+      if (!res.ok) return
       const data = await res.json()
-      setOpenPositions(data.open_positions ?? [])
-      setOpenOrders(data.open_orders ?? [])
-      setSpotBalances(data.spot_balances ?? [])
-      setRecentTrades(data.recent_fills ?? [])
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        console.warn('[fetchPositions] unexpected response shape:', data)
+        return
+      }
+      setOpenPositions(Array.isArray(data.open_positions) ? data.open_positions : [])
+      setOpenOrders(Array.isArray(data.open_orders) ? data.open_orders : [])
+      setSpotBalances(Array.isArray(data.spot_balances) ? data.spot_balances : [])
+      setRecentTrades(Array.isArray(data.recent_fills) ? data.recent_fills : [])
     } catch {}
   }, [address])
 
