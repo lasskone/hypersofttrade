@@ -15,7 +15,7 @@ import BacktestPanel from '@/components/dashboard/BacktestPanel';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
 
-type FlowStep = 'connect' | 'api_setup' | 'dashboard';
+type FlowStep = 'checking' | 'connect' | 'api_setup' | 'dashboard';
 
 async function fetchStatus(address: string): Promise<{ is_affiliated: boolean; has_api_key: boolean }> {
   const res = await fetch(`${API_URL}/account/${address}/status`);
@@ -90,7 +90,7 @@ function DashboardLayout({
 export default function DashboardPage() {
   const { address, isConnected, status, isReconnecting } = useAccount();
 
-  const [step, setStep] = useState<FlowStep>('connect');
+  const [step, setStep] = useState<FlowStep>('checking');
   const [section, setSection] = useState<string>('overview');
   const [affiliationError, setAffiliationError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
@@ -152,7 +152,7 @@ export default function DashboardPage() {
     setAffiliateClicked(true);
   };
 
-  if (!mounted || isReconnecting || status === 'connecting') {
+  if (!mounted || step === 'checking' || isReconnecting || status === 'connecting') {
     return (
       <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
         <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
