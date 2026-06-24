@@ -107,8 +107,20 @@ async def run_backtest(body: dict):
 
     coin = f"{dex}:{symbol}" if dex else symbol
 
+    # Strategies that need 1m candles for OHLC-accurate simulation
+    _1m_strategies = ("envelope_dca", "bb_rsi", "ema_cross")
+    if bot_type in _1m_strategies:
+        date_range_days = int(body.get("date_range_days", 14))
+        fetch_interval  = "1m"
+        fetch_limit     = date_range_days * 24 * 60   # up to 20,160 candles
+        fetch_timeout   = 30.0
+    else:
+        fetch_interval = interval
+        fetch_limit    = limit
+        fetch_timeout  = 10.0
+
     try:
-        candles = await asyncio.wait_for(get_candles(coin, interval, limit), timeout=10.0)
+        candles = await asyncio.wait_for(get_candles(coin, fetch_interval, fetch_limit), timeout=fetch_timeout)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=503, detail="Candle fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
@@ -129,18 +141,20 @@ async def run_backtest(body: dict):
             )
         elif bot_type == "envelope_dca":
             result = run_envelope_dca_backtest(
-                candles=candles,
+                candles_1m=candles,
                 allocation=allocation,
                 ma_period=int(body.get("ma_period", 20)),
                 envelope_1_pct=float(body.get("envelope_1_pct", 7.0)),
                 envelope_2_pct=float(body.get("envelope_2_pct", 10.0)),
                 envelope_3_pct=float(body.get("envelope_3_pct", 15.0)),
                 stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
+                leverage=int(body.get("leverage", 1)),
+                sides=body.get("sides") or ["long"],
             )
         elif bot_type == "bb_rsi":
             from services.backtest_engine import run_bbrsi_backtest
             result = run_bbrsi_backtest(
-                candles=candles,
+                candles_1m=candles,
                 allocation=allocation,
                 bb_period=int(body.get("bb_period", 20)),
                 bb_std=float(body.get("bb_std", 2.0)),
@@ -153,7 +167,7 @@ async def run_backtest(body: dict):
         elif bot_type == "ema_cross":
             from services.backtest_engine import run_emacross_backtest
             result = run_emacross_backtest(
-                candles=candles,
+                candles_1m=candles,
                 allocation=allocation,
                 ema_fast=int(body.get("ema_fast", 9)),
                 ema_slow=int(body.get("ema_slow", 21)),

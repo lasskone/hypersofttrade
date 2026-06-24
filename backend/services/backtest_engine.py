@@ -159,75 +159,148 @@ def run_grid_backtest(
 
 
 def run_envelope_dca_backtest(
-    candles: list[dict],
+    candles_1m: list[dict],
     allocation: float,
     ma_period: int,
     envelope_1_pct: float,
     envelope_2_pct: float,
     envelope_3_pct: float,
     stop_loss_pct: float,
+    leverage: int = 1,
+    sides: list | None = None,
 ) -> dict:
     """
-    Simulate Envelope DCA bot on OHLCV candles.
+    Simulate Envelope DCA bot on 1-minute OHLCV candles.
+
+    Faithful to the live strategy:
+    - MA shifted by 1 bar (no lookahead): uses closes[i-period:i]
+    - Long entries  via trigger orders: fires when candle LOW  <= trigger_px (limit*1.005)
+    - Short entries via trigger orders: fires when candle HIGH >= trigger_px (limit*0.995)
+    - TP: limit close at MA  (long: HIGH >= ma, short: LOW <= ma)
+    - SL: stop-market at avg_entry ± stop_loss_pct%  (checked on LOW/HIGH respectively)
+    - OHLC order: low-side checks precede high-side within each candle for longs;
+                  high-side precedes low-side for shorts.
+    - Leverage-aware equity: margin per level = per_level, notional = per_level * leverage.
     """
-    if len(candles) < ma_period + 5:
+    if sides is None:
+        sides = ["long"]
+
+    if len(candles_1m) < ma_period + 5:
         raise ValueError("Not enough candles for backtest")
 
-    fee_rate = 0.00035
-    closes = [c["close"] for c in candles]
-    envelopes = [e for e in [envelope_1_pct, envelope_2_pct, envelope_3_pct] if e > 0]
-    n_levels = len(envelopes)
+    fee_rate  = 0.00035
+    closes    = [c["close"] for c in candles_1m]
+
+    # Convert percentages to decimals — matches live bot (env=0.07, not 7.0)
+    envelopes = [e / 100.0 for e in [envelope_1_pct, envelope_2_pct, envelope_3_pct] if e > 0]
+    n_levels  = len(envelopes)
     per_level = allocation / n_levels if n_levels > 0 else allocation
 
     cash = allocation
-    positions: list[dict] = []
-    trades = []
-    equity_curve = []
-    max_equity = allocation
+    # Each entry: {"level": j, "entry_px": float, "size": float}
+    # Margin per position = per_level (locked from cash on entry, returned on close).
+    long_positions:  list[dict] = []
+    short_positions: list[dict] = []
+    trades:          list[dict] = []
+    equity_curve:    list[dict] = []
+    max_equity   = allocation
     max_drawdown = 0.0
 
-    for i in range(ma_period, len(candles)):
-        ma = sum(closes[i - ma_period:i]) / ma_period
-        close = closes[i]
-        low = candles[i]["low"]
-        high = candles[i]["high"]
-        ts = candles[i]["time"]
+    for i in range(ma_period, len(candles_1m)):
+        # MA shifted by 1 — identical to live bot: closes[i-period:i], index i excluded
+        ma    = sum(closes[i - ma_period:i]) / ma_period
+        low   = candles_1m[i]["low"]
+        high  = candles_1m[i]["high"]
+        close = candles_1m[i]["close"]
+        ts    = candles_1m[i]["time"]
 
-        # Buy signals — price dips below envelope levels
-        for j, env_pct in enumerate(envelopes):
-            buy_price = ma * (1 - env_pct / 100)
-            already_in = any(p["level"] == j for p in positions)
-            if not already_in and low <= buy_price and cash >= per_level:
-                size = per_level / buy_price
-                fee = buy_price * size * fee_rate
-                cash -= per_level + fee
-                positions.append({"level": j, "price": buy_price, "size": size})
-                trades.append({"type": "buy", "price": buy_price})
+        # ── Long side: low checked before high (worst-case for longs) ────────
+        if "long" in sides:
 
-        # Sell signal — price recovers to MA
-        if positions and high >= ma:
-            for pos in positions:
-                pnl = (ma - pos["price"]) * pos["size"]
-                fee = ma * pos["size"] * fee_rate
-                cash += ma * pos["size"] - fee
-                trades.append({"type": "sell", "price": ma, "pnl": pnl - fee})
-            positions.clear()
+            # 1. Long SL — low-triggered, fills at SL price
+            if long_positions and stop_loss_pct > 0:
+                total_sz   = sum(p["size"] for p in long_positions)
+                avg_entry  = sum(p["entry_px"] * p["size"] for p in long_positions) / total_sz
+                sl_px      = avg_entry * (1.0 - stop_loss_pct / 100.0)
+                if low <= sl_px:
+                    for pos in long_positions:
+                        pnl = (sl_px - pos["entry_px"]) * pos["size"]
+                        fee = sl_px * pos["size"] * fee_rate
+                        cash += per_level + pnl - fee
+                        trades.append({"type": "long_sl", "price": sl_px, "pnl": pnl - fee})
+                    long_positions.clear()
 
-        # Equity
-        pos_value = sum(close * p["size"] for p in positions)
+            # 2. Long TP — high-triggered, closes ALL at MA
+            if long_positions and high >= ma:
+                for pos in long_positions:
+                    pnl = (ma - pos["entry_px"]) * pos["size"]
+                    fee = ma * pos["size"] * fee_rate
+                    cash += per_level + pnl - fee
+                    trades.append({"type": "long_close", "price": ma, "pnl": pnl - fee})
+                long_positions.clear()
+
+            # 3. Long entries — trigger fires when LOW <= trigger_px (price fell to level)
+            long_levels_open = {p["level"] for p in long_positions}
+            for j, env in enumerate(envelopes):
+                if j in long_levels_open:
+                    continue
+                limit_px   = ma * (1.0 - env)
+                trigger_px = limit_px * 1.005
+                if low <= trigger_px and cash >= per_level:
+                    size = (per_level * leverage) / limit_px
+                    fee  = limit_px * size * fee_rate
+                    cash -= per_level + fee
+                    long_positions.append({"level": j, "entry_px": limit_px, "size": size})
+                    trades.append({"type": "long_entry", "price": limit_px})
+
+        # ── Short side: high checked before low (worst-case for shorts) ──────
+        if "short" in sides:
+
+            # 4. Short SL — high-triggered, fills at SL price
+            if short_positions and stop_loss_pct > 0:
+                total_sz   = sum(p["size"] for p in short_positions)
+                avg_entry  = sum(p["entry_px"] * p["size"] for p in short_positions) / total_sz
+                sl_px      = avg_entry * (1.0 + stop_loss_pct / 100.0)
+                if high >= sl_px:
+                    for pos in short_positions:
+                        pnl = (pos["entry_px"] - sl_px) * pos["size"]
+                        fee = sl_px * pos["size"] * fee_rate
+                        cash += per_level + pnl - fee
+                        trades.append({"type": "short_sl", "price": sl_px, "pnl": pnl - fee})
+                    short_positions.clear()
+
+            # 5. Short TP — low-triggered, closes ALL at MA
+            if short_positions and low <= ma:
+                for pos in short_positions:
+                    pnl = (pos["entry_px"] - ma) * pos["size"]
+                    fee = ma * pos["size"] * fee_rate
+                    cash += per_level + pnl - fee
+                    trades.append({"type": "short_close", "price": ma, "pnl": pnl - fee})
+                short_positions.clear()
+
+            # 6. Short entries — trigger fires when HIGH >= trigger_px (price rose to level)
+            # high_env_i = round(1/(1-env_i)-1, 3)  (inverse envelope, same formula as live bot)
+            short_levels_open = {p["level"] for p in short_positions}
+            for j, env in enumerate(envelopes):
+                if j in short_levels_open:
+                    continue
+                high_env   = round(1.0 / (1.0 - env) - 1.0, 3)
+                limit_px   = ma * (1.0 + high_env)
+                trigger_px = limit_px * 0.995
+                if high >= trigger_px and cash >= per_level:
+                    size = (per_level * leverage) / limit_px
+                    fee  = limit_px * size * fee_rate
+                    cash -= per_level + fee
+                    short_positions.append({"level": j, "entry_px": limit_px, "size": size})
+                    trades.append({"type": "short_entry", "price": limit_px})
+
+        # ── Equity: cash + margin_in_use + unrealized PnL ────────────────────
+        pos_value = 0.0
+        for pos in long_positions:
+            pos_value += per_level + (close - pos["entry_px"]) * pos["size"]
+        for pos in short_positions:
+            pos_value += per_level + (pos["entry_px"] - close) * pos["size"]
         equity = cash + pos_value
-
-        # Stop loss
-        if stop_loss_pct > 0 and equity < allocation * (1 - stop_loss_pct / 100):
-            for pos in positions:
-                pnl = (close - pos["price"]) * pos["size"]
-                fee = close * pos["size"] * fee_rate
-                cash += close * pos["size"] - fee
-                trades.append({"type": "stop_loss", "price": close, "pnl": pnl - fee})
-            positions.clear()
-            equity = cash
-            equity_curve.append({"time": ts, "value": round(equity, 2)})
-            break
 
         if equity > max_equity:
             max_equity = equity
@@ -238,31 +311,31 @@ def run_envelope_dca_backtest(
         equity_curve.append({"time": ts, "value": round(equity, 2)})
 
     final_equity = equity_curve[-1]["value"] if equity_curve else allocation
-    pnl_pct = (final_equity - allocation) / allocation * 100
+    pnl_pct      = (final_equity - allocation) / allocation * 100
 
-    first_price = candles[0]["close"]
-    last_price = candles[-1]["close"]
-    bnh_pct = (last_price - first_price) / first_price * 100
+    first_price = candles_1m[0]["close"]
+    last_price  = candles_1m[-1]["close"]
+    bnh_pct     = (last_price - first_price) / first_price * 100
 
-    sell_trades = [t for t in trades if t["type"] in ("sell",)]
-    winning = [t for t in sell_trades if t.get("pnl", 0) > 0]
-    win_rate = len(winning) / len(sell_trades) * 100 if sell_trades else 0
+    close_trades = [t for t in trades if t["type"] in ("long_close", "short_close")]
+    winning      = [t for t in close_trades if t.get("pnl", 0) > 0]
+    win_rate     = len(winning) / len(close_trades) * 100 if close_trades else 0
 
     return {
-        "pnl_pct": round(pnl_pct, 2),
-        "pnl_usd": round(final_equity - allocation, 2),
-        "final_equity": round(final_equity, 2),
-        "total_trades": len(trades),
-        "win_rate": round(win_rate, 1),
+        "pnl_pct":          round(pnl_pct, 2),
+        "pnl_usd":          round(final_equity - allocation, 2),
+        "final_equity":     round(final_equity, 2),
+        "total_trades":     len(trades),
+        "win_rate":         round(win_rate, 1),
         "max_drawdown_pct": round(max_drawdown, 2),
-        "bnh_pct": round(bnh_pct, 2),
-        "equity_curve": equity_curve,
-        "candles_used": len(candles),
+        "bnh_pct":          round(bnh_pct, 2),
+        "equity_curve":     equity_curve,
+        "candles_used":     len(candles_1m),
     }
 
 
 def run_bbrsi_backtest(
-    candles: list[dict],
+    candles_1m: list[dict],
     allocation: float,
     bb_period: int,
     bb_std: float,
@@ -272,14 +345,17 @@ def run_bbrsi_backtest(
     stop_loss_pct: float,
     leverage: int,
 ) -> dict:
-    """Simulate BB+RSI Mean Reversion strategy on OHLCV candles."""
+    """Simulate BB+RSI Mean Reversion strategy on 1-minute OHLCV candles.
+    OHLC ordering: long SL checked on candle LOW, short SL checked on candle HIGH.
+    SL fills at the SL price (not close) for accuracy.
+    """
     import math
 
-    if len(candles) < max(bb_period, rsi_period) + 5:
+    if len(candles_1m) < max(bb_period, rsi_period) + 5:
         raise ValueError("Not enough candles for backtest")
 
     fee_rate = 0.00035
-    closes = [c["close"] for c in candles]
+    closes = [c["close"] for c in candles_1m]
 
     # SMA + STD for Bollinger Bands
     def sma(i, p):
@@ -315,13 +391,15 @@ def run_bbrsi_backtest(
     max_equity = allocation
     max_drawdown = 0.0
 
-    for i in range(max(bb_period, rsi_period) + 1, len(candles)):
+    for i in range(max(bb_period, rsi_period) + 1, len(candles_1m)):
         mid = sma(i - 1, bb_period)
-        s = std(i - 1, bb_period)
+        s   = std(i - 1, bb_period)
         rsi = rsi_values[i - 1] if i - 1 < len(rsi_values) else None
-        close = closes[i]
+        close      = closes[i]
         prev_close = closes[i - 1]
-        ts = candles[i]["time"]
+        low        = candles_1m[i]["low"]
+        high       = candles_1m[i]["high"]
+        ts         = candles_1m[i]["time"]
 
         if mid is None or s is None or rsi is None:
             equity_curve.append({"time": ts, "value": round(cash, 2)})
@@ -330,29 +408,33 @@ def run_bbrsi_backtest(
         upper_bb = mid + bb_std * s
         lower_bb = mid - bb_std * s
 
-        # Debug first 5 valid candles
-        if len(equity_curve) < 5:
-            print(f"[bbrsi_debug] i={i} close={close:.2f} lower_bb={lower_bb:.2f} upper_bb={upper_bb:.2f} rsi={rsi:.2f} cash={cash:.2f} position={position}")
-
-        # Stop loss
+        # Stop loss — OHLC-accurate: long SL checked on LOW, short SL on HIGH
         if position and stop_loss_pct > 0:
             entry = position["entry_price"]
-            pnl_pct = (close - entry) / entry * 100 if position["side"] == "long" else (entry - close) / entry * 100
-            if pnl_pct < -stop_loss_pct:
-                pnl = (close - entry) * position["size"] if position["side"] == "long" else (entry - close) * position["size"]
-                fee = close * position["size"] * fee_rate
-                cash = allocation + pnl - fee
-                trades.append({"type": "stop_loss", "pnl": pnl - fee})
-                position = None
+            if position["side"] == "long":
+                sl_px = entry * (1.0 - stop_loss_pct / 100.0)
+                if low <= sl_px:
+                    pnl = (sl_px - entry) * position["size"]
+                    fee = sl_px * position["size"] * fee_rate
+                    cash = allocation + pnl - fee
+                    trades.append({"type": "stop_loss", "pnl": pnl - fee})
+                    position = None
+            else:  # short
+                sl_px = entry * (1.0 + stop_loss_pct / 100.0)
+                if high >= sl_px:
+                    pnl = (entry - sl_px) * position["size"]
+                    fee = sl_px * position["size"] * fee_rate
+                    cash = allocation + pnl - fee
+                    trades.append({"type": "stop_loss", "pnl": pnl - fee})
+                    position = None
 
         if position is None:
-            # margin required = allocation (full capital as margin), size in asset units
-            size = (allocation * leverage) / close
-            margin = allocation  # full allocation used as margin
-            fee = close * size * fee_rate
+            # margin = allocation (full capital), size in asset units
+            size   = (allocation * leverage) / close
+            margin = allocation
+            fee    = close * size * fee_rate
             if prev_close <= lower_bb or rsi < rsi_oversold:
-                print(f"[bbrsi_debug] LONG SIGNAL: prev_close={prev_close:.2f} lower_bb={lower_bb:.2f} rsi={rsi:.2f} size={size:.6f} cost={close * size / leverage:.2f} cash={cash:.2f}")
-                if cash >= margin * 0.99:  # allow 1% tolerance for fees
+                if cash >= margin * 0.99:
                     cash -= fee
                     position = {"side": "long", "size": size, "entry_price": close}
                     trades.append({"type": "buy", "price": close})
@@ -366,13 +448,13 @@ def run_bbrsi_backtest(
             if position["side"] == "long" and prev_close >= mid:
                 pnl = (close - entry) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash = allocation + pnl - fee  # return margin + pnl
+                cash = allocation + pnl - fee
                 trades.append({"type": "close_long", "pnl": pnl - fee})
                 position = None
             elif position["side"] == "short" and prev_close <= mid:
                 pnl = (entry - close) * position["size"]
                 fee = close * position["size"] * fee_rate
-                cash = allocation + pnl - fee  # return margin + pnl
+                cash = allocation + pnl - fee
                 trades.append({"type": "close_short", "pnl": pnl - fee})
                 position = None
 
@@ -392,7 +474,7 @@ def run_bbrsi_backtest(
 
     final_equity = equity_curve[-1]["value"] if equity_curve else allocation
     pnl_pct = (final_equity - allocation) / allocation * 100
-    bnh_pct = (candles[-1]["close"] - candles[0]["close"]) / candles[0]["close"] * 100
+    bnh_pct = (candles_1m[-1]["close"] - candles_1m[0]["close"]) / candles_1m[0]["close"] * 100
     sell_trades = [t for t in trades if t["type"] in ("close_long", "close_short")]
     win_rate = len([t for t in sell_trades if t.get("pnl", 0) > 0]) / len(sell_trades) * 100 if sell_trades else 0
 
@@ -400,24 +482,27 @@ def run_bbrsi_backtest(
         "pnl_pct": round(pnl_pct, 2), "pnl_usd": round(final_equity - allocation, 2),
         "final_equity": round(final_equity, 2), "total_trades": len(trades),
         "win_rate": round(win_rate, 1), "max_drawdown_pct": round(max_drawdown, 2),
-        "bnh_pct": round(bnh_pct, 2), "equity_curve": equity_curve, "candles_used": len(candles),
+        "bnh_pct": round(bnh_pct, 2), "equity_curve": equity_curve, "candles_used": len(candles_1m),
     }
 
 
 def run_emacross_backtest(
-    candles: list[dict],
+    candles_1m: list[dict],
     allocation: float,
     ema_fast: int,
     ema_slow: int,
     stop_loss_pct: float,
     leverage: int,
 ) -> dict:
-    """Simulate EMA Cross Trend Following strategy on OHLCV candles."""
-    if len(candles) < ema_slow + 5:
+    """Simulate EMA Cross Trend Following strategy on 1-minute OHLCV candles.
+    OHLC ordering: long SL checked on candle LOW, short SL checked on candle HIGH.
+    SL fills at the SL price (not close) for accuracy.
+    """
+    if len(candles_1m) < ema_slow + 5:
         raise ValueError("Not enough candles for backtest")
 
     fee_rate = 0.00035
-    closes = [c["close"] for c in candles]
+    closes = [c["close"] for c in candles_1m]
 
     def compute_ema(period):
         k = 2 / (period + 1)
@@ -439,35 +524,46 @@ def run_emacross_backtest(
     max_equity = allocation
     max_drawdown = 0.0
 
-    for i in range(ema_slow + 2, len(candles)):
+    for i in range(ema_slow + 2, len(candles_1m)):
         fast_prev = ema_fast_vals[i - 2]
         fast_curr = ema_fast_vals[i - 1]
         slow_prev = ema_slow_vals[i - 2]
         slow_curr = ema_slow_vals[i - 1]
         close = closes[i]
-        ts = candles[i]["time"]
+        low   = candles_1m[i]["low"]
+        high  = candles_1m[i]["high"]
+        ts    = candles_1m[i]["time"]
 
         if any(v is None for v in [fast_prev, fast_curr, slow_prev, slow_curr]):
             equity_curve.append({"time": ts, "value": round(cash, 2)})
             continue
 
         golden_cross = fast_prev <= slow_prev and fast_curr > slow_curr
-        death_cross = fast_prev >= slow_prev and fast_curr < slow_curr
+        death_cross  = fast_prev >= slow_prev and fast_curr < slow_curr
 
-        # Stop loss
+        # Stop loss — OHLC-accurate: long SL checked on LOW, short SL on HIGH
         if position and stop_loss_pct > 0:
             entry = position["entry_price"]
-            pnl_pct = (close - entry) / entry * 100 if position["side"] == "long" else (entry - close) / entry * 100
-            if pnl_pct < -stop_loss_pct:
-                pnl = (close - entry) * position["size"] if position["side"] == "long" else (entry - close) * position["size"]
-                fee = close * position["size"] * fee_rate
-                cash = allocation + pnl - fee
-                trades.append({"type": "stop_loss", "pnl": pnl - fee})
-                position = None
+            if position["side"] == "long":
+                sl_px = entry * (1.0 - stop_loss_pct / 100.0)
+                if low <= sl_px:
+                    pnl = (sl_px - entry) * position["size"]
+                    fee = sl_px * position["size"] * fee_rate
+                    cash = allocation + pnl - fee
+                    trades.append({"type": "stop_loss", "pnl": pnl - fee})
+                    position = None
+            else:  # short
+                sl_px = entry * (1.0 + stop_loss_pct / 100.0)
+                if high >= sl_px:
+                    pnl = (entry - sl_px) * position["size"]
+                    fee = sl_px * position["size"] * fee_rate
+                    cash = allocation + pnl - fee
+                    trades.append({"type": "stop_loss", "pnl": pnl - fee})
+                    position = None
 
         if position is None:
             size = (allocation * leverage) / close
-            fee = close * size * fee_rate
+            fee  = close * size * fee_rate
             if golden_cross and cash >= allocation * 0.99:
                 cash -= fee
                 position = {"side": "long", "size": size, "entry_price": close}
@@ -493,7 +589,7 @@ def run_emacross_backtest(
 
         pos_value = 0.0
         if position:
-            entry = position["entry_price"]
+            entry     = position["entry_price"]
             pos_value = (close - entry) * position["size"] if position["side"] == "long" else (entry - close) * position["size"]
 
         equity = cash + pos_value
@@ -504,7 +600,7 @@ def run_emacross_backtest(
 
     final_equity = equity_curve[-1]["value"] if equity_curve else allocation
     pnl_pct = (final_equity - allocation) / allocation * 100
-    bnh_pct = (candles[-1]["close"] - candles[0]["close"]) / candles[0]["close"] * 100
+    bnh_pct = (candles_1m[-1]["close"] - candles_1m[0]["close"]) / candles_1m[0]["close"] * 100
     sell_trades = [t for t in trades if t["type"] in ("close_long", "close_short")]
     win_rate = len([t for t in sell_trades if t.get("pnl", 0) > 0]) / len(sell_trades) * 100 if sell_trades else 0
 
@@ -512,7 +608,7 @@ def run_emacross_backtest(
         "pnl_pct": round(pnl_pct, 2), "pnl_usd": round(final_equity - allocation, 2),
         "final_equity": round(final_equity, 2), "total_trades": len(trades),
         "win_rate": round(win_rate, 1), "max_drawdown_pct": round(max_drawdown, 2),
-        "bnh_pct": round(bnh_pct, 2), "equity_curve": equity_curve, "candles_used": len(candles),
+        "bnh_pct": round(bnh_pct, 2), "equity_curve": equity_curve, "candles_used": len(candles_1m),
     }
 
 
