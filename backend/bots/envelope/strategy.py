@@ -221,7 +221,10 @@ class EnvelopeBot:
                     sells.append(entry)
             return buys, sells
         except Exception as e:
-            self.log("warning", f"Failed to fetch real open orders: {e}")
+            try:
+                self.log("warning", f"Failed to fetch real open orders: {e}")
+            except Exception:
+                pass
             return [], []
 
     async def _place_limit_order(self, is_buy: bool, size: float, price: float) -> Optional[int]:
@@ -298,10 +301,17 @@ class EnvelopeBot:
             try:
                 # 0. Fetch real state from Hyperliquid — source of truth for every tick.
                 #    This makes the bot restart-safe: no stale in-memory state is trusted.
-                real_pos, (resting_buys, resting_sells) = await asyncio.gather(
+                _state = await asyncio.gather(
                     self._fetch_real_position(),
                     self._fetch_real_open_orders(),
                 )
+                real_pos = _state[0]
+                _orders = _state[1]
+                if isinstance(_orders, (list, tuple)) and len(_orders) == 2:
+                    resting_buys  = _orders[0] if isinstance(_orders[0], list) else []
+                    resting_sells = _orders[1] if isinstance(_orders[1], list) else []
+                else:
+                    resting_buys, resting_sells = [], []
                 real_szi        = real_pos["szi"]
                 real_entry_px   = real_pos["entry_px"]
                 real_upnl       = real_pos["unrealized_pnl"]
