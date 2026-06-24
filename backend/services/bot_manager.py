@@ -218,7 +218,7 @@ class BotManager:
             log_callback=log_callback,
         )
 
-        self._add_log(bot_id, "info", f"Envelope Bot initializing — {coin} MA={ma_period} envelopes={envelopes} allocation=${allocated_usdc}")
+        self._add_log(bot_id, "info", f"Envelope Bot initializing — {coin} MA={ma_period} envelopes={envelopes} sides={sides} allocation=${allocated_usdc}")
         await bot.run()
 
     async def _run_funding_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:

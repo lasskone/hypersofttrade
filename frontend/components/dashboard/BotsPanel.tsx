@@ -158,6 +158,7 @@ const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
     allocated_usdc: 100,
     leverage: 1,
     interval: '4h',
+    sides: ['long'],
   },
   funding_rate: {
     entry_threshold_pct: 0.01,
@@ -716,6 +717,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [useAtrStop, setUseAtrStop] = useState(false)
   const [atrMultiplier, setAtrMultiplier] = useState('2.0')
   const [emaInterval, setEmaInterval] = useState(initialInterval ?? '4h')
+  const [envelopeSides, setEnvelopeSides] = useState<string[]>(['long'])
   const [pbDirection, setPbDirection] = useState('long')
   const [pbWalletExposureLimit, setPbWalletExposureLimit] = useState('0.1')
   const [pbEntryInitialQtyPct, setPbEntryInitialQtyPct] = useState('0.01')
@@ -791,6 +793,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
             interval: envelopeInterval,
+            sides: envelopeSides,
           } : botType === 'funding_rate' ? {
             dex,
             entry_threshold_pct: parseFloat(entryThreshold),
@@ -1034,6 +1037,29 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                   <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
                 </div>
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Sides</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([
+                    { label: 'Long', value: ['long'] as string[] },
+                    { label: 'Short', value: ['short'] as string[] },
+                    { label: 'Both', value: ['long', 'short'] as string[] },
+                  ]).map(opt => {
+                    const active = JSON.stringify([...envelopeSides].sort()) === JSON.stringify([...opt.value].sort())
+                    return (
+                      <button key={opt.label} type="button" onClick={() => setEnvelopeSides(opt.value)}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                          borderColor: active ? '#8b5cf6' : '#1a1a2e',
+                          backgroundColor: active ? '#8b5cf618' : '#0d0d14',
+                          color: active ? '#8b5cf6' : '#6b7280',
+                        }}>
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips. Short: sells rallies. Both: trades both directions.</p>
               </div>
               <div>
                 <label style={labelStyle}>Stop Loss %</label>
@@ -1389,6 +1415,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [useAtrStop, setUseAtrStop] = useState(Boolean(merged.use_atr_stop ?? false))
   const [atrMultiplier, setAtrMultiplier] = useState(String(merged.atr_multiplier ?? 2.0))
   const [emaInterval, setEmaInterval] = useState(String(merged.interval ?? '4h'))
+  const [envelopeSides, setEnvelopeSides] = useState<string[]>(Array.isArray(merged.sides) ? merged.sides : ['long'])
   const [pbDirection, setPbDirection] = useState(String(merged.direction ?? 'long'))
   const [pbWalletExposureLimit, setPbWalletExposureLimit] = useState(String(merged.wallet_exposure_limit ?? 0.1))
   const [pbEntryInitialQtyPct, setPbEntryInitialQtyPct] = useState(String(merged.entry_initial_qty_pct ?? 0.01))
@@ -1461,6 +1488,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
         interval: envelopeInterval,
+        sides: envelopeSides,
       } : bot.bot_type === 'funding_rate' ? {
         symbol: symbol,
         dex: dex,
@@ -1711,6 +1739,29 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
                 </div>
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Sides</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([
+                    { label: 'Long', value: ['long'] as string[] },
+                    { label: 'Short', value: ['short'] as string[] },
+                    { label: 'Both', value: ['long', 'short'] as string[] },
+                  ]).map(opt => {
+                    const active = JSON.stringify([...envelopeSides].sort()) === JSON.stringify([...opt.value].sort())
+                    return (
+                      <button key={opt.label} type="button" onClick={() => setEnvelopeSides(opt.value)}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                          borderColor: active ? '#8b5cf6' : '#1a1a2e',
+                          backgroundColor: active ? '#8b5cf618' : '#0d0d14',
+                          color: active ? '#8b5cf6' : '#6b7280',
+                        }}>
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips. Short: sells rallies. Both: trades both directions.</p>
               </div>
               <div>
                 <label style={labelStyle}>Stop Loss %</label>
