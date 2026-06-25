@@ -11,6 +11,7 @@ import { TradePanel } from '@/components/dashboard/TradePanel';
 import { SettingsPanel } from '@/components/dashboard/SettingsPanel';
 import BotsPanel from '@/components/dashboard/BotsPanel';
 import BacktestPanel from '@/components/dashboard/BacktestPanel';
+import BotDetailPanel from '@/components/dashboard/BotDetailPanel';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
@@ -39,6 +40,7 @@ function DashboardLayout({
   const [spotBalances, setSpotBalances] = useState<any[]>([])
   const [recentTrades, setRecentTrades] = useState<any[]>([])
   const [pendingMarket, setPendingMarket] = useState<{ symbol: string, dex: string, interval?: string } | null>(null)
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null)
 
   const fetchPositions = useCallback(async () => {
     if (!address) return
@@ -72,7 +74,8 @@ function DashboardLayout({
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} onSelectMarket={(symbol, dex, interval) => setPendingMarket({ symbol, dex, interval })} />}
           {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} openOrders={openOrders} spotBalances={spotBalances} recentTrades={recentTrades} initialMarket={pendingMarket} initialInterval={pendingMarket?.interval ?? '15m'} onMarketConsumed={() => setPendingMarket(null)} onRefresh={fetchPositions} />}
-          {section === 'bots' && <BotsPanel walletAddress={address ?? ''} />}
+          {section === 'bots' && <BotsPanel walletAddress={address ?? ''} onSelectBot={(id) => { setSelectedBotId(id); onNavigate('bot_detail') }} />}
+          {section === 'bot_detail' && selectedBotId && <BotDetailPanel botId={selectedBotId} walletAddress={address} onBack={() => onNavigate('bots')} />}
           {section === 'backtest' && <BacktestPanel walletAddress={address} />}
           {section === 'history' && (
             <div className="flex items-center justify-center h-64">

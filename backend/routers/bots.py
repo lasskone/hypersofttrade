@@ -173,3 +173,88 @@ async def get_bot_logs(bot_id: str, limit: int = 50):
     db = _supabase()
     logs = db.table("bot_logs").select("*").eq("bot_id", bot_id).order("created_at", desc=True).limit(limit).execute()
     return {"logs": logs.data}
+
+
+@router.get("/{bot_id}/details")
+async def get_bot_details(bot_id: str, wallet_address: str):
+    """Return full bot detail: config, logs, Hyperliquid fills, and computed stats."""
+    logger.info(f"GET /bots/{bot_id}/details wallet={wallet_address}")
+    import httpx
+
+    db = _supabase()
+
+    # Verify ownership and resolve wallet address
+    user_res = db.table("users").select("id, wallet_address").ilike("wallet_address", wallet_address).limit(1).execute()
+    if not user_res.data:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_id     = user_res.data[0]["id"]
+    user_wallet = user_res.data[0]["wallet_address"]
+
+    bot_res = db.table("bots").select("*").eq("id", bot_id).eq("user_id", user_id).limit(1).execute()
+    if not bot_res.data:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    bot = bot_res.data[0]
+
+    # Logs (last 500, most recent first)
+    logs_res = db.table("bot_logs").select("*").eq("bot_id", bot_id).order("created_at", desc=True).limit(500).execute()
+    logs: list[dict] = logs_res.data or []
+
+    # Hyperliquid fills filtered by coin + bot creation timestamp
+    coin       = bot.get("symbol", "")
+    coin_short = coin.split(":")[-1] if ":" in coin else coin
+    created_at = bot.get("created_at", "")
+
+    fills: list[dict] = []
+    stats: dict = {
+        "total_trades": 0, "total_pnl": 0.0, "total_fees": 0.0,
+        "net_pnl": 0.0, "win_rate": 0.0, "avg_trade_pnl": 0.0,
+        "best_trade": 0.0, "worst_trade": 0.0, "total_volume": 0.0,
+    }
+
+    try:
+        created_ts_ms = int(
+            datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp() * 1000
+        )
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.hyperliquid.xyz/info",
+                json={"type": "userFills", "user": user_wallet},
+                headers={"Content-Type": "application/json"},
+            )
+            all_fills = resp.json()
+
+        if isinstance(all_fills, list):
+            fills = [
+                f for f in all_fills
+                if isinstance(f, dict)
+                and f.get("coin") in (coin, coin_short)
+                and int(f.get("time", 0)) >= created_ts_ms
+            ]
+            fills.sort(key=lambda f: int(f.get("time", 0)), reverse=True)
+
+        total_trades = len(fills)
+        total_pnl    = sum(float(f.get("closedPnl", 0) or 0) for f in fills)
+        total_fees   = sum(float(f.get("fee",       0) or 0) for f in fills)
+        net_pnl      = total_pnl - total_fees
+        winning      = [f for f in fills if float(f.get("closedPnl", 0) or 0) > 0]
+        win_rate     = len(winning) / total_trades * 100 if total_trades > 0 else 0.0
+        avg_pnl      = net_pnl / total_trades if total_trades > 0 else 0.0
+        pnls         = [float(f.get("closedPnl", 0) or 0) for f in fills]
+        total_volume = sum(
+            float(f.get("px", 0) or 0) * float(f.get("sz", 0) or 0) for f in fills
+        )
+        stats = {
+            "total_trades":  total_trades,
+            "total_pnl":     round(total_pnl,    4),
+            "total_fees":    round(total_fees,   4),
+            "net_pnl":       round(net_pnl,      4),
+            "win_rate":      round(win_rate,      1),
+            "avg_trade_pnl": round(avg_pnl,       4),
+            "best_trade":    round(max(pnls), 4) if pnls else 0.0,
+            "worst_trade":   round(min(pnls), 4) if pnls else 0.0,
+            "total_volume":  round(total_volume,  2),
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch Hyperliquid fills for bot {bot_id}: {e}")
+
+    return {"bot": bot, "logs": logs, "fills": fills, "stats": stats}

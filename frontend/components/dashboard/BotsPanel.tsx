@@ -228,6 +228,7 @@ interface Bot {
 
 interface Props {
   walletAddress: string
+  onSelectBot?: (botId: string) => void
 }
 
 interface Market {
@@ -261,7 +262,7 @@ const statusLabel = (b: Bot) => {
 // True if the bot is running OR queued to run — used to decide Stop vs Start button.
 const wantsRunning = (b: Bot) => b.status === 'running' || b.desired_status === 'running'
 
-export default function BotsPanel({ walletAddress }: Props) {
+export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
   const [bots, setBots] = useState<Bot[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -536,7 +537,11 @@ export default function BotsPanel({ walletAddress }: Props) {
                   }}
                   style={{ accentColor: '#00d4aa', width: 16, height: 16, cursor: 'pointer', marginRight: 12, flexShrink: 0 }}
                 />
-                <div className="flex-1 min-w-0">
+                <div
+                  className="flex-1 min-w-0"
+                  onClick={onSelectBot ? () => onSelectBot(bot.id) : undefined}
+                  style={onSelectBot ? { cursor: 'pointer' } : undefined}
+                >
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-bold text-white">{bot.name}</span>
                     <span className="text-xs px-2 py-0.5 rounded font-medium" style={{ backgroundColor: '#00d4aa18', color: '#00d4aa' }}>
@@ -545,6 +550,9 @@ export default function BotsPanel({ walletAddress }: Props) {
                     <span className="text-xs font-semibold" style={{ color: statusColor(bot) }}>
                       ● {statusLabel(bot)}
                     </span>
+                    {onSelectBot && (
+                      <span className="text-xs ml-auto" style={{ color: '#4b5563' }}>›</span>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-3 mt-1">
                     {[
