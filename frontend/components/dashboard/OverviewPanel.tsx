@@ -568,6 +568,7 @@ export function OverviewPanel({
   const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
   const [confirmingOrderIdx, setConfirmingOrderIdx] = useState<number | null>(null)
   const [confirmingBulkCancel, setConfirmingBulkCancel] = useState(false)
+  const [tradesPage, setTradesPage] = useState(1)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [bots, setBots] = useState<any[]>([]);
 
@@ -638,8 +639,9 @@ export function OverviewPanel({
     setConfirmingBulkCancel(false)
   }, [selectedOrders]);
 
-  // ── Initial load ─────────────────────────────────────────────────────────────
+  // ── Initial load + reset trades pagination on wallet change ──────────────────
   useEffect(() => {
+    setTradesPage(1);
     fetchPortfolio();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
@@ -728,8 +730,10 @@ export function OverviewPanel({
   const openPositions     = data?.open_positions ?? [];
   const openPositionsCnt  = data?.open_positions_count ?? openPositions.length;
   const spotBalances      = data?.spot_balances ?? [];
-  const recentFills       = data?.recent_fills ?? [];
-  const openOrders        = data?.open_orders ?? [];
+  const recentFills         = data?.recent_fills ?? [];
+  const openOrders          = data?.open_orders ?? [];
+  const totalTradesPages    = Math.ceil(recentFills.length / 10) || 1;
+  const pagedFills          = recentFills.slice((tradesPage - 1) * 10, tradesPage * 10);
 
   const pnlPos = parseFloat(String(unrealizedPnl)) >= 0;
 
@@ -1154,7 +1158,7 @@ export function OverviewPanel({
 
       {/* Recent Trades */}
       {recentFills.length > 0 && (
-        <Section title={`Recent Trades (${recentFills.slice(0, 10).length})`}>
+        <Section title={`Recent Trades (${recentFills.length})`}>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -1164,10 +1168,9 @@ export function OverviewPanel({
                 </tr>
               </thead>
               <tbody>
-                {recentFills.slice(0, 10).map((f: any, i: number) => {
-                  const buy     = isBuySide(f?.side);
-                  const cpnl    = parseFloat(String(f?.closed_pnl ?? 0));
-                  const cpnlPos = cpnl >= 0;
+                {pagedFills.map((f: any, i: number) => {
+                  const buy  = isBuySide(f?.side);
+                  const cpnl = parseFloat(String(f?.closed_pnl ?? 0));
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
                       style={{ borderColor: '#1a1a2e' }}>
@@ -1186,6 +1189,37 @@ export function OverviewPanel({
               </tbody>
             </table>
           </div>
+          {recentFills.length > 10 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', borderTop: '1px solid #1a1a2e' }}>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {totalTradesPages > 5 && (
+                  <button onClick={() => setTradesPage(1)} disabled={tradesPage === 1}
+                    style={{ padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: tradesPage === 1 ? 'not-allowed' : 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: tradesPage === 1 ? '#374151' : '#6b7280', opacity: tradesPage === 1 ? 0.4 : 1 }}>
+                    «
+                  </button>
+                )}
+                <button onClick={() => setTradesPage(p => Math.max(1, p - 1))} disabled={tradesPage === 1}
+                  style={{ padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: tradesPage === 1 ? 'not-allowed' : 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: tradesPage === 1 ? '#374151' : '#9ca3af', opacity: tradesPage === 1 ? 0.4 : 1 }}>
+                  ← Prev
+                </button>
+              </div>
+              <span style={{ fontSize: 12, color: '#00d4aa', fontWeight: 600 }}>
+                {(tradesPage - 1) * 10 + 1}–{Math.min(tradesPage * 10, recentFills.length)} of {recentFills.length} trades
+              </span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button onClick={() => setTradesPage(p => Math.min(totalTradesPages, p + 1))} disabled={tradesPage === totalTradesPages}
+                  style={{ padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: tradesPage === totalTradesPages ? 'not-allowed' : 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: tradesPage === totalTradesPages ? '#374151' : '#9ca3af', opacity: tradesPage === totalTradesPages ? 0.4 : 1 }}>
+                  Next →
+                </button>
+                {totalTradesPages > 5 && (
+                  <button onClick={() => setTradesPage(totalTradesPages)} disabled={tradesPage === totalTradesPages}
+                    style={{ padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: tradesPage === totalTradesPages ? 'not-allowed' : 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: tradesPage === totalTradesPages ? '#374151' : '#6b7280', opacity: tradesPage === totalTradesPages ? 0.4 : 1 }}>
+                    »
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </Section>
       )}
 

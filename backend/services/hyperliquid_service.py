@@ -469,10 +469,10 @@ class HyperliquidService:
         else:
             print(f"[portfolio] spotClearinghouseState unavailable: {spot_state}")
 
-        # Step 5: recent fills (last 50)
+        # Step 5: recent fills (last 500 — frontend paginates at 10/page)
         recent_fills: list[dict] = []
         if not isinstance(fills, Exception) and isinstance(fills, list):
-            for fill in fills[:50]:
+            for fill in fills[:500]:
                 if not isinstance(fill, dict):
                     continue
                 recent_fills.append({

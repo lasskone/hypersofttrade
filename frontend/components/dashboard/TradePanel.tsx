@@ -157,6 +157,7 @@ export function TradePanel({
   const [confirmingOrderIdx, setConfirmingOrderIdx] = useState<number | null>(null)
   const [confirmingBulk, setConfirmingBulk] = useState(false)
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'spot' | 'trades'>('positions')
+  const [tradesPage, setTradesPage] = useState(1)
   const [chartInterval, setChartInterval] = useState(initialInterval ?? '15m')
 
   // ── Resize state ────────────────────────────────────────────────────────────
@@ -185,6 +186,9 @@ export function TradePanel({
       }
     } catch {}
   }, [])
+
+  // ── Reset trades pagination on wallet change ─────────────────────────────────
+  useEffect(() => { setTradesPage(1) }, [walletAddress])
 
   // ── Drag event listeners (registered once) ──────────────────────────────────
   useEffect(() => {
@@ -1139,39 +1143,74 @@ export function TradePanel({
               )}
 
               {/* Tab: Recent Trades */}
-              {activeTab === 'trades' && (
-                recentTrades.length === 0 ? (
+              {activeTab === 'trades' && (() => {
+                const totalTradePgs = Math.ceil(recentTrades.length / 10) || 1
+                const pagedTrades = recentTrades.slice((tradesPage - 1) * 10, tradesPage * 10)
+                return recentTrades.length === 0 ? (
                   <div style={{ padding: '10px 20px', fontSize: '12px', color: '#4b5563' }}>No recent trades</div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                          <TH>Coin</TH><TH>Side</TH><TH>Price</TH><TH>Size</TH>
-                          <TH>Closed PnL</TH><TH>Fee</TH><TH>Time</TH>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recentTrades.slice(0, 20).map((f: any, i: number) => {
-                          const buy = isBuySide(f?.side)
-                          const cpnl = parseFloat(String(f?.closed_pnl ?? 0))
-                          return (
-                            <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                              <td className="px-5 py-3 font-semibold text-white text-sm">{f?.coin ?? '—'}</td>
-                              <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
-                              <TD>${fmt(f?.price)}</TD>
-                              <TD>{fmt(f?.size, 4)}</TD>
-                              <TD color={cpnl > 0 ? '#10b981' : cpnl < 0 ? '#ef4444' : '#6b7280'}>{cpnl === 0 ? '—' : fmtPnl(cpnl)}</TD>
-                              <TD color="#6b7280">${fmt(f?.fee)}</TD>
-                              <TD color="#6b7280">{fmtTime(f?.time)}</TD>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                            <TH>Coin</TH><TH>Side</TH><TH>Price</TH><TH>Size</TH>
+                            <TH>Closed PnL</TH><TH>Fee</TH><TH>Time</TH>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedTrades.map((f: any, i: number) => {
+                            const buy = isBuySide(f?.side)
+                            const cpnl = parseFloat(String(f?.closed_pnl ?? 0))
+                            return (
+                              <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                                <td className="px-5 py-3 font-semibold text-white text-sm">{f?.coin ?? '—'}</td>
+                                <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
+                                <TD>${fmt(f?.price)}</TD>
+                                <TD>{fmt(f?.size, 4)}</TD>
+                                <TD color={cpnl > 0 ? '#10b981' : cpnl < 0 ? '#ef4444' : '#6b7280'}>{cpnl === 0 ? '—' : fmtPnl(cpnl)}</TD>
+                                <TD color="#6b7280">${fmt(f?.fee)}</TD>
+                                <TD color="#6b7280">{fmtTime(f?.time)}</TD>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {recentTrades.length > 10 && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {totalTradePgs > 5 && (
+                            <button onClick={() => setTradesPage(1)} disabled={tradesPage === 1}
+                              style={{ padding: '4px 7px', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: tradesPage === 1 ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: tradesPage === 1 ? '#374151' : '#6b7280', opacity: tradesPage === 1 ? 0.4 : 1 }}>
+                              «
+                            </button>
+                          )}
+                          <button onClick={() => setTradesPage(p => Math.max(1, p - 1))} disabled={tradesPage === 1}
+                            style={{ padding: '4px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: tradesPage === 1 ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: tradesPage === 1 ? '#374151' : '#9ca3af', opacity: tradesPage === 1 ? 0.4 : 1 }}>
+                            ← Prev
+                          </button>
+                        </div>
+                        <span style={{ fontSize: 11, color: '#00d4aa', fontWeight: 600 }}>
+                          {(tradesPage - 1) * 10 + 1}–{Math.min(tradesPage * 10, recentTrades.length)} of {recentTrades.length} trades
+                        </span>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={() => setTradesPage(p => Math.min(totalTradePgs, p + 1))} disabled={tradesPage === totalTradePgs}
+                            style={{ padding: '4px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: tradesPage === totalTradePgs ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: tradesPage === totalTradePgs ? '#374151' : '#9ca3af', opacity: tradesPage === totalTradePgs ? 0.4 : 1 }}>
+                            Next →
+                          </button>
+                          {totalTradePgs > 5 && (
+                            <button onClick={() => setTradesPage(totalTradePgs)} disabled={tradesPage === totalTradePgs}
+                              style={{ padding: '4px 7px', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: tradesPage === totalTradePgs ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: tradesPage === totalTradePgs ? '#374151' : '#6b7280', opacity: tradesPage === totalTradePgs ? 0.4 : 1 }}>
+                              »
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )
-              )}
+              })()}
 
             </div>{/* /.tp-bottom-panel */}
           </div>{/* /.tp-right-col */}
