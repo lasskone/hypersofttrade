@@ -103,6 +103,22 @@ const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: s
       { key: 'close_grid_qty_pct', label: 'Close Qty per TP %', default: 0.05, hint: 'Fraction of position to close per TP. 0.05 = 5% per level' },
     ],
   },
+  golden_trap: {
+    label: 'Golden Trap',
+    emoji: '🪤',
+    description: 'Fibonacci DCA + MA200 trend filter + trailing stop',
+    color: '#f97316',
+    fields: [
+      { key: 'ma_period', label: 'MA Period', default: 5, hint: 'Moving average window for envelope midline. Lower = more reactive.' },
+      { key: 'envelope_1_pct', label: 'Envelope 1 %', default: 7, hint: 'First DCA level below MA. Smallest position (Fibonacci weighted).' },
+      { key: 'envelope_2_pct', label: 'Envelope 2 %', default: 10, hint: 'Second DCA level. Medium position.' },
+      { key: 'envelope_3_pct', label: 'Envelope 3 %', default: 15, hint: 'Third DCA level. Largest position (deepest dip).' },
+      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 10, hint: 'Hard stop loss below entry. 0 = disabled.' },
+      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage. Amplifies both gains and losses.' },
+      { key: 'trailing_stop_pct', label: 'Trailing Stop %', default: 2.0, hint: 'Trailing stop distance from peak price (Fixed mode).' },
+      { key: 'trailing_stop_atr_mult', label: 'ATR Multiplier', default: 1.5, hint: 'ATR14 multiplier for trailing stop distance (ATR mode).' },
+    ],
+  },
 }
 
 interface BacktestResult {
@@ -220,6 +236,8 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const [botType, setBotType] = useState('grid')
   const [pbDirection, setPbDirection] = useState('long')
   const [envelopeSides, setEnvelopeSides] = useState<string[]>(['long'])
+  const [gtSides, setGtSides] = useState<string[]>(['long'])
+  const [gtTrailingType, setGtTrailingType] = useState('fixed')
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
   const [params, setParams] = useState<Record<string, number>>({})
@@ -362,6 +380,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
     if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
     if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
+    if (botType === 'golden_trap') { fieldParams['sides'] = gtSides; fieldParams['trailing_stop_type'] = gtTrailingType }
     await runBacktestWithConfig({
       market: selectedMarket,
       bot_type: botType,
@@ -379,6 +398,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
     if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
     if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
+    if (botType === 'golden_trap') { fieldParams['sides'] = gtSides; fieldParams['trailing_stop_type'] = gtTrailingType }
     return {
       bot_type: botType,
       symbol: selectedMarket?.name ?? '',
@@ -471,6 +491,10 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     }
     if (cfg.bot_type === 'envelope_dca' && savedParams['sides']) {
       setEnvelopeSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long'])
+    }
+    if (cfg.bot_type === 'golden_trap') {
+      setGtSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long'])
+      setGtTrailingType(String(savedParams['trailing_stop_type'] ?? 'fixed'))
     }
     setParams(savedParams)
 
@@ -716,6 +740,53 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
                   </div>
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys envelope dips. Short: sells envelope rallies.</p>
                 </div>
+              )}
+              {botType === 'golden_trap' && (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={s.label}>SIDES</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {([
+                        { label: 'Long only', value: ['long'] },
+                        { label: 'Short only', value: ['short'] },
+                        { label: 'Both', value: ['long', 'short'] },
+                      ] as const).map(opt => {
+                        const active = JSON.stringify(gtSides.slice().sort()) === JSON.stringify(opt.value.slice().sort())
+                        return (
+                          <button key={opt.label} type="button" onClick={() => setGtSides([...opt.value])}
+                            style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                              borderColor: active ? '#f97316' : '#1a1a2e',
+                              backgroundColor: active ? '#f9731618' : '#0a0a0f',
+                              color: active ? '#f97316' : '#6b7280',
+                            }}>
+                            {opt.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>MA200 trend filter: long above MA200, short below, both always active.</p>
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={s.label}>TRAILING STOP TYPE</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {([
+                        { label: 'Fixed %', value: 'fixed' },
+                        { label: 'ATR', value: 'atr' },
+                        { label: 'None', value: 'none' },
+                      ] as const).map(opt => (
+                        <button key={opt.value} type="button" onClick={() => setGtTrailingType(opt.value)}
+                          style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                            borderColor: gtTrailingType === opt.value ? '#f97316' : '#1a1a2e',
+                            backgroundColor: gtTrailingType === opt.value ? '#f9731618' : '#0a0a0f',
+                            color: gtTrailingType === opt.value ? '#f97316' : '#6b7280',
+                          }}>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Fixed: trails by % from peak. ATR: trails by ATR14 × multiplier. None: hard SL only.</p>
+                  </div>
+                </>
               )}
               {config.fields.map(f => (
                 <div key={f.key} style={{ marginBottom: 12 }}>

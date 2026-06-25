@@ -119,6 +119,29 @@ const BOT_TYPES = {
     minAllocation: 50,
     color: '#10b981',
   },
+  golden_trap: {
+    name: 'Golden Trap',
+    emoji: '🪤',
+    tagline: 'Fibonacci DCA + MA200 trend filter + trailing stop',
+    description: 'An enhanced Envelope DCA strategy with four upgrades: Fibonacci-weighted position sizing (deeper levels get more capital), MA200 trend filter (long-only above MA200, short-only below), immediate re-entry after TP fill, and a trailing stop (fixed-% or ATR-based) with original SL as hard floor.',
+    howItWorks: [
+      'Fibonacci sizing: deeper DCA levels receive more capital (e.g. 15/35/50% for 3 levels)',
+      'MA200 trend filter: only trades in the trend direction — long above MA200, short below',
+      'Immediate re-entry: re-places all entries instantly when TP fills at MA',
+      'Trailing stop: follows price peak — ATR-based or fixed %, with original SL as hard floor',
+    ],
+    bestFor: 'Trending markets with periodic dips',
+    risk: 'Low–Medium',
+    riskColor: '#10b981',
+    params: {
+      ma_period: { label: 'MA Period', hint: 'Moving average window. Longer = smoother, less noise.' },
+      envelope_1_pct: { label: 'Envelope 1 %', hint: 'First buy level below MA. e.g. 7% means buy when price is 7% below MA.' },
+      envelope_2_pct: { label: 'Envelope 2 %', hint: 'Second buy level. Leave 0 to disable.' },
+      envelope_3_pct: { label: 'Envelope 3 %', hint: 'Third buy level. Leave 0 to disable.' },
+    },
+    minAllocation: 100,
+    color: '#f97316',
+  },
   passivbot_dca: {
     name: 'Passivbot DCA',
     emoji: '🔄',
@@ -188,6 +211,20 @@ const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
     interval: '4h',
     allocated_usdc: 100,
     leverage: 1,
+  },
+  golden_trap: {
+    ma_period: 5,
+    envelope_1_pct: 7,
+    envelope_2_pct: 10,
+    envelope_3_pct: 15,
+    stop_loss_pct: 10,
+    allocated_usdc: 100,
+    leverage: 1,
+    interval: '4h',
+    sides: ['long'],
+    trailing_stop_type: 'fixed',
+    trailing_stop_pct: 2.0,
+    trailing_stop_atr_mult: 1.5,
   },
   passivbot_dca: {
     direction: 'long',
@@ -741,6 +778,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [pbUnstuckEnabled, setPbUnstuckEnabled] = useState(true)
   const [pbUnstuckLossAllowancePct, setPbUnstuckLossAllowancePct] = useState('0.02')
   const [pbUnstuckClosePct, setPbUnstuckClosePct] = useState('0.02')
+  const [gtTrailingType, setGtTrailingType] = useState('fixed')
+  const [gtTrailingPct, setGtTrailingPct] = useState('2.0')
+  const [gtTrailingAtrMult, setGtTrailingAtrMult] = useState('1.5')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -831,6 +871,20 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             interval: emaInterval,
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
+          } : botType === 'golden_trap' ? {
+            dex,
+            ma_period: parseInt(maPeriod),
+            envelope_1_pct: parseFloat(envelope1),
+            envelope_2_pct: parseFloat(envelope2),
+            envelope_3_pct: parseFloat(envelope3),
+            stop_loss_pct: parseFloat(stopLossPct),
+            allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
+            interval: envelopeInterval,
+            sides: envelopeSides,
+            trailing_stop_type: gtTrailingType,
+            trailing_stop_pct: parseFloat(gtTrailingPct),
+            trailing_stop_atr_mult: parseFloat(gtTrailingAtrMult),
           } : {
             dex,
             direction: pbDirection,
@@ -1258,6 +1312,122 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
               </div>
             </>
+          ) : botType === 'golden_trap' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setEnvelopeInterval(iv)}
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: envelopeInterval === iv ? '#f9731622' : '#13131f',
+                        color: envelopeInterval === iv ? '#f97316' : '#6b7280',
+                        outline: envelopeInterval === iv ? '1px solid #f9731644' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for MA calculation.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>MA Period</label>
+                <input style={inputStyle} type="number" value={maPeriod} onChange={e => setMaPeriod(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Moving average window (recommended: 5–20)</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Envelope 1 % (required)</label>
+                <input style={inputStyle} type="number" value={envelope1} onChange={e => setEnvelope1(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First buy level below MA. Fibonacci weights: deepest level gets most capital.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Envelope 2 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope2} onChange={e => setEnvelope2(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Envelope 3 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope3} onChange={e => setEnvelope3(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#f97316' : '#1a1a2e', backgroundColor: leverage === lev ? '#f9731618' : '#0d0d14', color: leverage === lev ? '#f97316' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Sides</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([
+                    { label: 'Long', value: ['long'] as string[] },
+                    { label: 'Short', value: ['short'] as string[] },
+                    { label: 'Both', value: ['long', 'short'] as string[] },
+                  ]).map(opt => {
+                    const active = JSON.stringify([...envelopeSides].sort()) === JSON.stringify([...opt.value].sort())
+                    return (
+                      <button key={opt.label} type="button" onClick={() => setEnvelopeSides(opt.value)}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                          borderColor: active ? '#f97316' : '#1a1a2e',
+                          backgroundColor: active ? '#f9731618' : '#0d0d14',
+                          color: active ? '#f97316' : '#6b7280',
+                        }}>
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>MA200 trend filter enforces side automatically; this sets the allowed set.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Hard-floor SL (also used as trailing stop floor). 0 = disabled</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Trailing Stop Type</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { label: 'Fixed %', value: 'fixed' },
+                    { label: 'ATR', value: 'atr' },
+                    { label: 'None', value: 'none' },
+                  ].map(opt => (
+                    <button key={opt.value} type="button" onClick={() => setGtTrailingType(opt.value)}
+                      style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: gtTrailingType === opt.value ? '#f97316' : '#1a1a2e',
+                        backgroundColor: gtTrailingType === opt.value ? '#f9731618' : '#0d0d14',
+                        color: gtTrailingType === opt.value ? '#f97316' : '#6b7280',
+                      }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Trailing stop follows price peak. Original SL is always used as hard floor.</p>
+              </div>
+              {gtTrailingType === 'fixed' && (
+                <div>
+                  <label style={labelStyle}>Trailing Stop %</label>
+                  <input style={inputStyle} type="number" step="0.1" value={gtTrailingPct} onChange={e => setGtTrailingPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL = peak × (1 − pct%). e.g. 2 = SL trails 2% below peak price.</p>
+                </div>
+              )}
+              {gtTrailingType === 'atr' && (
+                <div>
+                  <label style={labelStyle}>ATR Multiplier</label>
+                  <input style={inputStyle} type="number" step="0.1" value={gtTrailingAtrMult} onChange={e => setGtTrailingAtrMult(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL = peak − ATR14 × multiplier. Higher = wider trailing stop.</p>
+                </div>
+              )}
+            </>
           ) : (
             <>
               <div>
@@ -1439,6 +1609,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [pbUnstuckEnabled, setPbUnstuckEnabled] = useState(Boolean(merged.unstuck_enabled ?? true))
   const [pbUnstuckLossAllowancePct, setPbUnstuckLossAllowancePct] = useState(String(merged.unstuck_loss_allowance_pct ?? 0.02))
   const [pbUnstuckClosePct, setPbUnstuckClosePct] = useState(String(merged.unstuck_close_pct ?? 0.02))
+  const [gtTrailingType, setGtTrailingType] = useState(String(merged.trailing_stop_type ?? 'fixed'))
+  const [gtTrailingPct, setGtTrailingPct] = useState(String(merged.trailing_stop_pct ?? 2.0))
+  const [gtTrailingAtrMult, setGtTrailingAtrMult] = useState(String(merged.trailing_stop_atr_mult ?? 1.5))
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -1529,6 +1702,21 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         interval: emaInterval,
         allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
         leverage: parseInt(leverage),
+      } : bot.bot_type === 'golden_trap' ? {
+        symbol: symbol,
+        dex: dex,
+        ma_period: parseInt(maPeriod),
+        envelope_1_pct: parseFloat(envelope1),
+        envelope_2_pct: parseFloat(envelope2),
+        envelope_3_pct: parseFloat(envelope3),
+        stop_loss_pct: parseFloat(stopLossPct),
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+        interval: envelopeInterval,
+        sides: envelopeSides,
+        trailing_stop_type: gtTrailingType,
+        trailing_stop_pct: parseFloat(gtTrailingPct),
+        trailing_stop_atr_mult: parseFloat(gtTrailingAtrMult),
       } : {
         symbol: symbol,
         dex: dex,
@@ -1959,6 +2147,122 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                 </div>
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
               </div>
+            </>
+          ) : bot.bot_type === 'golden_trap' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setEnvelopeInterval(iv)}
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: envelopeInterval === iv ? '#f9731622' : '#13131f',
+                        color: envelopeInterval === iv ? '#f97316' : '#6b7280',
+                        outline: envelopeInterval === iv ? '1px solid #f9731644' : '1px solid #1a1a2e',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Candle interval for MA calculation.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>MA Period</label>
+                <input style={inputStyle} type="number" value={maPeriod} onChange={e => setMaPeriod(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Moving average window (recommended: 5–20)</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Envelope 1 % (required)</label>
+                <input style={inputStyle} type="number" value={envelope1} onChange={e => setEnvelope1(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First buy level below MA. Fibonacci weights: deepest level gets most capital.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Envelope 2 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope2} onChange={e => setEnvelope2(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Envelope 3 % (optional)</label>
+                  <input style={inputStyle} type="number" value={envelope3} onChange={e => setEnvelope3(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>0 = disabled</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#f97316' : '#1a1a2e', backgroundColor: leverage === lev ? '#f9731618' : '#0d0d14', color: leverage === lev ? '#f97316' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Sides</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([
+                    { label: 'Long', value: ['long'] as string[] },
+                    { label: 'Short', value: ['short'] as string[] },
+                    { label: 'Both', value: ['long', 'short'] as string[] },
+                  ]).map(opt => {
+                    const active = JSON.stringify([...envelopeSides].sort()) === JSON.stringify([...opt.value].sort())
+                    return (
+                      <button key={opt.label} type="button" onClick={() => setEnvelopeSides(opt.value)}
+                        style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                          borderColor: active ? '#f97316' : '#1a1a2e',
+                          backgroundColor: active ? '#f9731618' : '#0d0d14',
+                          color: active ? '#f97316' : '#6b7280',
+                        }}>
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>MA200 trend filter enforces side automatically; this sets the allowed set.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" value={stopLossPct} onChange={e => setStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Hard-floor SL (also used as trailing stop floor). 0 = disabled</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Trailing Stop Type</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { label: 'Fixed %', value: 'fixed' },
+                    { label: 'ATR', value: 'atr' },
+                    { label: 'None', value: 'none' },
+                  ].map(opt => (
+                    <button key={opt.value} type="button" onClick={() => setGtTrailingType(opt.value)}
+                      style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: gtTrailingType === opt.value ? '#f97316' : '#1a1a2e',
+                        backgroundColor: gtTrailingType === opt.value ? '#f9731618' : '#0d0d14',
+                        color: gtTrailingType === opt.value ? '#f97316' : '#6b7280',
+                      }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Trailing stop follows price peak. Original SL is always used as hard floor.</p>
+              </div>
+              {gtTrailingType === 'fixed' && (
+                <div>
+                  <label style={labelStyle}>Trailing Stop %</label>
+                  <input style={inputStyle} type="number" step="0.1" value={gtTrailingPct} onChange={e => setGtTrailingPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL = peak × (1 − pct%). e.g. 2 = SL trails 2% below peak price.</p>
+                </div>
+              )}
+              {gtTrailingType === 'atr' && (
+                <div>
+                  <label style={labelStyle}>ATR Multiplier</label>
+                  <input style={inputStyle} type="number" step="0.1" value={gtTrailingAtrMult} onChange={e => setGtTrailingAtrMult(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL = peak − ATR14 × multiplier. Higher = wider trailing stop.</p>
+                </div>
+              )}
             </>
           ) : (
             <>

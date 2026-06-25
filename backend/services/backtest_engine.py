@@ -865,3 +865,362 @@ def run_passivbot_dca_backtest(
         "equity_curve": equity_curve,
         "candles_used": len(candles),
     }
+
+
+# ── Fibonacci weights (local copy — avoids importing from bots package) ──────
+_GT_FIB_PRESETS: dict[int, list[float]] = {
+    2: [0.35, 0.65],
+    3: [0.15, 0.35, 0.50],
+    4: [0.10, 0.20, 0.30, 0.40],
+}
+
+
+def _gt_fib_weights(n: int) -> list[float]:
+    if n in _GT_FIB_PRESETS:
+        return _GT_FIB_PRESETS[n]
+    w = [1.5 ** i for i in range(n)]
+    t = sum(w)
+    return [x / t for x in w]
+
+
+def run_golden_trap_backtest(
+    candles_1m: list[dict],
+    allocation: float,
+    ma_period: int,
+    envelope_1_pct: float,
+    envelope_2_pct: float,
+    envelope_3_pct: float,
+    stop_loss_pct: float,
+    leverage: int = 1,
+    sides: list | None = None,
+    trailing_stop_type: str = "fixed",
+    trailing_stop_pct: float = 2.0,
+    trailing_stop_atr_mult: float = 1.5,
+) -> dict:
+    """
+    Simulate Golden Trap bot on 1-minute OHLCV candles.
+
+    Four improvements over run_envelope_dca_backtest:
+      1. Fibonacci position sizing: per_levels[j] = allocation * fib_weight[j]
+      2. MA200 trend filter: only places entries in the trend direction each candle
+      3. Immediate re-entry: if TP fires in step 1, new flat entries are also checked
+         against the SAME candle's OHLC (simulates the live 3-second re-entry check)
+      4. Trailing stop: fixed-% or ATR-based, with original fixed SL as hard floor
+
+    Same cancel/replace cycle as run_envelope_dca_backtest:
+      - Order placed on candle N can ONLY fill on candle N+1
+      - MA used for placement includes current close: closes[i-period+1:i+1]
+    """
+    if sides is None:
+        sides = ["long"]
+
+    if len(candles_1m) < ma_period + 5:
+        raise ValueError("Not enough candles for backtest")
+
+    fee_rate = 0.00035
+    closes   = [c["close"] for c in candles_1m]
+
+    envelopes  = [e / 100.0 for e in [envelope_1_pct, envelope_2_pct, envelope_3_pct] if e > 0]
+    n_levels   = len(envelopes)
+    weights    = _gt_fib_weights(n_levels)
+    per_levels = [allocation * w for w in weights]  # Fibonacci per-level margin
+
+    cash             = allocation
+    long_positions:  list[dict] = []   # [{"level": j, "entry_px": float, "size": float, "margin": float}]
+    short_positions: list[dict] = []
+
+    open_long_triggers:  dict[int, tuple[float, float]] = {}
+    open_short_triggers: dict[int, tuple[float, float]] = {}
+    pending_long_tp:  float | None = None
+    pending_long_sl:  float | None = None
+    pending_short_tp: float | None = None
+    pending_short_sl: float | None = None
+
+    # Trailing stop state
+    peak_long_price:   float | None = None
+    original_long_sl:  float | None = None
+    peak_short_price:  float | None = None
+    original_short_sl: float | None = None
+
+    trades:       list[dict] = []
+    equity_curve: list[dict] = []
+    max_equity   = allocation
+    max_drawdown = 0.0
+
+    def _atr14(i: int) -> float:
+        start  = max(0, i - 13)
+        recent = candles_1m[start:i + 1]
+        return sum(c["high"] - c["low"] for c in recent) / len(recent) if recent else 0.0
+
+    def _tsl_long(peak: float, orig: float | None, i: int) -> float | None:
+        if trailing_stop_type == "none":
+            return orig
+        sl = (peak - _atr14(i) * trailing_stop_atr_mult
+              if trailing_stop_type == "atr"
+              else peak * (1.0 - trailing_stop_pct / 100.0))
+        return max(sl, orig) if orig is not None else sl
+
+    def _tsl_short(peak: float, orig: float | None, i: int) -> float | None:
+        if trailing_stop_type == "none":
+            return orig
+        sl = (peak + _atr14(i) * trailing_stop_atr_mult
+              if trailing_stop_type == "atr"
+              else peak * (1.0 + trailing_stop_pct / 100.0))
+        return min(sl, orig) if orig is not None else sl
+
+    for i in range(ma_period, len(candles_1m)):
+        ma_curr = sum(closes[i - ma_period + 1:i + 1]) / ma_period
+        low     = candles_1m[i]["low"]
+        high    = candles_1m[i]["high"]
+        close   = candles_1m[i]["close"]
+        ts      = candles_1m[i]["time"]
+
+        long_tp_fired  = False
+        short_tp_fired = False
+
+        # ── STEP 1: CHECK FILLS (orders placed on the PREVIOUS candle) ────────
+
+        filled_long = []
+        for j, (limit_px, trigger_px) in list(open_long_triggers.items()):
+            margin = per_levels[j]
+            if low <= trigger_px and cash >= margin:
+                size = (margin * leverage) / limit_px
+                fee  = limit_px * size * fee_rate
+                cash -= margin + fee
+                long_positions.append({"level": j, "entry_px": limit_px, "size": size, "margin": margin})
+                trades.append({"type": "long_entry", "price": limit_px})
+                filled_long.append(j)
+        for j in filled_long:
+            del open_long_triggers[j]
+
+        filled_short = []
+        for j, (limit_px, trigger_px) in list(open_short_triggers.items()):
+            margin = per_levels[j]
+            if high >= trigger_px and cash >= margin:
+                size = (margin * leverage) / limit_px
+                fee  = limit_px * size * fee_rate
+                cash -= margin + fee
+                short_positions.append({"level": j, "entry_px": limit_px, "size": size, "margin": margin})
+                trades.append({"type": "short_entry", "price": limit_px})
+                filled_short.append(j)
+        for j in filled_short:
+            del open_short_triggers[j]
+
+        has_long  = len(long_positions) > 0
+        has_short = len(short_positions) > 0
+
+        if has_long:
+            if pending_long_sl is not None and low <= pending_long_sl:
+                sl_px = pending_long_sl
+                for pos in long_positions:
+                    pnl = (sl_px - pos["entry_px"]) * pos["size"]
+                    fee = sl_px * pos["size"] * fee_rate
+                    cash += pos["margin"] + pnl - fee
+                    trades.append({"type": "long_sl", "price": sl_px, "pnl": pnl - fee})
+                long_positions.clear()
+                has_long = False
+                peak_long_price  = None
+                original_long_sl = None
+            if has_long and pending_long_tp is not None and high >= pending_long_tp:
+                tp_px = pending_long_tp
+                for pos in long_positions:
+                    pnl = (tp_px - pos["entry_px"]) * pos["size"]
+                    fee = tp_px * pos["size"] * fee_rate
+                    cash += pos["margin"] + pnl - fee
+                    trades.append({"type": "long_close", "price": tp_px, "pnl": pnl - fee})
+                long_positions.clear()
+                has_long = False
+                peak_long_price  = None
+                original_long_sl = None
+                long_tp_fired    = True
+
+        if has_short:
+            if pending_short_sl is not None and high >= pending_short_sl:
+                sl_px = pending_short_sl
+                for pos in short_positions:
+                    pnl = (pos["entry_px"] - sl_px) * pos["size"]
+                    fee = sl_px * pos["size"] * fee_rate
+                    cash += pos["margin"] + pnl - fee
+                    trades.append({"type": "short_sl", "price": sl_px, "pnl": pnl - fee})
+                short_positions.clear()
+                has_short = False
+                peak_short_price  = None
+                original_short_sl = None
+            if has_short and pending_short_tp is not None and low <= pending_short_tp:
+                tp_px = pending_short_tp
+                for pos in short_positions:
+                    pnl = (pos["entry_px"] - tp_px) * pos["size"]
+                    fee = tp_px * pos["size"] * fee_rate
+                    cash += pos["margin"] + pnl - fee
+                    trades.append({"type": "short_close", "price": tp_px, "pnl": pnl - fee})
+                short_positions.clear()
+                has_short = False
+                peak_short_price  = None
+                original_short_sl = None
+                short_tp_fired    = True
+
+        # ── STEP 2: COUNT remaining pending, then CANCEL all ─────────────────
+        canceled_orders_buy  = len(open_long_triggers)
+        canceled_orders_sell = len(open_short_triggers)
+        open_long_triggers.clear()
+        open_short_triggers.clear()
+        pending_long_tp  = None
+        pending_long_sl  = None
+        pending_short_tp = None
+        pending_short_sl = None
+
+        has_long  = len(long_positions) > 0
+        has_short = len(short_positions) > 0
+
+        # ── STEP 3: MA200 trend filter → active_sides ────────────────────────
+        active_sides = list(sides)
+        if i >= 200:
+            ma200 = sum(closes[i - 199:i + 1]) / 200
+            if close > ma200:
+                active_sides = [s for s in sides if s == "long"]
+            elif close < ma200:
+                active_sides = [s for s in sides if s == "short"]
+
+        # ── STEP 4: PLACE NEW triggers ────────────────────────────────────────
+
+        if has_long:
+            total_sz       = sum(p["size"] for p in long_positions)
+            avg_entry_long = sum(p["entry_px"] * p["size"] for p in long_positions) / total_sz
+            if peak_long_price is None:
+                peak_long_price  = close
+                if stop_loss_pct > 0:
+                    original_long_sl = avg_entry_long * (1.0 - stop_loss_pct / 100.0)
+            else:
+                peak_long_price = max(peak_long_price, close)
+            pending_long_sl = _tsl_long(peak_long_price, original_long_sl, i)
+
+            long_start        = max(0, n_levels - canceled_orders_buy)
+            existing_long_lvl = {p["level"] for p in long_positions}
+            for j in range(long_start, n_levels):
+                if j not in existing_long_lvl:
+                    env        = envelopes[j]
+                    limit_px   = ma_curr * (1.0 - env)
+                    trigger_px = limit_px * 1.005
+                    open_long_triggers[j] = (limit_px, trigger_px)
+            pending_long_tp = ma_curr
+
+        if has_short:
+            total_sz        = sum(p["size"] for p in short_positions)
+            avg_entry_short = sum(p["entry_px"] * p["size"] for p in short_positions) / total_sz
+            if peak_short_price is None:
+                peak_short_price  = close
+                if stop_loss_pct > 0:
+                    original_short_sl = avg_entry_short * (1.0 + stop_loss_pct / 100.0)
+            else:
+                peak_short_price = min(peak_short_price, close)
+            pending_short_sl = _tsl_short(peak_short_price, original_short_sl, i)
+
+            short_start        = max(0, n_levels - canceled_orders_sell)
+            existing_short_lvl = {p["level"] for p in short_positions}
+            for j in range(short_start, n_levels):
+                if j not in existing_short_lvl:
+                    env      = envelopes[j]
+                    high_env = round(1.0 / (1.0 - env) - 1.0, 3)
+                    limit_px   = ma_curr * (1.0 + high_env)
+                    trigger_px = limit_px * 0.995
+                    open_short_triggers[j] = (limit_px, trigger_px)
+            pending_short_tp = ma_curr
+
+        if not has_long and "long" in active_sides:
+            for j in range(n_levels):
+                env        = envelopes[j]
+                limit_px   = ma_curr * (1.0 - env)
+                trigger_px = limit_px * 1.005
+                open_long_triggers[j] = (limit_px, trigger_px)
+
+        if not has_short and "short" in active_sides:
+            for j in range(n_levels):
+                env      = envelopes[j]
+                high_env = round(1.0 / (1.0 - env) - 1.0, 3)
+                limit_px   = ma_curr * (1.0 + high_env)
+                trigger_px = limit_px * 0.995
+                open_short_triggers[j] = (limit_px, trigger_px)
+
+        # ── STEP 4b: IMMEDIATE RE-ENTRY ──────────────────────────────────────
+        if long_tp_fired and not has_long and "long" in active_sides:
+            filled_re = []
+            for j, (limit_px, trigger_px) in list(open_long_triggers.items()):
+                margin = per_levels[j]
+                if low <= trigger_px and cash >= margin:
+                    size = (margin * leverage) / limit_px
+                    fee  = limit_px * size * fee_rate
+                    cash -= margin + fee
+                    long_positions.append({"level": j, "entry_px": limit_px, "size": size, "margin": margin})
+                    trades.append({"type": "long_entry_reentry", "price": limit_px})
+                    filled_re.append(j)
+            for j in filled_re:
+                del open_long_triggers[j]
+            if long_positions:
+                has_long = True
+                peak_long_price   = close
+                total_sz_re       = sum(p["size"] for p in long_positions)
+                avg_re            = sum(p["entry_px"] * p["size"] for p in long_positions) / total_sz_re
+                original_long_sl  = avg_re * (1.0 - stop_loss_pct / 100.0) if stop_loss_pct > 0 else None
+                pending_long_tp   = ma_curr
+                pending_long_sl   = _tsl_long(peak_long_price, original_long_sl, i)
+
+        if short_tp_fired and not has_short and "short" in active_sides:
+            filled_re = []
+            for j, (limit_px, trigger_px) in list(open_short_triggers.items()):
+                margin = per_levels[j]
+                if high >= trigger_px and cash >= margin:
+                    size = (margin * leverage) / limit_px
+                    fee  = limit_px * size * fee_rate
+                    cash -= margin + fee
+                    short_positions.append({"level": j, "entry_px": limit_px, "size": size, "margin": margin})
+                    trades.append({"type": "short_entry_reentry", "price": limit_px})
+                    filled_re.append(j)
+            for j in filled_re:
+                del open_short_triggers[j]
+            if short_positions:
+                has_short = True
+                peak_short_price  = close
+                total_sz_re       = sum(p["size"] for p in short_positions)
+                avg_re            = sum(p["entry_px"] * p["size"] for p in short_positions) / total_sz_re
+                original_short_sl = avg_re * (1.0 + stop_loss_pct / 100.0) if stop_loss_pct > 0 else None
+                pending_short_tp  = ma_curr
+                pending_short_sl  = _tsl_short(peak_short_price, original_short_sl, i)
+
+        # ── Equity ────────────────────────────────────────────────────────────
+        pos_value = 0.0
+        for pos in long_positions:
+            pos_value += pos["margin"] + (close - pos["entry_px"]) * pos["size"]
+        for pos in short_positions:
+            pos_value += pos["margin"] + (pos["entry_px"] - close) * pos["size"]
+        equity = cash + pos_value
+
+        if equity > max_equity:
+            max_equity = equity
+        dd = (max_equity - equity) / max_equity * 100
+        if dd > max_drawdown:
+            max_drawdown = dd
+
+        equity_curve.append({"time": ts, "value": round(equity, 2)})
+
+    final_equity = equity_curve[-1]["value"] if equity_curve else allocation
+    pnl_pct      = (final_equity - allocation) / allocation * 100
+
+    first_price = candles_1m[0]["close"]
+    last_price  = candles_1m[-1]["close"]
+    bnh_pct     = (last_price - first_price) / first_price * 100
+
+    close_trades = [t for t in trades if t["type"] in ("long_close", "short_close")]
+    winning      = [t for t in close_trades if t.get("pnl", 0) > 0]
+    win_rate     = len(winning) / len(close_trades) * 100 if close_trades else 0
+
+    return {
+        "pnl_pct":          round(pnl_pct, 2),
+        "pnl_usd":          round(final_equity - allocation, 2),
+        "final_equity":     round(final_equity, 2),
+        "total_trades":     len(trades),
+        "win_rate":         round(win_rate, 1),
+        "max_drawdown_pct": round(max_drawdown, 2),
+        "bnh_pct":          round(bnh_pct, 2),
+        "equity_curve":     equity_curve,
+        "candles_used":     len(candles_1m),
+    }

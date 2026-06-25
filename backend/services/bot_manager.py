@@ -108,6 +108,8 @@ class BotManager:
             await self._run_emacross_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "passivbot_dca":
             await self._run_passivbot_dca_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "golden_trap":
+            await self._run_golden_trap_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -327,6 +329,56 @@ class BotManager:
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
         )
         self._add_log(bot_id, "info", f"Passivbot DCA Grid Bot initializing — {coin}")
+        await bot.run()
+
+    async def _run_golden_trap_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.golden_trap.strategy import GoldenTrapBot
+
+        symbol = config.get("symbol", "BTC")
+        dex = config.get("dex", "") or None
+        coin = f"{dex}:{symbol}" if dex else symbol
+        allocated_usdc = float(config.get("allocated_usdc", 100))
+        ma_period = int(config.get("ma_period", 5))
+        envelopes = [
+            float(config.get("envelope_1_pct", 7)) / 100,
+            float(config.get("envelope_2_pct", 10)) / 100,
+            float(config.get("envelope_3_pct", 15)) / 100,
+        ]
+        stop_loss_pct = float(config.get("stop_loss_pct", 10))
+        sz_decimals = await get_sz_decimals(coin)
+        leverage = int(config.get("leverage", 1))
+        interval = config.get("interval", "4h")
+        sides = config.get("sides") or ["long"]
+        trailing_stop_type = config.get("trailing_stop_type", "fixed")
+        trailing_stop_pct = float(config.get("trailing_stop_pct", 2.0))
+        trailing_stop_atr_mult = float(config.get("trailing_stop_atr_mult", 1.5))
+
+        def log_callback(level: str, message: str):
+            self._add_log(bot_id, level, message)
+
+        bot = GoldenTrapBot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=allocated_usdc,
+            ma_period=ma_period,
+            envelopes=envelopes,
+            stop_loss_pct=stop_loss_pct,
+            sz_decimals=sz_decimals,
+            leverage=leverage,
+            interval=interval,
+            dex=dex,
+            sides=sides,
+            trailing_stop_type=trailing_stop_type,
+            trailing_stop_pct=trailing_stop_pct,
+            trailing_stop_atr_mult=trailing_stop_atr_mult,
+            log_callback=log_callback,
+        )
+
+        self._add_log(bot_id, "info", (
+            f"Golden Trap Bot initializing — {coin} MA={ma_period} envelopes={envelopes} "
+            f"sides={sides} trailing={trailing_stop_type} allocation=${allocated_usdc}"
+        ))
         await bot.run()
 
 
