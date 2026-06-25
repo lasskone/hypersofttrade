@@ -566,6 +566,8 @@ export function OverviewPanel({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [managingPos, setManagingPos] = useState<any>(null);
   const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
+  const [confirmingOrderIdx, setConfirmingOrderIdx] = useState<number | null>(null)
+  const [confirmingBulkCancel, setConfirmingBulkCancel] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [bots, setBots] = useState<any[]>([]);
 
@@ -598,6 +600,7 @@ export function OverviewPanel({
         })
       ))
       setSelectedOrders(new Set())
+      setConfirmingBulkCancel(false)
       fetchPortfolio()
     } catch (e: any) {
       console.error('Cancel selected failed:', e)
@@ -629,6 +632,11 @@ export function OverviewPanel({
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
+
+  // ── Reset bulk cancel confirmation when selection changes ─────────────────────
+  useEffect(() => {
+    setConfirmingBulkCancel(false)
+  }, [selectedOrders]);
 
   // ── Initial load ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1010,12 +1018,30 @@ export function OverviewPanel({
                 Select all
               </label>
               {selectedOrders.size > 0 && (
-                <button
-                  onClick={handleCancelSelected}
-                  className="text-xs px-3 py-1.5 rounded font-semibold"
-                  style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
-                  Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}
-                </button>
+                confirmingBulkCancel ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                      Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}?
+                    </span>
+                    <button
+                      onClick={handleCancelSelected}
+                      style={{ background: '#ef4444', color: 'white', borderRadius: 4, padding: '2px 8px', fontSize: 12, border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                      Yes
+                    </button>
+                    <button
+                      onClick={() => setConfirmingBulkCancel(false)}
+                      style={{ background: 'rgba(255,255,255,0.1)', color: '#9ca3af', borderRadius: 4, padding: '2px 8px', fontSize: 12, border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingBulkCancel(true)}
+                    className="text-xs px-3 py-1.5 rounded font-semibold"
+                    style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                    Cancel {selectedOrders.size} order{selectedOrders.size > 1 ? 's' : ''}
+                  </button>
+                )
               )}
             </div>
           )}
@@ -1069,12 +1095,28 @@ export function OverviewPanel({
                         </span>
                       </td>
                       <td className="px-5 py-3">
-                        <button
-                          onClick={() => handleCancelOrder(o?.coin, o?.order_id)}
-                          className="text-xs px-3 py-1 rounded font-semibold transition-opacity hover:opacity-80"
-                          style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
-                          Cancel
-                        </button>
+                        {confirmingOrderIdx === i ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Cancel order?</span>
+                            <button
+                              onClick={() => { handleCancelOrder(o?.coin, o?.order_id); setConfirmingOrderIdx(null) }}
+                              style={{ background: '#ef4444', color: 'white', borderRadius: 4, padding: '2px 8px', fontSize: 12, border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                              Yes
+                            </button>
+                            <button
+                              onClick={() => setConfirmingOrderIdx(null)}
+                              style={{ background: 'rgba(255,255,255,0.1)', color: '#9ca3af', borderRadius: 4, padding: '2px 8px', fontSize: 12, border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmingOrderIdx(i)}
+                            className="text-xs px-3 py-1 rounded font-semibold transition-opacity hover:opacity-80"
+                            style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                            Cancel
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
