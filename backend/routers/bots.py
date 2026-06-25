@@ -55,27 +55,38 @@ async def list_bots(wallet_address: str):
 @router.post("/")
 async def create_bot(body: CreateBotRequest):
     logger.info(f"POST /bots/ wallet={body.wallet_address} type={body.bot_type} symbol={body.symbol}")
-    db = _supabase()
-    user = db.table("users").select("id").ilike("wallet_address", body.wallet_address).limit(1).execute()
-    if not user.data:
-        raise HTTPException(status_code=404, detail="User not found")
-    user_id = user.data[0]["id"]
-    bot_id = str(uuid.uuid4())
-    config = {**body.config, "bot_type": body.bot_type, "symbol": body.symbol, "allocated_usdc": body.allocated_usdc}
-    db.table("bots").insert({
-        "id": bot_id,
-        "user_id": user_id,
-        "name": body.name,
-        "bot_type": body.bot_type,
-        "symbol": body.symbol,
-        "allocated_usdc": body.allocated_usdc,
-        "config": config,
-        "status": "stopped",
-        "desired_status": "stopped",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
-    return {"success": True, "bot_id": bot_id}
+    try:
+        db = _supabase()
+        user = db.table("users").select("id").ilike("wallet_address", body.wallet_address).limit(1).execute()
+        if not user.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_id = user.data[0]["id"]
+        bot_id = str(uuid.uuid4())
+        config = {**body.config, "bot_type": body.bot_type, "symbol": body.symbol, "allocated_usdc": body.allocated_usdc}
+        db.table("bots").insert({
+            "id": bot_id,
+            "user_id": user_id,
+            "name": body.name,
+            "bot_type": body.bot_type,
+            "symbol": body.symbol,
+            "allocated_usdc": body.allocated_usdc,
+            "config": config,
+            "status": "stopped",
+            "desired_status": "stopped",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+        logger.info(f"Bot created successfully: id={bot_id} type={body.bot_type} symbol={body.symbol}")
+        return {"success": True, "bot_id": bot_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            f"create_bot FAILED — type={body.bot_type} symbol={body.symbol} "
+            f"wallet={body.wallet_address}: {exc}",
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to create bot: {exc}")
 
 
 @router.post("/{bot_id}/start")
