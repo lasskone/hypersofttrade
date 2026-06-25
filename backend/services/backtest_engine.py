@@ -172,23 +172,27 @@ def run_envelope_dca_backtest(
     """
     Simulate Envelope DCA bot on 1-minute OHLCV candles.
 
-    Reproduces EXACT live EnvelopeBot logic including canceled_orders tracking:
+    Reproduces EXACT live EnvelopeBot cancel/replace cycle per candle:
 
-    Per candle:
-      1. Count pending trigger orders BEFORE cancel (canceled_orders_buy/sell).
-         Filled levels have disappeared from the book → count tells us what's remaining.
-      2. Cancel ALL triggers (clear both trigger dicts).
-      3. Manage long  position: SL on LOW, TP on HIGH, then place remaining long  triggers.
-      4. Manage short position: SL on HIGH, TP on LOW, then place remaining short triggers.
-      5. If flat: place ALL levels for each configured side.
-      6. Check fills on this candle: long  fill when LOW  <= trigger_px → entry at limit_px.
-                                     short fill when HIGH >= trigger_px → entry at limit_px.
+      1. CHECK FILLS on triggers placed on the PREVIOUS candle:
+           - Long  trigger: LOW  <= trigger_px → fill at limit_px
+           - Short trigger: HIGH >= trigger_px → fill at limit_px
+           - Long  SL (pending): LOW  <= pending_long_sl  → close at SL price  (checked first)
+           - Long  TP (pending): HIGH >= pending_long_tp  → close at TP price
+           - Short SL (pending): HIGH >= pending_short_sl → close at SL price  (checked first)
+           - Short TP (pending): LOW  <= pending_short_tp → close at TP price
+      2. COUNT remaining pending triggers → canceled_orders_buy / canceled_orders_sell.
+         CANCEL all pending (clear trigger dicts + pending TP/SL).
+      3. PLACE NEW triggers for this candle (checked on the NEXT candle):
+           - In long  position: place remaining long  levels + set pending TP/SL
+           - In short position: place remaining short levels + set pending TP/SL
+           - Flat on a side:    place ALL levels for that side
 
-    open_long_triggers / open_short_triggers: dict {level_idx → (limit_px, trigger_px)}
-      Carries pending trigger orders between candles — same role as the live bot's
-      frontendOpenOrders count.
+    KEY RULE: an order placed on candle N can ONLY fill on candle N+1.
+              It cannot fill on the same candle it was placed, and it is
+              cancelled before candle N+2 — exactly like the real bot.
 
-    - MA shifted by 1 bar (no lookahead): uses closes[i-period:i]
+    - MA computed at candle close (includes current close): closes[i-period+1:i+1]
     - size = (per_level * leverage) / limit_px  (identical to live bot)
     - fee_rate = 0.00035 (maker fee, trigger/limit orders)
     - Margin per level = per_level (locked from cash on entry, returned on close)
@@ -211,10 +215,15 @@ def run_envelope_dca_backtest(
     long_positions:  list[dict] = []   # [{"level": j, "entry_px": float, "size": float}, ...]
     short_positions: list[dict] = []
 
-    # Pending trigger orders carried between candles — mirrors the live bot's order book.
+    # Pending trigger orders placed on the PREVIOUS candle — checked on THIS candle.
     # {level_idx: (limit_px, trigger_px)}
     open_long_triggers:  dict[int, tuple[float, float]] = {}
     open_short_triggers: dict[int, tuple[float, float]] = {}
+    # Pending TP/SL prices placed on the previous candle — checked on THIS candle.
+    pending_long_tp:  float | None = None  # MA from previous candle
+    pending_long_sl:  float | None = None
+    pending_short_tp: float | None = None  # MA from previous candle
+    pending_short_sl: float | None = None
 
     trades:       list[dict] = []
     equity_curve: list[dict] = []
@@ -222,108 +231,16 @@ def run_envelope_dca_backtest(
     max_drawdown = 0.0
 
     for i in range(ma_period, len(candles_1m)):
-        # MA shifted by 1 — identical to live bot: closes[i-period:i], index i excluded
-        ma    = sum(closes[i - ma_period:i]) / ma_period
-        low   = candles_1m[i]["low"]
-        high  = candles_1m[i]["high"]
-        close = candles_1m[i]["close"]
-        ts    = candles_1m[i]["time"]
+        # MA at this candle's close — used for PLACING new orders in step 3
+        ma_curr = sum(closes[i - ma_period + 1:i + 1]) / ma_period
+        low     = candles_1m[i]["low"]
+        high    = candles_1m[i]["high"]
+        close   = candles_1m[i]["close"]
+        ts      = candles_1m[i]["time"]
 
-        # ── STEP 1: count pending triggers before cancel ──────────────────────
-        canceled_orders_buy  = len(open_long_triggers)
-        canceled_orders_sell = len(open_short_triggers)
+        # ── STEP 1: CHECK FILLS (orders placed on the PREVIOUS candle) ────────
 
-        # ── STEP 2: cancel all pending triggers — clean slate ─────────────────
-        open_long_triggers.clear()
-        open_short_triggers.clear()
-
-        has_long  = len(long_positions) > 0
-        has_short = len(short_positions) > 0
-
-        # ── STEP 3: manage long position ─────────────────────────────────────
-        if has_long:
-            total_sz  = sum(p["size"] for p in long_positions)
-            avg_entry = sum(p["entry_px"] * p["size"] for p in long_positions) / total_sz
-
-            # SL: low-triggered (worst-case first)
-            if stop_loss_pct > 0:
-                sl_px = avg_entry * (1.0 - stop_loss_pct / 100.0)
-                if low <= sl_px:
-                    for pos in long_positions:
-                        pnl = (sl_px - pos["entry_px"]) * pos["size"]
-                        fee = sl_px * pos["size"] * fee_rate
-                        cash += per_level + pnl - fee
-                        trades.append({"type": "long_sl", "price": sl_px, "pnl": pnl - fee})
-                    long_positions.clear()
-                    has_long = False
-
-            # TP: high-triggered, closes ALL at MA
-            if has_long and high >= ma:
-                for pos in long_positions:
-                    pnl = (ma - pos["entry_px"]) * pos["size"]
-                    fee = ma * pos["size"] * fee_rate
-                    cash += per_level + pnl - fee
-                    trades.append({"type": "long_close", "price": ma, "pnl": pnl - fee})
-                long_positions.clear()
-                has_long = False
-
-        # ── STEP 4: manage short position ────────────────────────────────────
-        if has_short:
-            total_sz  = sum(p["size"] for p in short_positions)
-            avg_entry = sum(p["entry_px"] * p["size"] for p in short_positions) / total_sz
-
-            # SL: high-triggered (worst-case first)
-            if stop_loss_pct > 0:
-                sl_px = avg_entry * (1.0 + stop_loss_pct / 100.0)
-                if high >= sl_px:
-                    for pos in short_positions:
-                        pnl = (pos["entry_px"] - sl_px) * pos["size"]
-                        fee = sl_px * pos["size"] * fee_rate
-                        cash += per_level + pnl - fee
-                        trades.append({"type": "short_sl", "price": sl_px, "pnl": pnl - fee})
-                    short_positions.clear()
-                    has_short = False
-
-            # TP: low-triggered, closes ALL at MA
-            if has_short and low <= ma:
-                for pos in short_positions:
-                    pnl = (pos["entry_px"] - ma) * pos["size"]
-                    fee = ma * pos["size"] * fee_rate
-                    cash += per_level + pnl - fee
-                    trades.append({"type": "short_close", "price": ma, "pnl": pnl - fee})
-                short_positions.clear()
-                has_short = False
-
-        # ── STEP 5: place trigger orders ─────────────────────────────────────
-        # Mirrors live bot logic exactly:
-        #   - In position: place only REMAINING levels (those not already filled).
-        #     n_levels - canceled_orders_buy/sell = how many were still pending last tick
-        #     (filled levels were absent from the pre-cancel count).
-        #   - Flat: place ALL levels.
-        # The `existing_levels` check prevents re-placing a level already in positions.
-        if "long" in sides:
-            long_start        = max(0, n_levels - canceled_orders_buy) if has_long else 0
-            existing_long_lvl = {p["level"] for p in long_positions}
-            for j in range(long_start, n_levels):
-                if j not in existing_long_lvl:
-                    env        = envelopes[j]
-                    limit_px   = ma * (1.0 - env)
-                    trigger_px = limit_px * 1.005
-                    open_long_triggers[j] = (limit_px, trigger_px)
-
-        if "short" in sides:
-            short_start        = max(0, n_levels - canceled_orders_sell) if has_short else 0
-            existing_short_lvl = {p["level"] for p in short_positions}
-            for j in range(short_start, n_levels):
-                if j not in existing_short_lvl:
-                    env      = envelopes[j]
-                    high_env = round(1.0 / (1.0 - env) - 1.0, 3)
-                    limit_px   = ma * (1.0 + high_env)
-                    trigger_px = limit_px * 0.995
-                    open_short_triggers[j] = (limit_px, trigger_px)
-
-        # ── STEP 6: check fills on this candle ────────────────────────────────
-        # Long fill: candle LOW <= trigger_px → entry at limit_px
+        # Long entry triggers: LOW <= trigger_px → fill at limit_px
         filled_long = []
         for j, (limit_px, trigger_px) in list(open_long_triggers.items()):
             if low <= trigger_px and cash >= per_level:
@@ -336,7 +253,7 @@ def run_envelope_dca_backtest(
         for j in filled_long:
             del open_long_triggers[j]
 
-        # Short fill: candle HIGH >= trigger_px → entry at limit_px
+        # Short entry triggers: HIGH >= trigger_px → fill at limit_px
         filled_short = []
         for j, (limit_px, trigger_px) in list(open_short_triggers.items()):
             if high >= trigger_px and cash >= per_level:
@@ -348,6 +265,116 @@ def run_envelope_dca_backtest(
                 filled_short.append(j)
         for j in filled_short:
             del open_short_triggers[j]
+
+        has_long  = len(long_positions) > 0
+        has_short = len(short_positions) > 0
+
+        # Long SL / TP (pending from previous candle) — SL checked first (worst-case)
+        if has_long:
+            if pending_long_sl is not None and low <= pending_long_sl:
+                sl_px = pending_long_sl
+                for pos in long_positions:
+                    pnl = (sl_px - pos["entry_px"]) * pos["size"]
+                    fee = sl_px * pos["size"] * fee_rate
+                    cash += per_level + pnl - fee
+                    trades.append({"type": "long_sl", "price": sl_px, "pnl": pnl - fee})
+                long_positions.clear()
+                has_long = False
+            if has_long and pending_long_tp is not None and high >= pending_long_tp:
+                tp_px = pending_long_tp
+                for pos in long_positions:
+                    pnl = (tp_px - pos["entry_px"]) * pos["size"]
+                    fee = tp_px * pos["size"] * fee_rate
+                    cash += per_level + pnl - fee
+                    trades.append({"type": "long_close", "price": tp_px, "pnl": pnl - fee})
+                long_positions.clear()
+                has_long = False
+
+        # Short SL / TP (pending from previous candle) — SL checked first (worst-case)
+        if has_short:
+            if pending_short_sl is not None and high >= pending_short_sl:
+                sl_px = pending_short_sl
+                for pos in short_positions:
+                    pnl = (pos["entry_px"] - sl_px) * pos["size"]
+                    fee = sl_px * pos["size"] * fee_rate
+                    cash += per_level + pnl - fee
+                    trades.append({"type": "short_sl", "price": sl_px, "pnl": pnl - fee})
+                short_positions.clear()
+                has_short = False
+            if has_short and pending_short_tp is not None and low <= pending_short_tp:
+                tp_px = pending_short_tp
+                for pos in short_positions:
+                    pnl = (pos["entry_px"] - tp_px) * pos["size"]
+                    fee = tp_px * pos["size"] * fee_rate
+                    cash += per_level + pnl - fee
+                    trades.append({"type": "short_close", "price": tp_px, "pnl": pnl - fee})
+                short_positions.clear()
+                has_short = False
+
+        # ── STEP 2: COUNT remaining pending, then CANCEL all ─────────────────
+        canceled_orders_buy  = len(open_long_triggers)
+        canceled_orders_sell = len(open_short_triggers)
+        open_long_triggers.clear()
+        open_short_triggers.clear()
+        pending_long_tp  = None
+        pending_long_sl  = None
+        pending_short_tp = None
+        pending_short_sl = None
+
+        # Refresh after all fills
+        has_long  = len(long_positions) > 0
+        has_short = len(short_positions) > 0
+
+        # ── STEP 3: PLACE NEW triggers (checked on the NEXT candle) ──────────
+
+        # In long position: place remaining levels + set TP/SL for next candle
+        if has_long:
+            total_sz       = sum(p["size"] for p in long_positions)
+            avg_entry_long = sum(p["entry_px"] * p["size"] for p in long_positions) / total_sz
+            long_start        = max(0, n_levels - canceled_orders_buy)
+            existing_long_lvl = {p["level"] for p in long_positions}
+            for j in range(long_start, n_levels):
+                if j not in existing_long_lvl:
+                    env        = envelopes[j]
+                    limit_px   = ma_curr * (1.0 - env)
+                    trigger_px = limit_px * 1.005
+                    open_long_triggers[j] = (limit_px, trigger_px)
+            pending_long_tp = ma_curr
+            if stop_loss_pct > 0:
+                pending_long_sl = avg_entry_long * (1.0 - stop_loss_pct / 100.0)
+
+        # In short position: place remaining levels + set TP/SL for next candle
+        if has_short:
+            total_sz        = sum(p["size"] for p in short_positions)
+            avg_entry_short = sum(p["entry_px"] * p["size"] for p in short_positions) / total_sz
+            short_start        = max(0, n_levels - canceled_orders_sell)
+            existing_short_lvl = {p["level"] for p in short_positions}
+            for j in range(short_start, n_levels):
+                if j not in existing_short_lvl:
+                    env      = envelopes[j]
+                    high_env = round(1.0 / (1.0 - env) - 1.0, 3)
+                    limit_px   = ma_curr * (1.0 + high_env)
+                    trigger_px = limit_px * 0.995
+                    open_short_triggers[j] = (limit_px, trigger_px)
+            pending_short_tp = ma_curr
+            if stop_loss_pct > 0:
+                pending_short_sl = avg_entry_short * (1.0 + stop_loss_pct / 100.0)
+
+        # Flat on a side: place ALL levels for that side
+        if not has_long and "long" in sides:
+            for j in range(n_levels):
+                env        = envelopes[j]
+                limit_px   = ma_curr * (1.0 - env)
+                trigger_px = limit_px * 1.005
+                open_long_triggers[j] = (limit_px, trigger_px)
+
+        if not has_short and "short" in sides:
+            for j in range(n_levels):
+                env      = envelopes[j]
+                high_env = round(1.0 / (1.0 - env) - 1.0, 3)
+                limit_px   = ma_curr * (1.0 + high_env)
+                trigger_px = limit_px * 0.995
+                open_short_triggers[j] = (limit_px, trigger_px)
 
         # ── Equity: cash + margin_in_use + unrealized PnL ────────────────────
         pos_value = 0.0
