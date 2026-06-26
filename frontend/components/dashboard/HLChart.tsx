@@ -67,6 +67,8 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const isDraggingRef      = useRef(false)
   const dragStartYRef      = useRef(0)
   const dragStartHeightRef = useRef(0)
+  const isCrosshairSyncRef = useRef(false)
+  const rsiDataMapRef      = useRef<Map<number, number>>(new Map())
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -265,12 +267,28 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         })))
         candleSeriesRef.current = candleSeries
 
-        // Crosshair OHLC
+        // Crosshair OHLC + sync to RSI chart
         chart.subscribeCrosshairMove((param: any) => {
-          if (!param.time) return
+          if (!param.time) {
+            if (rsiChartRef.current) {
+              try { rsiChartRef.current.clearCrosshairPosition() } catch {}
+            }
+            return
+          }
           const data = param.seriesData?.get(candleSeries)
           if (data && data.open !== undefined) {
             setOhlc({ time: param.time, open: data.open, high: data.high, low: data.low, close: data.close, volume: 0 })
+          }
+          // Sync crosshair to RSI chart
+          if (!isCrosshairSyncRef.current && rsiChartRef.current && rsiSeriesRef.current) {
+            isCrosshairSyncRef.current = true
+            const rsiVal = rsiDataMapRef.current.get(param.time as number)
+            if (rsiVal !== undefined) {
+              try { rsiChartRef.current.setCrosshairPosition(rsiVal, param.time, rsiSeriesRef.current) } catch {}
+            } else {
+              try { rsiChartRef.current.clearCrosshairPosition() } catch {}
+            }
+            isCrosshairSyncRef.current = false
           }
         })
 
@@ -337,8 +355,13 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           const rsiSeries = rsiChart.addSeries(LineSeries, {
             color: '#a78bfa', lineWidth: 1 as const, priceLineVisible: false,
           })
-          rsiSeries.setData(calcRSI(candles, rsiPeriod))
+          const rsiData = calcRSI(candles, rsiPeriod)
+          rsiSeries.setData(rsiData)
           rsiSeriesRef.current = rsiSeries
+          // Build time→value map for crosshair sync
+          const rsiMap = new Map<number, number>()
+          rsiData.forEach(d => rsiMap.set(d.time as number, d.value))
+          rsiDataMapRef.current = rsiMap
 
           // Overbought (70)
           const ob = rsiChart.addSeries(LineSeries, {
@@ -360,6 +383,24 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           })
           rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
             if (range) chart.timeScale().setVisibleLogicalRange(range)
+          })
+
+          // Sync crosshair from RSI chart back to main chart
+          rsiChart.subscribeCrosshairMove((param: any) => {
+            if (!param.time) {
+              if (!isCrosshairSyncRef.current) {
+                try { chart.clearCrosshairPosition() } catch {}
+              }
+              return
+            }
+            if (!isCrosshairSyncRef.current) {
+              const c = candleDataRef.current.find((x: any) => x.time === (param.time as number))
+              if (c) {
+                isCrosshairSyncRef.current = true
+                try { chart.setCrosshairPosition(c.close, param.time, candleSeries) } catch {}
+                isCrosshairSyncRef.current = false
+              }
+            }
           })
 
           // RSI resize observer
@@ -473,7 +514,11 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   // RSI period — update data without rebuilding
   useEffect(() => {
     if (!rsiChartRef.current || !candleDataRef.current.length || !rsiSeriesRef.current) return
-    rsiSeriesRef.current.setData(calcRSI(candleDataRef.current, rsiPeriod))
+    const rsiData = calcRSI(candleDataRef.current, rsiPeriod)
+    rsiSeriesRef.current.setData(rsiData)
+    const m = new Map<number, number>()
+    rsiData.forEach(d => m.set(d.time as number, d.value))
+    rsiDataMapRef.current = m
   }, [rsiPeriod, chartReady])
 
   // Height — resize without rebuilding
@@ -506,8 +551,13 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           })
           rsiChartRef.current = rsiChart
           const s = rsiChart.addSeries(LineSeries, { color: '#a78bfa', lineWidth: 1, priceLineVisible: false })
-          s.setData(calcRSI(candleDataRef.current, rsiPeriod))
+          const rsiData2 = calcRSI(candleDataRef.current, rsiPeriod)
+          s.setData(rsiData2)
           rsiSeriesRef.current = s
+          // Build time→value map for crosshair sync
+          const rsiMap2 = new Map<number, number>()
+          rsiData2.forEach((d: any) => rsiMap2.set(d.time as number, d.value))
+          rsiDataMapRef.current = rsiMap2
           const ob = rsiChart.addSeries(LineSeries, { color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false })
           ob.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 70 })))
           const os = rsiChart.addSeries(LineSeries, { color: 'rgba(0,212,170,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false })
@@ -517,6 +567,23 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           })
           rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
             if (range && chartRef.current) chartRef.current.timeScale().setVisibleLogicalRange(range)
+          })
+          // Sync crosshair from RSI chart back to main chart
+          rsiChart.subscribeCrosshairMove((param: any) => {
+            if (!param.time) {
+              if (!isCrosshairSyncRef.current && chartRef.current) {
+                try { chartRef.current.clearCrosshairPosition() } catch {}
+              }
+              return
+            }
+            if (!isCrosshairSyncRef.current && chartRef.current && candleSeriesRef.current) {
+              const c = candleDataRef.current.find((x: any) => x.time === (param.time as number))
+              if (c) {
+                isCrosshairSyncRef.current = true
+                try { chartRef.current.setCrosshairPosition(c.close, param.time, candleSeriesRef.current) } catch {}
+                isCrosshairSyncRef.current = false
+              }
+            }
           })
         })
       }
