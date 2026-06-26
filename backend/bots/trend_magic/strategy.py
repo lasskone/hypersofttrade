@@ -96,6 +96,8 @@ class TrendMagicBot:
         trailing_stop_pct:  float             = 1.0,
         sides:              Optional[list[str]] = None,
         dex:                Optional[str]     = None,
+        scan_pairs:         bool              = False,
+        scan_symbols:       list              = [],
         log_callback=None,
     ):
         self.private_key       = private_key
@@ -114,9 +116,16 @@ class TrendMagicBot:
         self.trailing_stop_pct = trailing_stop_pct
         self.sides             = [s.lower() for s in (sides or ["long", "short"])]
         self.dex               = dex
+        self.scan_pairs        = scan_pairs
+        self.scan_symbols      = list(scan_symbols) if scan_symbols else []
         self.log               = log_callback or (lambda level, msg: None)
         self._running          = False
         self._exchange         = None
+
+        # Scanner per-pair state (populated in _run_scanner)
+        self._pair_state:  dict = {}   # coin -> {in_long, entry_price, peak_price, sl_oid}
+        self._scan_sz_dec: dict = {}   # coin -> sz_decimals
+        self._scan_coins:  list = []   # ordered list of coin strings
 
         interval_ms_map = {
             "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000,
@@ -412,6 +421,505 @@ class TrendMagicBot:
         self.log("info", f"Trailing SL: peak={self._peak_price:.4f} sl={sl:.4f}")
         return sl
 
+    # ── Scanner helpers ───────────────────────────────────────────────────────
+
+    async def _sc_fetch_candles(self, coin: str, limit: int = 230) -> list:
+        end_time   = int(time.time() * 1000)
+        start_time = end_time - self._interval_ms * limit
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(INFO_ENDPOINT, json={
+                "type": "candleSnapshot",
+                "req": {"coin": coin, "interval": self.interval,
+                        "startTime": start_time, "endTime": end_time},
+            })
+            candles = resp.json()
+        return [
+            {"time": int(c["t"]) // 1000,
+             "open": float(c["o"]), "high": float(c["h"]),
+             "low":  float(c["l"]), "close": float(c["c"]),
+             "volume": float(c["v"])}
+            for c in candles
+        ]
+
+    async def _sc_get_sz_decimals(self, coin: str) -> int:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(INFO_ENDPOINT, json={"type": "meta"})
+                meta = resp.json()
+            coin_short = coin.split(":")[-1] if ":" in coin else coin
+            for asset in (meta.get("universe") or []):
+                if asset.get("name") == coin_short:
+                    return int(asset.get("szDecimals", 3))
+        except Exception as e:
+            self.log("warning", f"Failed to get sz_decimals for {coin}: {e}")
+        return 3
+
+    async def _sc_set_leverage(self, coin: str) -> None:
+        try:
+            result = await asyncio.to_thread(
+                self._exchange.update_leverage, self.leverage, coin, False)
+            if (result or {}).get("status") != "ok":
+                self.log("warning", f"[{coin}] Leverage response: {result}")
+            else:
+                self.log("info", f"[{coin}] Leverage set to {self.leverage}x")
+        except Exception as e:
+            self.log("warning", f"[{coin}] Failed to set leverage: {e}")
+
+    async def _sc_fetch_all_positions(self) -> dict:
+        """Fetch one clearinghouse snapshot; return {coin: {szi, entry_px}} for all scan coins."""
+        payload: dict = {"type": "clearinghouseState", "user": self.master_address}
+        if self.dex:
+            payload["dex"] = self.dex
+        result = {c: {"szi": 0.0, "entry_px": 0.0} for c in self._scan_coins}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(INFO_ENDPOINT, json=payload,
+                                         headers={"Content-Type": "application/json"})
+                state = resp.json()
+            for ap in (state.get("assetPositions") or []):
+                if not isinstance(ap, dict): continue
+                pos = ap.get("position") or {}
+                if not isinstance(pos, dict): continue
+                pos_coin = pos.get("coin", "")
+                szi = float(pos.get("szi", "0") or "0")
+                if szi == 0.0: continue
+                for sc in self._scan_coins:
+                    sc_short = sc.split(":")[-1] if ":" in sc else sc
+                    if pos_coin in (sc, sc_short):
+                        result[sc] = {"szi": szi,
+                                      "entry_px": float(pos.get("entryPx", "0") or "0")}
+                        break
+        except Exception as e:
+            self.log("warning", f"Failed to fetch all positions: {e}")
+        return result
+
+    async def _sc_fetch_all_orders(self) -> dict:
+        """Fetch frontendOpenOrders once; return {coin: [orders]} for all scan coins."""
+        result = {c: [] for c in self._scan_coins}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(INFO_ENDPOINT,
+                    json={"type": "frontendOpenOrders", "user": self.master_address})
+                orders = resp.json()
+            if not isinstance(orders, list): return result
+            for order in orders:
+                if not isinstance(order, dict): continue
+                order_coin = order.get("coin", "")
+                for sc in self._scan_coins:
+                    sc_short = sc.split(":")[-1] if ":" in sc else sc
+                    if order_coin in (sc, sc_short):
+                        result[sc].append(order)
+                        break
+        except Exception as e:
+            self.log("warning", f"Failed to fetch all orders: {e}")
+        return result
+
+    async def _sc_cancel_orders(self, coin: str, orders: list, keep_sl_oid: Optional[int]) -> None:
+        for order in orders:
+            oid = order.get("oid")
+            if oid is None or oid == keep_sl_oid: continue
+            try:
+                await asyncio.to_thread(self._exchange.cancel, coin, oid)
+                self.log("info", f"[{coin}] Cancelled {oid}")
+            except Exception as e:
+                self.log("warning", f"[{coin}] Cancel {oid} failed: {e}")
+
+    async def _sc_market_order(self, coin: str, sz_dec: int, is_buy: bool, size: float) -> bool:
+        try:
+            size = round_size(size, sz_dec)
+            if size <= 0:
+                self.log("warning", f"[{coin}] Market order size rounds to 0")
+                return False
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"},
+                                         headers={"Content-Type": "application/json"})
+                mids = resp.json()
+            coin_short = coin.split(":")[-1] if ":" in coin else coin
+            mid = float(mids.get(coin_short) or mids.get(coin) or 0)
+            if mid <= 0:
+                self.log("warning", f"[{coin}] Could not fetch mid price")
+                return False
+            limit_px = round_price(mid * 1.01 if is_buy else mid * 0.99)
+            result   = await asyncio.to_thread(
+                self._exchange.order, coin, is_buy, size, limit_px,
+                {"limit": {"tif": "Ioc"}}, False,
+            )
+            statuses = ((result.get("response") or {}).get("data") or {}).get("statuses", [{}])
+            status   = statuses[0] if statuses else {}
+            if "error" in status:
+                self.log("error", f"[{coin}] Market order rejected: {status['error']}")
+                return False
+            self.log("info", f"[{coin}] {'Buy' if is_buy else 'Sell'} IOC sz={size} @ ~{limit_px:.4f}")
+            return True
+        except Exception as e:
+            self.log("error", f"[{coin}] Market order failed: {e}")
+            return False
+
+    async def _sc_dca_limit(self, coin: str, sz_dec: int, is_buy: bool, size: float, price: float) -> Optional[int]:
+        try:
+            size  = round_size(size, sz_dec)
+            if size <= 0: return None
+            price = round_price(price)
+            result = await asyncio.to_thread(
+                self._exchange.order, coin, is_buy, size, price,
+                {"limit": {"tif": "Gtc"}}, False,
+            )
+            statuses = ((result.get("response") or {}).get("data") or {}).get("statuses", [{}])
+            status   = statuses[0] if statuses else {}
+            if "error" in status:
+                self.log("error", f"[{coin}] DCA limit rejected: {status['error']}")
+                return None
+            oid = ((status.get("resting") or {}).get("oid")
+                   or (status.get("filled") or {}).get("oid"))
+            self.log("info", f"[{coin}] {'Buy' if is_buy else 'Sell'} DCA @ {price} oid={oid}")
+            return oid
+        except Exception as e:
+            self.log("error", f"[{coin}] DCA limit failed: {e}")
+            return None
+
+    async def _sc_reduce_limit(self, coin: str, sz_dec: int, is_buy: bool, size: float, price: float) -> Optional[int]:
+        try:
+            size  = round_size(size, sz_dec)
+            if size <= 0: return None
+            price = round_price(price)
+            result = await asyncio.to_thread(
+                self._exchange.order, coin, is_buy, size, price,
+                {"limit": {"tif": "Gtc"}}, True,
+            )
+            statuses = ((result.get("response") or {}).get("data") or {}).get("statuses", [{}])
+            status   = statuses[0] if statuses else {}
+            if "error" in status:
+                self.log("error", f"[{coin}] TP limit rejected: {status['error']}")
+                return None
+            oid = ((status.get("resting") or {}).get("oid")
+                   or (status.get("filled") or {}).get("oid"))
+            self.log("info", f"[{coin}] {'Buy' if is_buy else 'Sell'} TP @ {price} oid={oid}")
+            return oid
+        except Exception as e:
+            self.log("error", f"[{coin}] TP limit failed: {e}")
+            return None
+
+    async def _sc_stop_market(self, coin: str, sz_dec: int, is_buy: bool, size: float, trigger_px: float) -> Optional[int]:
+        try:
+            size       = round_size(size, sz_dec)
+            if size <= 0: return None
+            trigger_px = round_price(trigger_px)
+            result = await asyncio.to_thread(
+                self._exchange.order, coin, is_buy, size, trigger_px,
+                {"trigger": {"triggerPx": trigger_px, "isMarket": True, "tpsl": "sl"}}, True,
+            )
+            statuses = ((result.get("response") or {}).get("data") or {}).get("statuses", [{}])
+            status   = statuses[0] if statuses else {}
+            if "error" in status:
+                self.log("error", f"[{coin}] Stop-market rejected: {status['error']}")
+                return None
+            oid = ((status.get("resting") or {}).get("oid")
+                   or (status.get("filled") or {}).get("oid"))
+            self.log("info", f"[{coin}] {'Buy' if is_buy else 'Sell'} stop @ {trigger_px} oid={oid}")
+            return oid
+        except Exception as e:
+            self.log("error", f"[{coin}] Stop-market failed: {e}")
+            return None
+
+    def _sc_trailing_sl(self, pair_st: dict, is_long: bool, cur_price: float) -> float:
+        """Update peak for a pair and return new trailing SL price."""
+        if pair_st["peak_price"] is None:
+            pair_st["peak_price"] = cur_price
+        if is_long:
+            pair_st["peak_price"] = max(pair_st["peak_price"], cur_price)
+            sl = pair_st["peak_price"] * (1.0 - self.trailing_stop_pct / 100.0)
+        else:
+            pair_st["peak_price"] = min(pair_st["peak_price"], cur_price)
+            sl = pair_st["peak_price"] * (1.0 + self.trailing_stop_pct / 100.0)
+        return sl
+
+    async def _sc_modify_sl(self, coin: str, sz_dec: int, pair_st: dict,
+                             is_buy: bool, size: float, new_sl_px: float) -> None:
+        new_sl_px  = round_price(new_sl_px)
+        size       = round_size(size, sz_dec)
+        if size <= 0: return
+        order_type = {"trigger": {"triggerPx": new_sl_px, "isMarket": True, "tpsl": "sl"}}
+        sl_oid = pair_st["sl_oid"]
+        if sl_oid is not None:
+            try:
+                result = await asyncio.to_thread(
+                    self._exchange.modify_order,
+                    sl_oid, coin, is_buy, size, new_sl_px, order_type, True,
+                )
+                statuses = ((result.get("response") or {}).get("data") or {}).get("statuses", [{}])
+                status   = statuses[0] if statuses else {}
+                if "error" in status:
+                    self.log("info", f"[{coin}] SL modify failed — replacing")
+                    pair_st["sl_oid"] = None
+                    pair_st["sl_oid"] = await self._sc_stop_market(coin, sz_dec, is_buy, size, new_sl_px)
+                else:
+                    new_oid = (status.get("resting") or {}).get("oid") or sl_oid
+                    self.log("info", f"[{coin}] Trailing SL → {new_sl_px:.4f} oid={new_oid}")
+                    pair_st["sl_oid"] = new_oid
+            except Exception as e:
+                self.log("warning", f"[{coin}] SL modify exception ({e}) — replacing")
+                pair_st["sl_oid"] = None
+                pair_st["sl_oid"] = await self._sc_stop_market(coin, sz_dec, is_buy, size, new_sl_px)
+        else:
+            pair_st["sl_oid"] = await self._sc_stop_market(coin, sz_dec, is_buy, size, new_sl_px)
+
+    async def _sc_enter(self, coin: str, sz_dec: int, pair_st: dict,
+                        is_long: bool, cur_price: float, alloc: float) -> None:
+        """Market entry for a scan pair → 2s wait → DCA limits + TP + initial SL."""
+        side_str   = "Long" if is_long else "Short"
+        initial_sz = (_FIB_WEIGHTS[0] * alloc * self.leverage) / cur_price
+
+        success = await self._sc_market_order(coin, sz_dec, is_long, initial_sz)
+        if not success:
+            return
+
+        await asyncio.sleep(2)
+
+        all_pos  = await self._sc_fetch_all_positions()
+        real_pos = all_pos.get(coin, {"szi": 0.0, "entry_px": 0.0})
+        if real_pos["szi"] == 0.0:
+            self.log("warning", f"[{coin}] {side_str} entry not confirmed after 2s")
+            return
+
+        entry_px = real_pos["entry_px"] or cur_price
+        pair_st["in_long"]     = is_long
+        pair_st["entry_price"] = entry_px
+        pair_st["peak_price"]  = entry_px
+
+        close_buy  = not is_long
+        current_sz = round_size(abs(real_pos["szi"]), sz_dec)
+
+        for j, dca_pct in enumerate(self.dca_pcts):
+            dca_px = (entry_px * (1 - dca_pct / 100) if is_long
+                      else entry_px * (1 + dca_pct / 100))
+            dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+            await self._sc_dca_limit(coin, sz_dec, is_long, dca_sz, dca_px)
+
+        tp_px = (entry_px * (1 + self.tp_pct / 100) if is_long
+                 else entry_px * (1 - self.tp_pct / 100))
+        await self._sc_reduce_limit(coin, sz_dec, close_buy, current_sz, tp_px)
+
+        sl_px = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
+                 else entry_px * (1 + self.trailing_stop_pct / 100))
+        pair_st["sl_oid"] = await self._sc_stop_market(coin, sz_dec, close_buy, current_sz, sl_px)
+
+        self.log("info", (
+            f"[{coin}] {side_str} entered — entry={entry_px:.4f} sz={current_sz} "
+            f"tp={tp_px:.4f} sl={sl_px:.4f} sl_oid={pair_st['sl_oid']}"
+        ))
+
+    # ── Scanner tick ──────────────────────────────────────────────────────────
+
+    async def _scan_tick(self) -> None:
+        fetch_limit = max(self.ema_period + self.rsi_period + 20, 230)
+
+        # Parallel: positions + orders + all candle sets
+        candle_tasks = [self._sc_fetch_candles(c, fetch_limit) for c in self._scan_coins]
+        results = await asyncio.gather(
+            self._sc_fetch_all_positions(),
+            self._sc_fetch_all_orders(),
+            *candle_tasks,
+            return_exceptions=True,
+        )
+        all_positions = results[0] if not isinstance(results[0], Exception) else {}
+        all_orders    = results[1] if not isinstance(results[1], Exception) else {}
+        all_candles   = results[2:]
+
+        active_count = sum(
+            1 for c in self._scan_coins
+            if isinstance(all_positions.get(c), dict) and all_positions[c]["szi"] != 0.0
+        )
+
+        pairs_with_position: list = []
+
+        for idx, coin in enumerate(self._scan_coins):
+            sz_dec    = self._scan_sz_dec.get(coin, 3)
+            pair_st   = self._pair_state[coin]
+            orders    = all_orders.get(coin, []) if isinstance(all_orders, dict) else []
+            real_pos  = (all_positions.get(coin, {"szi": 0.0, "entry_px": 0.0})
+                         if isinstance(all_positions, dict) else {"szi": 0.0, "entry_px": 0.0})
+            candles   = all_candles[idx] if isinstance(all_candles[idx], list) else []
+
+            real_szi      = real_pos["szi"]
+            real_entry_px = real_pos["entry_px"]
+            has_long      = real_szi > 0
+            has_short     = real_szi < 0
+            has_pos       = has_long or has_short
+
+            if len(candles) < self.ema_period + self.rsi_period + 5:
+                self.log("warning", f"[{coin}] Not enough candles — skipping")
+                continue
+
+            closes     = [c["close"] for c in candles]
+            cur_price  = closes[-1]
+            rsi_vals   = compute_rsi(closes, self.rsi_period)
+            ema_vals   = compute_ema(closes, self.ema_period)
+            rsi_prev   = rsi_vals[-2]
+            ema_prev   = ema_vals[-2]
+            close_prev = closes[-2]
+
+            long_signal  = (rsi_prev is not None and ema_prev is not None
+                            and rsi_prev > self.rsi_overbought and close_prev > ema_prev)
+            short_signal = (rsi_prev is not None and ema_prev is not None
+                            and rsi_prev < self.rsi_oversold  and close_prev < ema_prev)
+
+            self.log("info", (
+                f"[{coin}] price={cur_price:.4f} "
+                f"rsi={f'{rsi_prev:.1f}' if rsi_prev is not None else 'N/A'} "
+                f"ema={f'{ema_prev:.4f}' if ema_prev is not None else 'N/A'} "
+                f"szi={real_szi} long={long_signal} short={short_signal}"
+            ))
+
+            # Cancel non-SL orders
+            await self._sc_cancel_orders(coin, orders, pair_st["sl_oid"])
+
+            if not has_pos:
+                if pair_st["sl_oid"] is not None:
+                    try:
+                        await asyncio.to_thread(self._exchange.cancel, coin, pair_st["sl_oid"])
+                    except Exception:
+                        pass
+                    pair_st["sl_oid"] = None
+                pair_st["peak_price"]  = None
+                pair_st["entry_price"] = None
+                pair_st["in_long"]     = None
+
+                alloc = self.allocated_usdc / max(active_count + 1, 1)
+                if "long" in self.sides and long_signal:
+                    self.log("info", f"[{coin}] Long signal — entering (alloc=${alloc:.2f})")
+                    await self._sc_enter(coin, sz_dec, pair_st, True, cur_price, alloc)
+                    active_count += 1
+                elif "short" in self.sides and short_signal:
+                    self.log("info", f"[{coin}] Short signal — entering (alloc=${alloc:.2f})")
+                    await self._sc_enter(coin, sz_dec, pair_st, False, cur_price, alloc)
+                    active_count += 1
+            else:
+                is_long   = has_long
+                close_buy = not is_long
+
+                if pair_st["entry_price"] is None:
+                    pair_st["entry_price"] = real_entry_px
+                    pair_st["in_long"]     = is_long
+
+                entry_px  = pair_st["entry_price"]
+                close_sz  = round_size(abs(real_szi), sz_dec)
+                alloc     = self.allocated_usdc / max(active_count, 1)
+
+                tp_px = (entry_px * (1 + self.tp_pct / 100) if is_long
+                         else entry_px * (1 - self.tp_pct / 100))
+                await self._sc_reduce_limit(coin, sz_dec, close_buy, close_sz, tp_px)
+
+                trailing_sl = self._sc_trailing_sl(pair_st, is_long, cur_price)
+                await self._sc_modify_sl(coin, sz_dec, pair_st, close_buy, close_sz, trailing_sl)
+
+                # DCA re-place
+                n_dca      = len(self.dca_pcts)
+                buy_count  = sum(1 for o in orders if o.get("side") == "B" and not o.get("reduceOnly", False))
+                sell_count = sum(1 for o in orders if o.get("side") == "A" and not o.get("reduceOnly", False))
+                if is_long:
+                    dca_start = max(0, n_dca - buy_count)
+                    for j in range(dca_start, n_dca):
+                        dca_px = entry_px * (1 - self.dca_pcts[j] / 100)
+                        dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+                        await self._sc_dca_limit(coin, sz_dec, True, dca_sz, dca_px)
+                else:
+                    dca_start = max(0, n_dca - sell_count)
+                    for j in range(dca_start, n_dca):
+                        dca_px = entry_px * (1 + self.dca_pcts[j] / 100)
+                        dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+                        await self._sc_dca_limit(coin, sz_dec, False, dca_sz, dca_px)
+
+                pairs_with_position.append(coin)
+
+        # 3s re-check for TP fills
+        if pairs_with_position:
+            await asyncio.sleep(3)
+            rechk = await self._sc_fetch_all_positions()
+            for coin in pairs_with_position:
+                pos = rechk.get(coin, {"szi": 0.0, "entry_px": 0.0})
+                if pos["szi"] == 0.0:
+                    self.log("info", f"[{coin}] TP fill detected — resetting")
+                    pair_st = self._pair_state[coin]
+                    if pair_st["sl_oid"] is not None:
+                        try:
+                            await asyncio.to_thread(self._exchange.cancel, coin, pair_st["sl_oid"])
+                        except Exception:
+                            pass
+                        pair_st["sl_oid"] = None
+                    pair_st["peak_price"]  = None
+                    pair_st["entry_price"] = None
+                    pair_st["in_long"]     = None
+
+    # ── Scanner main loop ─────────────────────────────────────────────────────
+
+    async def _run_scanner(self) -> None:
+        """Initialize all scan pairs then run _scan_tick every candle close."""
+        self._scan_coins = [
+            f"{self.dex}:{sym}" if self.dex else sym
+            for sym in self.scan_symbols
+        ]
+
+        if not self._scan_coins:
+            self.log("error", "Scanner started with empty scan_symbols — aborting")
+            return
+
+        self.log("info", (
+            f"Trend Magic Scanner starting — {len(self._scan_coins)} pairs: {self._scan_coins} | "
+            f"{self.interval} | RSI({self.rsi_period}) | EMA({self.ema_period}) | "
+            f"TP={self.tp_pct}% | TSL={self.trailing_stop_pct}% | "
+            f"Sides={self.sides} | Total alloc=${self.allocated_usdc}"
+        ))
+
+        for coin in self._scan_coins:
+            self._pair_state[coin] = {
+                "in_long":     None,
+                "entry_price": None,
+                "peak_price":  None,
+                "sl_oid":      None,
+            }
+
+        # Parallel: fetch sz_decimals + set leverage for every pair
+        sz_results = await asyncio.gather(
+            *[self._sc_get_sz_decimals(c) for c in self._scan_coins],
+            return_exceptions=True,
+        )
+        await asyncio.gather(
+            *[self._sc_set_leverage(c) for c in self._scan_coins],
+            return_exceptions=True,
+        )
+        for i, coin in enumerate(self._scan_coins):
+            self._scan_sz_dec[coin] = (
+                int(sz_results[i]) if not isinstance(sz_results[i], Exception) else 3
+            )
+
+        while self._running:
+            try:
+                await self._scan_tick()
+            except asyncio.CancelledError:
+                self.log("info", "Scanner cancelled — cleaning up...")
+                try:
+                    all_orders = await self._sc_fetch_all_orders()
+                    for coin in self._scan_coins:
+                        for order in all_orders.get(coin, []):
+                            oid = order.get("oid")
+                            if oid:
+                                try:
+                                    await asyncio.to_thread(self._exchange.cancel, coin, oid)
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                self.log("error", f"Scanner tick error: {e}")
+
+            sleep_secs = self._seconds_until_next_candle()
+            self.log("info", f"Scanner sleeping {sleep_secs:.0f}s until next {self.interval} candle")
+            await asyncio.sleep(sleep_secs)
+
+        self._running = False
+        self.log("info", "Trend Magic Scanner stopped.")
+
     # ── Entry ─────────────────────────────────────────────────────────────────
 
     async def _enter_position(self, is_long: bool, cur_price: float) -> None:
@@ -463,10 +971,8 @@ class TrendMagicBot:
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
-    async def run(self):
-        """Main bot loop — runs indefinitely until cancelled."""
-        self._running = True
-        self._init_exchange()
+    async def _run_single(self):
+        """Single-pair loop — runs until cancelled."""
         await self._set_leverage()
 
         fetch_limit = max(self.ema_period + self.rsi_period + 20, 230)
@@ -623,3 +1129,12 @@ class TrendMagicBot:
 
         self._running = False
         self.log("info", "Trend Magic Bot stopped.")
+
+    async def run(self):
+        """Dispatcher — routes to scanner or single-pair loop."""
+        self._running = True
+        self._init_exchange()
+        if self.scan_pairs and self.scan_symbols:
+            await self._run_scanner()
+        else:
+            await self._run_single()

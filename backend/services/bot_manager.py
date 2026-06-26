@@ -409,6 +409,8 @@ class BotManager:
             trailing_stop_pct=float(config.get("trailing_stop_pct", 1.0)),
             sides=config.get("sides") or ["long", "short"],
             dex=dex,
+            scan_pairs=config.get("scan_pairs", False),
+            scan_symbols=config.get("scan_symbols") or [],
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
         )
         self._add_log(bot_id, "info", (

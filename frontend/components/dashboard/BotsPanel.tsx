@@ -832,6 +832,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [tmTpPct, setTmTpPct] = useState('5.0')
   const [tmTrailingPct, setTmTrailingPct] = useState('1.0')
   const [tmInterval, setTmInterval] = useState('1h')
+  const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>('single')
+  const [tmScanSymbols, setTmScanSymbols] = useState<string[]>([])
+  const [tmScanInput, setTmScanInput] = useState('')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -872,7 +875,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
           wallet_address: walletAddress,
           name,
           bot_type: botType,
-          symbol,
+          symbol: (botType === 'trend_magic' && tmScanMode === 'multi') ? (tmScanSymbols[0] || symbol) : symbol,
           allocated_usdc: parseFloat(allocatedUsdc),
           config: botType === 'grid' ? {
             dex,
@@ -950,6 +953,8 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             leverage: parseInt(leverage),
             interval: tmInterval,
             sides: tmSides,
+            scan_pairs: tmScanMode === 'multi',
+            scan_symbols: tmScanMode === 'multi' ? tmScanSymbols : [],
           } : {
             dex,
             direction: pbDirection,
@@ -1005,6 +1010,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
+          {!(botType === 'trend_magic' && tmScanMode === 'multi') && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
               <label style={labelStyle}>MARKET</label>
@@ -1070,6 +1076,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
               )}
             </div>
           </div>
+          )}
           <div>
             <label style={labelStyle}>Allocation (USDC)</label>
             <input style={inputStyle} type="number" value={allocatedUsdc} onChange={e => setAllocatedUsdc(e.target.value)} />
@@ -1496,6 +1503,55 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
           ) : botType === 'trend_magic' ? (
             <>
               <div>
+                <label style={labelStyle}>Mode</label>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #1a1a2e', width: 'fit-content' }}>
+                  {(['single', 'multi'] as const).map(mode => (
+                    <button key={mode} type="button" onClick={() => setTmScanMode(mode)}
+                      style={{ padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: tmScanMode === mode ? '#8b5cf6' : '#13131f',
+                        color: tmScanMode === mode ? 'white' : '#6b7280',
+                      }}>
+                      {mode === 'single' ? 'Single Pair' : 'Multi-Pair Scanner'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {tmScanMode === 'multi' && (
+                <div>
+                  <label style={labelStyle}>Pairs to scan</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
+                    {tmScanSymbols.map(sym => (
+                      <span key={sym} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#8b5cf618', border: '1px solid #8b5cf644', borderRadius: 4, padding: '3px 8px', fontSize: 12, color: '#8b5cf6' }}>
+                        {sym}
+                        <span style={{ cursor: 'pointer', lineHeight: 1, color: '#8b5cf6' }} onClick={() => setTmScanSymbols(prev => prev.filter(s => s !== sym))}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input style={{ ...inputStyle, flex: 1 }} value={tmScanInput} onChange={e => setTmScanInput(e.target.value.toUpperCase())}
+                      placeholder="BTC, ETH, SOL…"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ',') {
+                          e.preventDefault()
+                          const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
+                          if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
+                          setTmScanInput('')
+                        }
+                      }}
+                    />
+                    <button type="button" onClick={() => {
+                      const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
+                      if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
+                      setTmScanInput('')
+                    }}
+                      style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#8b5cf6', color: 'white' }}>
+                      Add
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Type a symbol and press Enter or click Add. Allocation is split across all active pairs.</p>
+                </div>
+              )}
+              <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
                   {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
@@ -1781,6 +1837,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [tmTpPct, setTmTpPct] = useState(String(merged.tp_pct ?? 5.0))
   const [tmTrailingPct, setTmTrailingPct] = useState(String(merged.trailing_stop_pct ?? 1.0))
   const [tmInterval, setTmInterval] = useState(String(merged.interval ?? '1h'))
+  const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>(merged.scan_pairs ? 'multi' : 'single')
+  const [tmScanSymbols, setTmScanSymbols] = useState<string[]>(Array.isArray(merged.scan_symbols) ? merged.scan_symbols : [])
+  const [tmScanInput, setTmScanInput] = useState('')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -1887,7 +1946,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         trailing_stop_pct: parseFloat(gtTrailingPct),
         trailing_stop_atr_mult: parseFloat(gtTrailingAtrMult),
       } : bot.bot_type === 'trend_magic' ? {
-        symbol: symbol,
+        symbol: tmScanMode === 'multi' ? (tmScanSymbols[0] || symbol) : symbol,
         dex: dex,
         rsi_period: parseInt(tmRsiPeriod),
         rsi_overbought: parseFloat(tmRsiOverbought),
@@ -1901,6 +1960,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         leverage: parseInt(leverage),
         interval: tmInterval,
         sides: tmSides,
+        scan_pairs: tmScanMode === 'multi',
+        scan_symbols: tmScanMode === 'multi' ? tmScanSymbols : [],
       } : {
         symbol: symbol,
         dex: dex,
@@ -1963,6 +2024,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
 
+          {!(bot.bot_type === 'trend_magic' && tmScanMode === 'multi') && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
               <label style={labelStyle}>MARKET</label>
@@ -2028,6 +2090,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               )}
             </div>
           </div>
+          )}
 
           {bot.bot_type === 'grid' ? (
             <>
@@ -2450,6 +2513,55 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             </>
           ) : bot.bot_type === 'trend_magic' ? (
             <>
+              <div>
+                <label style={labelStyle}>Mode</label>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #1a1a2e', width: 'fit-content' }}>
+                  {(['single', 'multi'] as const).map(mode => (
+                    <button key={mode} type="button" onClick={() => setTmScanMode(mode)}
+                      style={{ padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: tmScanMode === mode ? '#8b5cf6' : '#13131f',
+                        color: tmScanMode === mode ? 'white' : '#6b7280',
+                      }}>
+                      {mode === 'single' ? 'Single Pair' : 'Multi-Pair Scanner'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {tmScanMode === 'multi' && (
+                <div>
+                  <label style={labelStyle}>Pairs to scan</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
+                    {tmScanSymbols.map(sym => (
+                      <span key={sym} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#8b5cf618', border: '1px solid #8b5cf644', borderRadius: 4, padding: '3px 8px', fontSize: 12, color: '#8b5cf6' }}>
+                        {sym}
+                        <span style={{ cursor: 'pointer', lineHeight: 1, color: '#8b5cf6' }} onClick={() => setTmScanSymbols(prev => prev.filter(s => s !== sym))}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input style={{ ...inputStyle, flex: 1 }} value={tmScanInput} onChange={e => setTmScanInput(e.target.value.toUpperCase())}
+                      placeholder="BTC, ETH, SOL…"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ',') {
+                          e.preventDefault()
+                          const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
+                          if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
+                          setTmScanInput('')
+                        }
+                      }}
+                    />
+                    <button type="button" onClick={() => {
+                      const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
+                      if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
+                      setTmScanInput('')
+                    }}
+                      style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#8b5cf6', color: 'white' }}>
+                      Add
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Type a symbol and press Enter or click Add. Allocation is split across all active pairs.</p>
+                </div>
+              )}
               <div>
                 <label style={labelStyle}>Interval</label>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
