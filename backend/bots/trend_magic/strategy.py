@@ -134,10 +134,11 @@ class TrendMagicBot:
         self._interval_ms = interval_ms_map.get(interval, 3_600_000)
 
         # Position state — reset when position closes
-        self._sl_oid:      int   | None = None
-        self._peak_price:  float | None = None
-        self._entry_price: float | None = None
-        self._in_long:     bool  | None = None
+        self._sl_oid:             int   | None = None
+        self._peak_price:         float | None = None
+        self._entry_price:        float | None = None
+        self._in_long:            bool  | None = None
+        self._trailing_activated: bool         = False
 
     # ── Exchange init ─────────────────────────────────────────────────────────
 
@@ -434,7 +435,7 @@ class TrendMagicBot:
         else:
             self._peak_price = min(self._peak_price, cur_price)
             sl = self._peak_price * (1.0 + self.trailing_stop_pct / 100.0)
-        self.log("info", f"Trailing SL: peak={self._peak_price:.4f} sl={sl:.4f}")
+        self.log("info", f"Trailing SL updated: peak={self._peak_price:.4f} sl={sl:.4f}")
         return sl
 
     # ── Scanner helpers ───────────────────────────────────────────────────────
@@ -812,9 +813,10 @@ class TrendMagicBot:
                     except Exception:
                         pass
                     pair_st["sl_oid"] = None
-                pair_st["peak_price"]  = None
-                pair_st["entry_price"] = None
-                pair_st["in_long"]     = None
+                pair_st["trailing_activated"] = False
+                pair_st["peak_price"]         = None
+                pair_st["entry_price"]         = None
+                pair_st["in_long"]             = None
 
                 alloc = self.allocated_usdc / max(active_count + 1, 1)
                 if "long" in self.sides and long_signal:
@@ -841,25 +843,70 @@ class TrendMagicBot:
                          else entry_px * (1 - self.tp_pct / 100))
                 await self._sc_reduce_limit(coin, sz_dec, close_buy, close_sz, tp_px)
 
-                trailing_sl = self._sc_trailing_sl(pair_st, is_long, cur_price)
-                await self._sc_modify_sl(coin, sz_dec, pair_st, close_buy, close_sz, trailing_sl)
+                activation_price = (entry_px * (1 + self.trailing_stop_pct / 100) if is_long
+                                    else entry_px * (1 - self.trailing_stop_pct / 100))
 
-                # DCA re-place
-                n_dca      = len(self.dca_pcts)
-                buy_count  = sum(1 for o in orders if o.get("side") == "B" and not o.get("reduceOnly", False))
-                sell_count = sum(1 for o in orders if o.get("side") == "A" and not o.get("reduceOnly", False))
-                if is_long:
-                    dca_start = max(0, n_dca - buy_count)
-                    for j in range(dca_start, n_dca):
-                        dca_px = entry_px * (1 - self.dca_pcts[j] / 100)
-                        dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
-                        await self._sc_dca_limit(coin, sz_dec, True, dca_sz, dca_px)
+                if not pair_st["trailing_activated"]:
+                    activated = ((is_long     and cur_price >= activation_price) or
+                                 (not is_long and cur_price <= activation_price))
+                    if activated:
+                        # ── Phase 2: activation ───────────────────────────────
+                        pair_st["trailing_activated"] = True
+                        if pair_st["sl_oid"] is not None:
+                            try:
+                                await asyncio.to_thread(
+                                    self._exchange.cancel, coin, pair_st["sl_oid"])
+                            except Exception:
+                                pass
+                            pair_st["sl_oid"] = None
+                        pair_st["peak_price"] = cur_price
+                        be_sl = entry_px  # move SL to break-even
+                        pair_st["sl_oid"] = await self._sc_stop_market(
+                            coin, sz_dec, close_buy, close_sz, be_sl)
+                        self.log("info", (
+                            f"[{coin}] Trailing ACTIVATED at {cur_price:.4f} "
+                            f"— SL moved to break-even {entry_px:.4f}"
+                        ))
+                    else:
+                        # ── Phase 1: waiting for activation ───────────────────
+                        self.log("info", (
+                            f"[{coin}] Trailing not activated yet "
+                            f"— price={cur_price:.4f} target={activation_price:.4f}"
+                        ))
+                        fixed_sl = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
+                                    else entry_px * (1 + self.trailing_stop_pct / 100))
+                        await self._sc_modify_sl(
+                            coin, sz_dec, pair_st, close_buy, close_sz, fixed_sl)
+                        # DCA re-place
+                        n_dca      = len(self.dca_pcts)
+                        buy_count  = sum(1 for o in orders
+                                         if o.get("side") == "B" and not o.get("reduceOnly", False))
+                        sell_count = sum(1 for o in orders
+                                         if o.get("side") == "A" and not o.get("reduceOnly", False))
+                        if is_long:
+                            dca_start = max(0, n_dca - buy_count)
+                            for j in range(dca_start, n_dca):
+                                dca_px = entry_px * (1 - self.dca_pcts[j] / 100)
+                                dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+                                await self._sc_dca_limit(coin, sz_dec, True, dca_sz, dca_px)
+                        else:
+                            dca_start = max(0, n_dca - sell_count)
+                            for j in range(dca_start, n_dca):
+                                dca_px = entry_px * (1 + self.dca_pcts[j] / 100)
+                                dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+                                await self._sc_dca_limit(coin, sz_dec, False, dca_sz, dca_px)
                 else:
-                    dca_start = max(0, n_dca - sell_count)
-                    for j in range(dca_start, n_dca):
-                        dca_px = entry_px * (1 + self.dca_pcts[j] / 100)
-                        dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
-                        await self._sc_dca_limit(coin, sz_dec, False, dca_sz, dca_px)
+                    # ── Phase 3: trailing active ──────────────────────────────
+                    trailing_sl = self._sc_trailing_sl(pair_st, is_long, cur_price)
+                    # Break-even floor: SL never retreats below entry
+                    trailing_sl = (max(trailing_sl, entry_px) if is_long
+                                   else min(trailing_sl, entry_px))
+                    self.log("info", (
+                        f"[{coin}] Trailing SL updated: "
+                        f"peak={pair_st['peak_price']:.4f} sl={trailing_sl:.4f}"
+                    ))
+                    await self._sc_modify_sl(
+                        coin, sz_dec, pair_st, close_buy, close_sz, trailing_sl)
 
                 pairs_with_position.append(coin)
 
@@ -878,9 +925,10 @@ class TrendMagicBot:
                         except Exception:
                             pass
                         pair_st["sl_oid"] = None
-                    pair_st["peak_price"]  = None
-                    pair_st["entry_price"] = None
-                    pair_st["in_long"]     = None
+                    pair_st["trailing_activated"] = False
+                    pair_st["peak_price"]         = None
+                    pair_st["entry_price"]         = None
+                    pair_st["in_long"]             = None
 
     # ── Scanner main loop ─────────────────────────────────────────────────────
 
@@ -904,10 +952,11 @@ class TrendMagicBot:
 
         for coin in self._scan_coins:
             self._pair_state[coin] = {
-                "in_long":     None,
-                "entry_price": None,
-                "peak_price":  None,
-                "sl_oid":      None,
+                "in_long":            None,
+                "entry_price":        None,
+                "peak_price":         None,
+                "sl_oid":             None,
+                "trailing_activated": False,
             }
 
         # Parallel: fetch sz_decimals + set leverage for every pair
@@ -1088,9 +1137,10 @@ class TrendMagicBot:
                         except Exception:
                             pass  # may already be gone
                         self._sl_oid = None
-                    self._peak_price  = None
-                    self._entry_price = None
-                    self._in_long     = None
+                    self._trailing_activated = False
+                    self._peak_price         = None
+                    self._entry_price        = None
+                    self._in_long            = None
 
                     if "long" in self.sides and long_signal:
                         self.log("info", "Long signal — entering position")
@@ -1116,26 +1166,62 @@ class TrendMagicBot:
                              else entry_px * (1 - self.tp_pct / 100))
                     await self._place_limit_reduce(close_buy, close_sz, tp_px)
 
-                    # Trailing SL — modify in-place (1 API call instead of cancel+replace)
-                    trailing_sl = self._get_trailing_sl(is_long, cur_price)
-                    await self._modify_or_replace_sl(close_buy, close_sz, trailing_sl)
+                    activation_price = (entry_px * (1 + self.trailing_stop_pct / 100) if is_long
+                                        else entry_px * (1 - self.trailing_stop_pct / 100))
 
-                    # DCA entries — re-place unfilled levels based on pre-cancel count
-                    n_dca = len(self.dca_pcts)
-                    if is_long:
-                        dca_start = max(0, n_dca - canceled_buy)
-                        for j in range(dca_start, n_dca):
-                            dca_px = entry_px * (1 - self.dca_pcts[j] / 100)
-                            dca_sz = (_FIB_WEIGHTS[j + 1] * self.allocated_usdc
-                                      * self.leverage) / dca_px
-                            await self._place_limit_dca(True, dca_sz, dca_px)
+                    if not self._trailing_activated:
+                        activated = ((is_long     and cur_price >= activation_price) or
+                                     (not is_long and cur_price <= activation_price))
+                        if activated:
+                            # ── Phase 2: activation ───────────────────────────
+                            self._trailing_activated = True
+                            if self._sl_oid is not None:
+                                try:
+                                    await asyncio.to_thread(
+                                        self._exchange.cancel, self.coin, self._sl_oid)
+                                except Exception:
+                                    pass
+                                self._sl_oid = None
+                            self._peak_price = cur_price
+                            be_sl = entry_px  # move SL to break-even
+                            new_oid = await self._place_stop_market(close_buy, close_sz, be_sl)
+                            self._sl_oid = new_oid
+                            self.log("info", (
+                                f"Trailing ACTIVATED at {cur_price:.4f} "
+                                f"— SL moved to break-even {entry_px:.4f}"
+                            ))
+                        else:
+                            # ── Phase 1: waiting for activation ───────────────
+                            self.log("info", (
+                                f"Trailing not activated yet "
+                                f"— price={cur_price:.4f} target={activation_price:.4f}"
+                            ))
+                            fixed_sl = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
+                                        else entry_px * (1 + self.trailing_stop_pct / 100))
+                            await self._modify_or_replace_sl(close_buy, close_sz, fixed_sl)
+                            # DCA re-place (only in Phase 1)
+                            n_dca = len(self.dca_pcts)
+                            if is_long:
+                                dca_start = max(0, n_dca - canceled_buy)
+                                for j in range(dca_start, n_dca):
+                                    dca_px = entry_px * (1 - self.dca_pcts[j] / 100)
+                                    dca_sz = (_FIB_WEIGHTS[j + 1] * self.allocated_usdc
+                                              * self.leverage) / dca_px
+                                    await self._place_limit_dca(True, dca_sz, dca_px)
+                            else:
+                                dca_start = max(0, n_dca - canceled_sell)
+                                for j in range(dca_start, n_dca):
+                                    dca_px = entry_px * (1 + self.dca_pcts[j] / 100)
+                                    dca_sz = (_FIB_WEIGHTS[j + 1] * self.allocated_usdc
+                                              * self.leverage) / dca_px
+                                    await self._place_limit_dca(False, dca_sz, dca_px)
                     else:
-                        dca_start = max(0, n_dca - canceled_sell)
-                        for j in range(dca_start, n_dca):
-                            dca_px = entry_px * (1 + self.dca_pcts[j] / 100)
-                            dca_sz = (_FIB_WEIGHTS[j + 1] * self.allocated_usdc
-                                      * self.leverage) / dca_px
-                            await self._place_limit_dca(False, dca_sz, dca_px)
+                        # ── Phase 3: trailing active ──────────────────────────
+                        trailing_sl = self._get_trailing_sl(is_long, cur_price)
+                        # Break-even floor: SL never retreats below entry
+                        trailing_sl = (max(trailing_sl, entry_px) if is_long
+                                       else min(trailing_sl, entry_px))
+                        await self._modify_or_replace_sl(close_buy, close_sz, trailing_sl)
 
                     # ── 3s re-check: detect immediate TP fill ─────────────────
                     await asyncio.sleep(3)
@@ -1149,9 +1235,10 @@ class TrendMagicBot:
                             except Exception:
                                 pass  # exchange auto-cancels reduce-only on flat
                             self._sl_oid = None
-                        self._peak_price  = None
-                        self._entry_price = None
-                        self._in_long     = None
+                        self._trailing_activated = False
+                        self._peak_price         = None
+                        self._entry_price        = None
+                        self._in_long            = None
 
             except asyncio.CancelledError:
                 self.log("info", "Bot cancelled — cleaning up...")
