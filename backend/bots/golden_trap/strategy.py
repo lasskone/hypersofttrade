@@ -93,6 +93,8 @@ class GoldenTrapBot:
         # Trailing stop state — reset when position closes
         self._peak_price:  float | None = None
         self._original_sl: float | None = None
+        # SL order tracking — kept alive across ticks so it can be modified in-place
+        self._sl_oid:      int   | None = None
 
     # ── Fibonacci sizing ──────────────────────────────────────────────────────
 
@@ -197,6 +199,8 @@ class GoldenTrapBot:
             for order in [o for o in orders if isinstance(o, dict) and o.get("coin") in (self.coin, coin_short)]:
                 oid = order.get("oid")
                 if oid:
+                    if oid == self._sl_oid:
+                        continue  # keep SL alive — will be modified in-place this tick
                     try:
                         await asyncio.to_thread(self._exchange.cancel, self.coin, oid)
                         self.log("info", f"Cancelled order {oid}")
@@ -272,6 +276,39 @@ class GoldenTrapBot:
         except Exception as e:
             self.log("error", f"Stop-market placement failed: {e}")
             return None
+
+    async def _modify_or_replace_sl(self, is_buy: bool, size: float, new_sl_px: float) -> None:
+        """Modify the resting SL order in-place; fall back to cancel+replace if it no longer exists."""
+        new_sl_px  = round_price(new_sl_px)
+        size       = round_size(size, self.sz_decimals)
+        if size <= 0:
+            return
+        order_type = {"trigger": {"triggerPx": new_sl_px, "isMarket": True, "tpsl": "sl"}}
+        if self._sl_oid is not None:
+            try:
+                result = await asyncio.to_thread(
+                    self._exchange.modify_order,
+                    self._sl_oid, self.coin, is_buy, size, new_sl_px, order_type, True,
+                )
+                statuses = ((result.get("response") or {}).get("data") or {}).get("statuses", [{}])
+                status   = statuses[0] if statuses else {}
+                if "error" in status:
+                    self.log("info", f"SL modify failed ({status['error']}) — placing new order")
+                    self._sl_oid = None
+                    new_oid = await self._place_stop_market(is_buy, size, new_sl_px)
+                    self._sl_oid = new_oid
+                else:
+                    new_oid = (status.get("resting") or {}).get("oid") or self._sl_oid
+                    self.log("info", f"Trailing SL modified → {new_sl_px:.4f} oid={new_oid}")
+                    self._sl_oid = new_oid
+            except Exception as e:
+                self.log("warning", f"SL modify exception ({e}) — placing new order")
+                self._sl_oid = None
+                new_oid = await self._place_stop_market(is_buy, size, new_sl_px)
+                self._sl_oid = new_oid
+        else:
+            new_oid = await self._place_stop_market(is_buy, size, new_sl_px)
+            self._sl_oid = new_oid
 
     async def _place_limit_reduce(self, is_buy: bool, size: float, price: float) -> Optional[int]:
         try:
@@ -455,7 +492,14 @@ class GoldenTrapBot:
                                 real_entry_px * (1.0 + self.stop_loss_pct / 100.0)
                             )
                 else:
-                    # Position closed — reset trailing state
+                    # Position closed — cancel resting SL (skipped by _cancel_all_orders) then reset
+                    if self._sl_oid is not None:
+                        try:
+                            await asyncio.to_thread(self._exchange.cancel, self.coin, self._sl_oid)
+                            self.log("info", f"Cancelled SL {self._sl_oid} after position close")
+                        except Exception as e:
+                            self.log("warning", f"SL cancel on close failed: {e}")
+                        self._sl_oid = None
                     self._peak_price  = None
                     self._original_sl = None
 
@@ -469,11 +513,11 @@ class GoldenTrapBot:
                     # TP — reduce-only GTC limit at MA
                     await self._place_limit_reduce(close_is_buy, close_sz, ma_base)
 
-                    # SL — trailing or fixed
+                    # SL — trailing (modify-in-place) or fixed
                     if self.trailing_stop_type != "none":
                         trailing_sl = self._get_trailing_sl(is_long, cur_price, candles)
                         if trailing_sl is not None and trailing_sl > 0:
-                            await self._place_stop_market(close_is_buy, close_sz, trailing_sl)
+                            await self._modify_or_replace_sl(close_is_buy, close_sz, trailing_sl)
                     elif self.stop_loss_pct > 0 and real_entry_px > 0:
                         sl_px = (
                             real_entry_px * (1.0 - self.stop_loss_pct / 100.0)
@@ -514,6 +558,12 @@ class GoldenTrapBot:
                     pos_recheck = await self._fetch_real_position()
                     if pos_recheck["szi"] == 0.0:
                         self.log("info", "Immediate TP fill detected — re-placing entry triggers")
+                        if self._sl_oid is not None:
+                            try:
+                                await asyncio.to_thread(self._exchange.cancel, self.coin, self._sl_oid)
+                            except Exception:
+                                pass  # already auto-cancelled by exchange when position closed
+                            self._sl_oid = None
                         self._peak_price  = None
                         self._original_sl = None
                         await self._place_flat_entries(ma_base, n_levels, per_lvl, active_sides)
