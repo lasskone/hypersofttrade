@@ -285,6 +285,10 @@ class TrendMagicBot:
                 self.log("warning", "Could not fetch mid price for market order")
                 return False
             limit_px = round_price(mid * 1.01 if is_buy else mid * 0.99)
+            notional = size * limit_px
+            if notional < 10.0:
+                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={limit_px})")
+                return False
             result   = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, limit_px,
                 {"limit": {"tif": "Ioc"}},
@@ -307,6 +311,10 @@ class TrendMagicBot:
             size  = round_size(size, self.sz_decimals)
             if size <= 0: return None
             price = round_price(price)
+            notional = size * price
+            if notional < 10.0:
+                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
+                return None
             result = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, price,
                 {"limit": {"tif": "Gtc"}},
@@ -331,6 +339,10 @@ class TrendMagicBot:
             size  = round_size(size, self.sz_decimals)
             if size <= 0: return None
             price = round_price(price)
+            notional = size * price
+            if notional < 10.0:
+                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
+                return None
             result = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, price,
                 {"limit": {"tif": "Gtc"}},
@@ -355,6 +367,10 @@ class TrendMagicBot:
             size       = round_size(size, self.sz_decimals)
             if size <= 0: return None
             trigger_px = round_price(trigger_px)
+            notional = size * trigger_px
+            if notional < 10.0:
+                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={trigger_px})")
+                return None
             result = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, trigger_px,
                 {"trigger": {"triggerPx": trigger_px, "isMarket": True, "tpsl": "sl"}},
@@ -540,6 +556,10 @@ class TrendMagicBot:
                 self.log("warning", f"[{coin}] Could not fetch mid price")
                 return False
             limit_px = round_price(mid * 1.01 if is_buy else mid * 0.99)
+            notional = size * limit_px
+            if notional < 10.0:
+                self.log("warning", f"[{coin}] Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={limit_px})")
+                return False
             result   = await asyncio.to_thread(
                 self._exchange.order, coin, is_buy, size, limit_px,
                 {"limit": {"tif": "Ioc"}}, False,
@@ -560,6 +580,10 @@ class TrendMagicBot:
             size  = round_size(size, sz_dec)
             if size <= 0: return None
             price = round_price(price)
+            notional = size * price
+            if notional < 10.0:
+                self.log("warning", f"[{coin}] Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
+                return None
             result = await asyncio.to_thread(
                 self._exchange.order, coin, is_buy, size, price,
                 {"limit": {"tif": "Gtc"}}, False,
@@ -582,6 +606,10 @@ class TrendMagicBot:
             size  = round_size(size, sz_dec)
             if size <= 0: return None
             price = round_price(price)
+            notional = size * price
+            if notional < 10.0:
+                self.log("warning", f"[{coin}] Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
+                return None
             result = await asyncio.to_thread(
                 self._exchange.order, coin, is_buy, size, price,
                 {"limit": {"tif": "Gtc"}}, True,
@@ -604,6 +632,10 @@ class TrendMagicBot:
             size       = round_size(size, sz_dec)
             if size <= 0: return None
             trigger_px = round_price(trigger_px)
+            notional = size * trigger_px
+            if notional < 10.0:
+                self.log("warning", f"[{coin}] Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={trigger_px})")
+                return None
             result = await asyncio.to_thread(
                 self._exchange.order, coin, is_buy, size, trigger_px,
                 {"trigger": {"triggerPx": trigger_px, "isMarket": True, "tpsl": "sl"}}, True,
@@ -984,6 +1016,16 @@ class TrendMagicBot:
             f"TSL={self.trailing_stop_pct}% | Sides={self.sides} | "
             f"Allocation=${self.allocated_usdc} | Leverage={self.leverage}x"
         ))
+
+        # ── Minimum notional check at startup ────────────────────────────────
+        for lvl, weight in enumerate(_FIB_WEIGHTS):
+            level_notional = weight * self.allocated_usdc * self.leverage
+            if level_notional < 10.0:
+                min_alloc = 10.0 / weight / max(self.leverage, 1)
+                self.log("warning", (
+                    f"Level {lvl} notional ${level_notional:.2f} below $10 minimum. "
+                    f"Increase allocation to at least ${min_alloc:.0f} USDC"
+                ))
 
         while self._running:
             try:
