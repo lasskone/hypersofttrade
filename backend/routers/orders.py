@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -84,6 +85,16 @@ class ModifyOrderRequest(BaseModel):
     sz: float         # current order size to keep
     sz_decimals: int
     tpsl: str         # "tp" or "sl"
+
+
+class CreateTrailingStopRequest(BaseModel):
+    wallet_address: str
+    coin: str
+    dex: str = ""
+    side: str          # "long" or "short"
+    entry_price: float
+    activation_pct: float
+    trail_pct: float
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +390,112 @@ async def set_leverage(body: SetLeverageRequest):
         print(f"[set_leverage] ERROR: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "result": result_data}
+
+
+# ---------------------------------------------------------------------------
+# Trailing stop  (served under /orders via orders_router)
+# ---------------------------------------------------------------------------
+
+@orders_router.post("/trailing-stop")
+async def create_trailing_stop(body: CreateTrailingStopRequest):
+    logger.info(f"POST /orders/trailing-stop wallet={body.wallet_address} coin={body.coin} side={body.side}")
+    db = _supabase()
+
+    # Compute activation price
+    if body.side == "long":
+        activation_price = body.entry_price * (1 + body.activation_pct / 100)
+    else:
+        activation_price = body.entry_price * (1 - body.activation_pct / 100)
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Cancel any existing waiting/active trailing stop for this wallet+coin
+    existing = (
+        db.table("trailing_stops")
+        .select("id, status")
+        .ilike("wallet_address", body.wallet_address)
+        .eq("coin", body.coin)
+        .in_("status", ["waiting", "active"])
+        .execute()
+    )
+    for rec in (existing.data or []):
+        db.table("trailing_stops").update({"status": "cancelled", "updated_at": now}).eq("id", rec["id"]).execute()
+
+    # Insert new trailing stop
+    insert_data = {
+        "wallet_address": body.wallet_address.lower(),
+        "coin": body.coin,
+        "dex": body.dex,
+        "side": body.side,
+        "entry_price": body.entry_price,
+        "activation_pct": body.activation_pct,
+        "trail_pct": body.trail_pct,
+        "activation_price": activation_price,
+        "status": "waiting",
+        "peak_price": None,
+        "sl_oid": None,
+        "current_sl_price": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    res = db.table("trailing_stops").insert(insert_data).execute()
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Failed to create trailing stop")
+
+    return {"success": True, "trailing_stop": res.data[0]}
+
+
+@orders_router.delete("/trailing-stop/{ts_id}")
+async def cancel_trailing_stop(ts_id: str, wallet_address: str = Query(...)):
+    logger.info(f"DELETE /orders/trailing-stop/{ts_id} wallet={wallet_address}")
+    db = _supabase()
+
+    # Fetch record
+    res = db.table("trailing_stops").select("*").eq("id", ts_id).limit(1).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Trailing stop not found")
+    rec = res.data[0]
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # If active and has a live SL order, cancel it on Hyperliquid
+    if rec.get("status") == "active" and rec.get("sl_oid"):
+        user_res = (
+            db.table("users")
+            .select("hyperliquid_api_key_encrypted")
+            .ilike("wallet_address", wallet_address)
+            .limit(1)
+            .execute()
+        )
+        encrypted = (user_res.data[0] if user_res.data else {}).get("hyperliquid_api_key_encrypted")
+        if encrypted:
+            try:
+                private_key = decrypt(encrypted)
+                await hyperliquid_service.cancel_order(
+                    private_key=private_key,
+                    master_address=wallet_address,
+                    coin=rec["coin"],
+                    order_id=int(rec["sl_oid"]),
+                )
+            except Exception as exc:
+                logger.warning(f"[cancel_trailing_stop] Could not cancel SL order on HL: {exc}")
+
+    # Mark cancelled in DB
+    db.table("trailing_stops").update({"status": "cancelled", "updated_at": now}).eq("id", ts_id).execute()
+
+    return {"success": True}
+
+
+@orders_router.get("/trailing-stops")
+async def list_trailing_stops(wallet_address: str = Query(...)):
+    logger.info(f"GET /orders/trailing-stops wallet={wallet_address}")
+    db = _supabase()
+    res = (
+        db.table("trailing_stops")
+        .select("*")
+        .ilike("wallet_address", wallet_address)
+        .in_("status", ["waiting", "active"])
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return {"trailing_stops": res.data or []}

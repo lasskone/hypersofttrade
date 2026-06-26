@@ -191,6 +191,205 @@ async def cold_start_restore() -> None:
     print("[worker] Cold start complete.", flush=True)
 
 
+async def _check_trailing_stops() -> None:
+    """Check all waiting/active trailing stops and update SL orders accordingly."""
+    from core.security import decrypt
+    from services.hyperliquid_service import hyperliquid_service
+    import httpx
+
+    db = _supabase()
+    now = datetime.now(timezone.utc).isoformat()
+
+    res = db.table("trailing_stops").select("*").in_("status", ["waiting", "active"]).execute()
+    records = res.data or []
+    if not records:
+        return
+
+    print(f"[trailing_stops] Checking {len(records)} record(s)...", flush=True)
+
+    # All current prices in one call
+    try:
+        all_mids = await asyncio.wait_for(hyperliquid_service.get_all_mids(), timeout=10.0)
+    except Exception as e:
+        print(f"[trailing_stops] get_all_mids failed: {e}", flush=True)
+        return
+
+    # sz_decimals lookup from allPerpMetas (one call covers all coins)
+    sz_dec_map: dict[str, int] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            metas_resp = await client.post(
+                "https://api.hyperliquid.xyz/info",
+                json={"type": "allPerpMetas"},
+                headers={"Content-Type": "application/json"},
+            )
+            for meta in metas_resp.json():
+                if isinstance(meta, dict):
+                    for asset in meta.get("universe", []):
+                        if isinstance(asset, dict) and "name" in asset:
+                            sz_dec_map[asset["name"]] = asset.get("szDecimals", 5)
+    except Exception as e:
+        print(f"[trailing_stops] allPerpMetas failed: {e}", flush=True)
+
+    key_cache: dict[str, str | None] = {}     # wallet → decrypted private key
+    pos_cache: dict[str, dict[str, float]] = {}  # "wallet:dex" → {coin: abs_size}
+
+    for rec in records:
+        ts_id    = rec["id"]
+        wallet   = rec["wallet_address"]
+        coin     = rec["coin"]
+        dex      = rec.get("dex") or ""
+        is_long  = rec["side"] == "long"
+        entry_px      = float(rec["entry_price"])
+        activation_px = float(rec["activation_price"])
+        trail_pct     = float(rec["trail_pct"])
+        status        = rec["status"]
+        sl_oid        = rec.get("sl_oid")
+        peak_price    = float(rec["peak_price"]) if rec.get("peak_price") is not None else None
+        cur_sl_price  = float(rec["current_sl_price"]) if rec.get("current_sl_price") is not None else None
+
+        # Current price (try full name, then short name for HIP-3)
+        cur_price_raw = all_mids.get(coin) or all_mids.get(coin.split(":")[-1] if ":" in coin else coin)
+        if cur_price_raw is None:
+            continue
+        cur_price = float(cur_price_raw)
+
+        # Decrypt private key (cached per wallet)
+        if wallet not in key_cache:
+            try:
+                ur = (
+                    db.table("users")
+                    .select("hyperliquid_api_key_encrypted")
+                    .ilike("wallet_address", wallet)
+                    .limit(1)
+                    .execute()
+                )
+                enc = (ur.data[0] if ur.data else {}).get("hyperliquid_api_key_encrypted")
+                key_cache[wallet] = decrypt(enc) if enc else None
+            except Exception as e:
+                print(f"[trailing_stops] key fetch failed for {wallet}: {e}", flush=True)
+                key_cache[wallet] = None
+
+        private_key = key_cache.get(wallet)
+        if not private_key:
+            continue
+
+        # Helper: fetch and cache open positions for a wallet+dex pair
+        async def _get_positions(w: str, d: str) -> dict[str, float]:
+            ck = f"{w}:{d}"
+            if ck not in pos_cache:
+                try:
+                    state = await asyncio.wait_for(
+                        hyperliquid_service.get_clearinghouse_state(w, d), timeout=10.0
+                    )
+                    pos_cache[ck] = {
+                        ap["position"]["coin"]: abs(float(ap["position"].get("szi", "0") or "0"))
+                        for ap in state.get("assetPositions", [])
+                        if isinstance(ap.get("position"), dict)
+                        and float(ap["position"].get("szi", "0") or "0") != 0.0
+                    }
+                except Exception as e:
+                    print(f"[trailing_stops] position fetch failed {w}: {e}", flush=True)
+                    pos_cache[ck] = {}
+            return pos_cache[f"{w}:{d}"]
+
+        try:
+            if status == "waiting":
+                activated = (is_long and cur_price >= activation_px) or (not is_long and cur_price <= activation_px)
+                if not activated:
+                    continue
+
+                positions = await _get_positions(wallet, dex)
+                sz = positions.get(coin) or positions.get(coin.split(":")[-1] if ":" in coin else coin)
+                if not sz:
+                    print(f"[trailing_stops] ts_id={ts_id} no open position for {coin}, skipping", flush=True)
+                    continue
+
+                sz_decimals = sz_dec_map.get(coin, 5)
+                be_sl = entry_px
+
+                sl_result = await hyperliquid_service.place_tp_sl(
+                    private_key=private_key, master_address=wallet, coin=coin,
+                    is_long=is_long, size=sz, sz_decimals=sz_decimals,
+                    tp_price=None, sl_price=be_sl,
+                )
+
+                oid = None
+                try:
+                    oid = sl_result["sl"]["response"]["data"]["statuses"][0].get("resting", {}).get("oid")
+                except Exception:
+                    pass
+
+                db.table("trailing_stops").update({
+                    "status":          "active",
+                    "peak_price":      cur_price,
+                    "sl_oid":          oid,
+                    "current_sl_price": be_sl,
+                    "updated_at":      now,
+                }).eq("id", ts_id).execute()
+                print(f"[trailing_stops] ts_id={ts_id} ACTIVATED — SL@{be_sl:.4f} oid={oid}", flush=True)
+
+            elif status == "active":
+                new_peak = (
+                    max(cur_price, peak_price or cur_price) if is_long
+                    else min(cur_price, peak_price or cur_price)
+                )
+
+                if is_long:
+                    trail_sl = new_peak * (1 - trail_pct / 100)
+                    trail_sl = max(trail_sl, entry_px)   # never retreat below break-even
+                else:
+                    trail_sl = new_peak * (1 + trail_pct / 100)
+                    trail_sl = min(trail_sl, entry_px)   # never retreat above break-even
+
+                updates: dict = {"updated_at": now}
+                if new_peak != peak_price:
+                    updates["peak_price"] = new_peak
+
+                # Only modify on Hyperliquid when SL moved more than 0.05%
+                moved = cur_sl_price is None or abs(trail_sl - cur_sl_price) / (cur_sl_price or 1) > 0.0005
+                if moved and sl_oid is not None:
+                    positions = await _get_positions(wallet, dex)
+                    sz = positions.get(coin) or positions.get(coin.split(":")[-1] if ":" in coin else coin)
+
+                    if sz and sz > 0:
+                        sz_decimals = sz_dec_map.get(coin, 5)
+                        try:
+                            await hyperliquid_service.modify_order(
+                                private_key=private_key, master_address=wallet, coin=coin,
+                                oid=int(sl_oid), new_trigger_px=trail_sl, is_buy=not is_long,
+                                sz=sz, sz_decimals=sz_decimals, tpsl="sl",
+                            )
+                            updates["current_sl_price"] = trail_sl
+                            print(
+                                f"[trailing_stops] ts_id={ts_id} SL→{trail_sl:.4f} (peak={new_peak:.4f})",
+                                flush=True,
+                            )
+                        except Exception as e:
+                            print(f"[trailing_stops] modify failed ts_id={ts_id}: {e}", flush=True)
+                    else:
+                        # Position is gone — SL was likely triggered by Hyperliquid
+                        updates["status"] = "triggered"
+                        print(f"[trailing_stops] ts_id={ts_id} position closed → marking triggered", flush=True)
+
+                if updates:
+                    db.table("trailing_stops").update(updates).eq("id", ts_id).execute()
+
+        except Exception as e:
+            print(f"[trailing_stops] unexpected error ts_id={ts_id}: {e}", flush=True)
+
+
+async def trailing_stop_loop() -> None:
+    """Monitor and advance all trailing stops every 30 seconds."""
+    print("[worker] Trailing stop loop starting...", flush=True)
+    while True:
+        try:
+            await _check_trailing_stops()
+        except Exception as e:
+            print(f"[trailing_stops] loop error: {e}", flush=True)
+        await asyncio.sleep(30)
+
+
 async def reconcile_loop():
     print("[worker] Reconciliation loop starting...", flush=True)
     await cold_start_restore()
@@ -273,4 +472,6 @@ async def reconcile_loop():
 
 
 if __name__ == "__main__":
-    asyncio.run(reconcile_loop())
+    async def _main():
+        await asyncio.gather(reconcile_loop(), trailing_stop_loop())
+    asyncio.run(_main())

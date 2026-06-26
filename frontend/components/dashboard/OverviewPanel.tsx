@@ -159,6 +159,10 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
   const [editPx, setEditPx] = useState('');
   const [confirmCancelOid, setConfirmCancelOid] = useState<number | null>(null);
   const [orderActionLoading, setOrderActionLoading] = useState<number | null>(null);
+  const [existingTs, setExistingTs] = useState<any>(null);
+  const [tsActivationPct, setTsActivationPct] = useState('');
+  const [tsTrailPct, setTsTrailPct] = useState('');
+  const [tsLoading, setTsLoading] = useState(false);
 
   const isLong = parseFloat(pos.size) > 0;
   const absSize = Math.abs(parseFloat(pos.size));
@@ -174,6 +178,70 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
+  };
+
+  // Fetch any existing trailing stop for this position on mount
+  useEffect(() => {
+    if (!walletAddress || !pos.symbol) return;
+    fetch(`${API_URL}/orders/trailing-stops?wallet_address=${encodeURIComponent(walletAddress)}`)
+      .then(r => r.json())
+      .then(d => {
+        const ts = (d.trailing_stops ?? []).find((t: any) => t.coin === pos.symbol);
+        setExistingTs(ts ?? null);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, pos.symbol]);
+
+  const handleSetTrailingStop = async () => {
+    const actPct = parseFloat(tsActivationPct);
+    const trailPct = parseFloat(tsTrailPct);
+    if (!(actPct > 0) || !(trailPct > 0)) return;
+    setTsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/orders/trailing-stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          coin: pos.symbol,
+          dex: pos.dex === 'main' ? '' : (pos.dex ?? ''),
+          side: isLong ? 'long' : 'short',
+          entry_price: entryPx,
+          activation_pct: actPct,
+          trail_pct: trailPct,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Error');
+      setExistingTs(data.trailing_stop);
+      setTsActivationPct('');
+      setTsTrailPct('');
+      showToast(`✅ Trailing stop set — activates at +${actPct}%, trails ${trailPct}%`);
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setTsLoading(false);
+    }
+  };
+
+  const handleCancelTrailingStop = async () => {
+    if (!existingTs) return;
+    setTsLoading(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/orders/trailing-stop/${existingTs.id}?wallet_address=${encodeURIComponent(walletAddress)}`,
+        { method: 'DELETE' },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? 'Error');
+      setExistingTs(null);
+      showToast('✅ Trailing stop cancelled');
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setTsLoading(false);
+    }
   };
 
   const handleClose = async () => {
@@ -542,6 +610,91 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
                 })}
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Trailing Stop */}
+        <div className="rounded-xl p-4" style={{ backgroundColor: '#13131f', border: '1px solid #1a1a2e' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-sm font-semibold text-white">Trailing Stop</p>
+            <Tooltip text="Waits until price reaches the activation level, then places a stop-loss that trails peak price by the trail gap %. SL never drops below break-even." />
+          </div>
+
+          {existingTs ? (
+            <div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9ca3af' }}>
+                  <span>Status</span>
+                  <span style={{ color: existingTs.status === 'active' ? '#00d4aa' : '#f59e0b', fontWeight: 600 }}>
+                    {existingTs.status === 'waiting' ? 'Waiting for activation' : 'Active — trailing'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9ca3af' }}>
+                  <span>Activates at</span>
+                  <span style={{ color: '#e5e7eb' }}>${Number(existingTs.activation_price ?? 0).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9ca3af' }}>
+                  <span>Trail gap</span>
+                  <span style={{ color: '#e5e7eb' }}>{existingTs.trail_pct}%</span>
+                </div>
+                {existingTs.current_sl_price && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9ca3af' }}>
+                    <span>Current SL</span>
+                    <span style={{ color: '#ef4444' }}>${Number(existingTs.current_sl_price).toFixed(2)}</span>
+                  </div>
+                )}
+                {existingTs.peak_price && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9ca3af' }}>
+                    <span>Peak price</span>
+                    <span style={{ color: '#10b981' }}>${Number(existingTs.peak_price).toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleCancelTrailingStop}
+                disabled={tsLoading}
+                className="w-full py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-80 disabled:opacity-50"
+                style={{ backgroundColor: '#ef444418', color: '#ef4444', border: '1px solid #ef444444' }}>
+                {tsLoading ? 'Cancelling...' : 'Cancel Trailing Stop'}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-2 mb-3">
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Activation (% from entry)</p>
+                  <input
+                    type="number"
+                    placeholder="e.g. 1"
+                    value={tsActivationPct}
+                    onChange={e => setTsActivationPct(e.target.value)}
+                    style={{ width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#00d4aa', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Trail gap (%)</p>
+                  <input
+                    type="number"
+                    placeholder="e.g. 1"
+                    value={tsTrailPct}
+                    onChange={e => setTsTrailPct(e.target.value)}
+                    style={{ width: '100%', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, padding: '6px 10px', color: '#f59e0b', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+              {parseFloat(tsActivationPct) > 0 && parseFloat(tsTrailPct) > 0 && (
+                <p style={{ fontSize: 10, color: '#9ca3af', marginBottom: 8 }}>
+                  Activates at ${(entryPx * (1 + (isLong ? 1 : -1) * parseFloat(tsActivationPct) / 100)).toFixed(2)} · SL trails {tsTrailPct}% from peak, never below break-even
+                </p>
+              )}
+              <button
+                onClick={handleSetTrailingStop}
+                disabled={tsLoading || !(parseFloat(tsActivationPct) > 0) || !(parseFloat(tsTrailPct) > 0)}
+                className="w-full py-2.5 rounded-lg text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-50"
+                style={{ backgroundColor: '#f59e0b', color: '#000' }}>
+                {tsLoading ? 'Setting...' : 'Set Trailing Stop'}
+              </button>
+            </>
           )}
         </div>
       </div>
