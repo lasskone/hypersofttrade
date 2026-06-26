@@ -63,6 +63,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const wsReconnectRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveDebounceRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isProgrammaticRef  = useRef(false)
+  const indicatorSaveBlockedRef = useRef(true)
+  const isDraggingRef      = useRef(false)
+  const dragStartYRef      = useRef(0)
+  const dragStartHeightRef = useRef(0)
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -82,6 +86,15 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const [rsiPeriod, setRsiPeriod]                   = useState(14)
   const [showRSIPeriodInput, setShowRSIPeriodInput] = useState(false)
   const [loading, setLoading]                       = useState(true)
+  const [chartHeight, setChartHeight] = useState<number>(() => {
+    if (typeof window === 'undefined') return height
+    try {
+      const saved = localStorage.getItem('hlchart_height')
+      if (saved) { const n = parseInt(saved); if (!isNaN(n) && n >= 200 && n <= 800) return n }
+    } catch {}
+    return height
+  })
+  const [isDragging, setIsDragging] = useState(false)
   const [ohlc, setOhlc]                             = useState<Candle | null>(null)
   const [chartReady, setChartReady]                 = useState(false)
   const [timeRemaining, setTimeRemaining]           = useState('')
@@ -101,6 +114,38 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showRSIPeriodInput])
+
+  // Load indicator settings from localStorage when symbol changes
+  useEffect(() => {
+    indicatorSaveBlockedRef.current = true
+    try {
+      const saved = localStorage.getItem(`hlchart_indicators_${symbol}`)
+      if (saved) {
+        const s = JSON.parse(saved)
+        if (s.showEMA !== undefined) setShowEMA(Boolean(s.showEMA))
+        if (s.emaPeriod !== undefined) setEmaPeriod(Number(s.emaPeriod) || 20)
+        if (s.showVol !== undefined) setShowVolume(Boolean(s.showVol))
+        if (s.showRSI !== undefined) setShowRSI(Boolean(s.showRSI))
+        if (s.rsiPeriod !== undefined) setRsiPeriod(Number(s.rsiPeriod) || 14)
+      } else {
+        setShowEMA(true); setEmaPeriod(20); setShowVolume(true); setShowRSI(false); setRsiPeriod(14)
+      }
+    } catch {
+      setShowEMA(true); setEmaPeriod(20); setShowVolume(true); setShowRSI(false); setRsiPeriod(14)
+    }
+    const tid = setTimeout(() => { indicatorSaveBlockedRef.current = false }, 0)
+    return () => clearTimeout(tid)
+  }, [symbol])
+
+  // Save indicator settings to localStorage whenever they change
+  useEffect(() => {
+    if (indicatorSaveBlockedRef.current) return
+    try {
+      localStorage.setItem(`hlchart_indicators_${symbol}`, JSON.stringify({
+        showEMA, emaPeriod, showVol: showVolume, showRSI, rsiPeriod,
+      }))
+    } catch {}
+  }, [symbol, showEMA, emaPeriod, showVolume, showRSI, rsiPeriod])
 
   const calcEMA = (data: Candle[], period: number) => {
     const k = 2 / (period + 1)
@@ -137,7 +182,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   }
 
   // Main chart height: subtract toolbar (50px) and RSI pane if visible
-  const mainChartH = height - 50 - (showRSI ? RSI_HEIGHT + 1 : 0)
+  const mainChartH = chartHeight - 50 - (showRSI ? RSI_HEIGHT + 1 : 0)
 
   useEffect(() => {
     if (loadingRef.current) return
@@ -612,6 +657,30 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     return () => clearInterval(timer)
   }, [selectedInterval])
 
+  // ── Chart height drag ────────────────────────────────────────────────────
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return
+      const delta = e.clientY - dragStartYRef.current
+      setChartHeight(Math.min(800, Math.max(200, dragStartHeightRef.current + delta)))
+    }
+    const onMouseUp = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return
+      isDraggingRef.current = false
+      setIsDragging(false)
+      const delta = e.clientY - dragStartYRef.current
+      const newH = Math.min(800, Math.max(200, dragStartHeightRef.current + delta))
+      setChartHeight(newH)
+      try { localStorage.setItem('hlchart_height', String(newH)) } catch {}
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
   // ── Real-time candle updates via Hyperliquid WebSocket ───────────────────
   useEffect(() => {
     if (!chartReady) return
@@ -836,6 +905,25 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           <div ref={rsiContainerRef} style={{ width: '100%', height: `${RSI_HEIGHT}px` }} />
         </div>
       )}
+
+      {/* ── Drag handle ───────────────────────────────────────────────── */}
+      <div
+        onMouseDown={e => {
+          isDraggingRef.current = true
+          setIsDragging(true)
+          dragStartYRef.current = e.clientY
+          dragStartHeightRef.current = chartHeight
+          e.preventDefault()
+        }}
+        style={{
+          height: 6, width: '100%', cursor: 'row-resize',
+          background: isDragging ? 'rgba(38,166,154,0.4)' : 'rgba(255,255,255,0.05)',
+          transition: 'background 0.15s',
+          flexShrink: 0,
+        }}
+        onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(38,166,154,0.4)' }}
+        onMouseLeave={e => { if (!isDraggingRef.current) (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.05)' }}
+      />
 
       {/* ── EMA period portal ─────────────────────────────────────────── */}
       {showPeriodInput && emaBtnRect && createPortal(
