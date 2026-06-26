@@ -119,6 +119,23 @@ const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: s
       { key: 'trailing_stop_atr_mult', label: 'ATR Multiplier', default: 1.5, hint: 'ATR14 multiplier for trailing stop distance (ATR mode).' },
     ],
   },
+  trend_magic: {
+    label: 'Trend Magic',
+    emoji: '🔮',
+    description: 'RSI + EMA200 trend filter with Fibonacci DCA and trailing stop',
+    color: '#8b5cf6',
+    fields: [
+      { key: 'rsi_period', label: 'RSI Period', default: 14, hint: 'RSI calculation period. Default 14.' },
+      { key: 'rsi_overbought', label: 'RSI Overbought', default: 70, hint: 'Long signal when RSI > this AND price > EMA.' },
+      { key: 'rsi_oversold', label: 'RSI Oversold', default: 30, hint: 'Short signal when RSI < this AND price < EMA.' },
+      { key: 'ema_period', label: 'EMA Period', default: 200, hint: 'EMA trend filter period. Default 200.' },
+      { key: 'dca_level_1_pct', label: 'DCA Level 1 %', default: 7, hint: 'First DCA % below/above entry (35% of allocation).' },
+      { key: 'dca_level_2_pct', label: 'DCA Level 2 %', default: 14, hint: 'Second DCA % below/above entry (50% of allocation).' },
+      { key: 'tp_pct', label: 'Take Profit %', default: 5, hint: 'TP % above/below average entry.' },
+      { key: 'trailing_stop_pct', label: 'Trailing Stop %', default: 1.0, hint: 'Trailing stop % below/above peak price.' },
+      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage. Amplifies both gains and losses.' },
+    ],
+  },
 }
 
 interface BacktestResult {
@@ -238,6 +255,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const [envelopeSides, setEnvelopeSides] = useState<string[]>(['long'])
   const [gtSides, setGtSides] = useState<string[]>(['long'])
   const [gtTrailingType, setGtTrailingType] = useState('fixed')
+  const [tmSides, setTmSides] = useState<string[]>(['long', 'short'])
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
   const [params, setParams] = useState<Record<string, number>>({})
@@ -381,6 +399,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
     if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
     if (botType === 'golden_trap') { fieldParams['sides'] = gtSides; fieldParams['trailing_stop_type'] = gtTrailingType }
+    if (botType === 'trend_magic') fieldParams['sides'] = tmSides
     await runBacktestWithConfig({
       market: selectedMarket,
       bot_type: botType,
@@ -399,6 +418,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
     if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
     if (botType === 'golden_trap') { fieldParams['sides'] = gtSides; fieldParams['trailing_stop_type'] = gtTrailingType }
+    if (botType === 'trend_magic') fieldParams['sides'] = tmSides
     return {
       bot_type: botType,
       symbol: selectedMarket?.name ?? '',
@@ -495,6 +515,9 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     if (cfg.bot_type === 'golden_trap') {
       setGtSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long'])
       setGtTrailingType(String(savedParams['trailing_stop_type'] ?? 'fixed'))
+    }
+    if (cfg.bot_type === 'trend_magic' && savedParams['sides']) {
+      setTmSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long', 'short'])
     }
     setParams(savedParams)
 
@@ -787,6 +810,31 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
                     <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Fixed: trails by % from peak. ATR: trails by ATR14 × multiplier. None: hard SL only.</p>
                   </div>
                 </>
+              )}
+              {botType === 'trend_magic' && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={s.label}>SIDES</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {([
+                      { label: 'Long only', value: ['long'] },
+                      { label: 'Short only', value: ['short'] },
+                      { label: 'Both', value: ['long', 'short'] },
+                    ] as const).map(opt => {
+                      const active = JSON.stringify(tmSides.slice().sort()) === JSON.stringify(opt.value.slice().sort())
+                      return (
+                        <button key={opt.label} type="button" onClick={() => setTmSides([...opt.value])}
+                          style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                            borderColor: active ? '#8b5cf6' : '#1a1a2e',
+                            backgroundColor: active ? '#8b5cf618' : '#0a0a0f',
+                            color: active ? '#8b5cf6' : '#6b7280',
+                          }}>
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: RSI &gt; overbought + price &gt; EMA. Short: RSI &lt; oversold + price &lt; EMA.</p>
+                </div>
               )}
               {config.fields.map(f => (
                 <div key={f.key} style={{ marginBottom: 12 }}>

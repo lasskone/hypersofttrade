@@ -142,6 +142,33 @@ const BOT_TYPES = {
     minAllocation: 100,
     color: '#f97316',
   },
+  trend_magic: {
+    name: 'Trend Magic',
+    emoji: '🔮',
+    tagline: 'RSI + EMA200 trend filter with Fibonacci DCA and trailing stop',
+    description: 'Enters trends confirmed by both RSI momentum and EMA(200) direction. Goes long when RSI is above the overbought threshold AND price is above EMA200; shorts when RSI is below oversold AND price is below EMA200. Uses Fibonacci-weighted DCA entries (15/35/50%) and a trailing stop to lock in profits.',
+    howItWorks: [
+      'Long signal: RSI > overbought threshold AND close above EMA(200)',
+      'Short signal: RSI < oversold threshold AND close below EMA(200)',
+      'Fibonacci DCA: initial 15%, DCA1 35%, DCA2 50% of allocation',
+      'Trailing stop follows price peak — locks in profits as trend extends',
+    ],
+    bestFor: 'Strong trending markets (bull or bear)',
+    risk: 'Medium',
+    riskColor: '#f59e0b',
+    params: {
+      rsi_period: { label: 'RSI Period', hint: 'RSI calculation period. Default 14.' },
+      rsi_overbought: { label: 'RSI Overbought', hint: 'RSI above this confirms uptrend strength. Default 70.' },
+      rsi_oversold: { label: 'RSI Oversold', hint: 'RSI below this confirms downtrend strength. Default 30.' },
+      ema_period: { label: 'EMA Period', hint: 'EMA trend filter period. Default 200.' },
+      dca_level_1_pct: { label: 'DCA Level 1 %', hint: 'First DCA buy % below/above entry. Default 7%.' },
+      dca_level_2_pct: { label: 'DCA Level 2 %', hint: 'Second DCA buy % below/above entry. Default 14%.' },
+      tp_pct: { label: 'Take Profit %', hint: 'Take profit % from average entry. Default 5%.' },
+      trailing_stop_pct: { label: 'Trailing Stop %', hint: 'Trailing stop % below/above peak price. Default 1%.' },
+    },
+    minAllocation: 100,
+    color: '#8b5cf6',
+  },
   passivbot_dca: {
     name: 'Passivbot DCA',
     emoji: '🔄',
@@ -225,6 +252,20 @@ const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
     trailing_stop_type: 'fixed',
     trailing_stop_pct: 2.0,
     trailing_stop_atr_mult: 1.5,
+  },
+  trend_magic: {
+    rsi_period: 14,
+    rsi_overbought: 70,
+    rsi_oversold: 30,
+    ema_period: 200,
+    dca_level_1_pct: 7.0,
+    dca_level_2_pct: 14.0,
+    tp_pct: 5.0,
+    trailing_stop_pct: 1.0,
+    allocated_usdc: 100,
+    leverage: 1,
+    interval: '1h',
+    sides: ['long', 'short'],
   },
   passivbot_dca: {
     direction: 'long',
@@ -781,6 +822,16 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [gtTrailingType, setGtTrailingType] = useState('fixed')
   const [gtTrailingPct, setGtTrailingPct] = useState('2.0')
   const [gtTrailingAtrMult, setGtTrailingAtrMult] = useState('1.5')
+  const [tmSides, setTmSides] = useState<string[]>(['long', 'short'])
+  const [tmRsiPeriod, setTmRsiPeriod] = useState('14')
+  const [tmRsiOverbought, setTmRsiOverbought] = useState('70')
+  const [tmRsiOversold, setTmRsiOversold] = useState('30')
+  const [tmEmaPeriod, setTmEmaPeriod] = useState('200')
+  const [tmDca1Pct, setTmDca1Pct] = useState('7.0')
+  const [tmDca2Pct, setTmDca2Pct] = useState('14.0')
+  const [tmTpPct, setTmTpPct] = useState('5.0')
+  const [tmTrailingPct, setTmTrailingPct] = useState('1.0')
+  const [tmInterval, setTmInterval] = useState('1h')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -885,6 +936,20 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             trailing_stop_type: gtTrailingType,
             trailing_stop_pct: parseFloat(gtTrailingPct),
             trailing_stop_atr_mult: parseFloat(gtTrailingAtrMult),
+          } : botType === 'trend_magic' ? {
+            dex,
+            rsi_period: parseInt(tmRsiPeriod),
+            rsi_overbought: parseFloat(tmRsiOverbought),
+            rsi_oversold: parseFloat(tmRsiOversold),
+            ema_period: parseInt(tmEmaPeriod),
+            dca_level_1_pct: parseFloat(tmDca1Pct),
+            dca_level_2_pct: parseFloat(tmDca2Pct),
+            tp_pct: parseFloat(tmTpPct),
+            trailing_stop_pct: parseFloat(tmTrailingPct),
+            allocated_usdc: parseFloat(allocatedUsdc),
+            leverage: parseInt(leverage),
+            interval: tmInterval,
+            sides: tmSides,
           } : {
             dex,
             direction: pbDirection,
@@ -1428,6 +1493,100 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                 </div>
               )}
             </>
+          ) : botType === 'trend_magic' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setTmInterval(iv)}
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: tmInterval === iv ? '#8b5cf622' : '#13131f',
+                        color: tmInterval === iv ? '#8b5cf6' : '#6b7280',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Sides</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['long', 'short'].map(s => (
+                    <button key={s} type="button" onClick={() => setTmSides(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: tmSides.includes(s) ? '#8b5cf6' : '#1a1a2e',
+                        backgroundColor: tmSides.includes(s) ? '#8b5cf618' : '#0d0d14',
+                        color: tmSides.includes(s) ? '#8b5cf6' : '#6b7280',
+                      }}>
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>RSI Period</label>
+                  <input style={inputStyle} type="number" step="1" value={tmRsiPeriod} onChange={e => setTmRsiPeriod(e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>EMA Period</label>
+                  <input style={inputStyle} type="number" step="1" value={tmEmaPeriod} onChange={e => setTmEmaPeriod(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>RSI Overbought</label>
+                  <input style={inputStyle} type="number" step="1" value={tmRsiOverbought} onChange={e => setTmRsiOverbought(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long signal when RSI &gt; this (uptrend momentum)</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>RSI Oversold</label>
+                  <input style={inputStyle} type="number" step="1" value={tmRsiOversold} onChange={e => setTmRsiOversold(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Short signal when RSI &lt; this (downtrend momentum)</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>DCA Level 1 %</label>
+                  <input style={inputStyle} type="number" step="0.5" value={tmDca1Pct} onChange={e => setTmDca1Pct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First DCA below/above entry. Default 7%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>DCA Level 2 %</label>
+                  <input style={inputStyle} type="number" step="0.5" value={tmDca2Pct} onChange={e => setTmDca2Pct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Second DCA below/above entry. Default 14%</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Take Profit %</label>
+                  <input style={inputStyle} type="number" step="0.5" value={tmTpPct} onChange={e => setTmTpPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>TP % above/below avg entry</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Trailing Stop %</label>
+                  <input style={inputStyle} type="number" step="0.1" value={tmTrailingPct} onChange={e => setTmTrailingPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL trails % below/above peak</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, alignItems: 'center' }}>
+                  {[1, 2, 3, 5, 10].map(lv => (
+                    <button key={lv} type="button" onClick={() => setLeverage(String(lv))}
+                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: leverage === String(lv) ? '#8b5cf622' : '#13131f',
+                        color: leverage === String(lv) ? '#8b5cf6' : '#6b7280',
+                      }}>
+                      {lv}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+            </>
           ) : (
             <>
               <div>
@@ -1612,6 +1771,16 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [gtTrailingType, setGtTrailingType] = useState(String(merged.trailing_stop_type ?? 'fixed'))
   const [gtTrailingPct, setGtTrailingPct] = useState(String(merged.trailing_stop_pct ?? 2.0))
   const [gtTrailingAtrMult, setGtTrailingAtrMult] = useState(String(merged.trailing_stop_atr_mult ?? 1.5))
+  const [tmSides, setTmSides] = useState<string[]>(Array.isArray(merged.sides) ? merged.sides : ['long', 'short'])
+  const [tmRsiPeriod, setTmRsiPeriod] = useState(String(merged.rsi_period ?? 14))
+  const [tmRsiOverbought, setTmRsiOverbought] = useState(String(merged.rsi_overbought ?? 70))
+  const [tmRsiOversold, setTmRsiOversold] = useState(String(merged.rsi_oversold ?? 30))
+  const [tmEmaPeriod, setTmEmaPeriod] = useState(String(merged.ema_period ?? 200))
+  const [tmDca1Pct, setTmDca1Pct] = useState(String(merged.dca_level_1_pct ?? 7.0))
+  const [tmDca2Pct, setTmDca2Pct] = useState(String(merged.dca_level_2_pct ?? 14.0))
+  const [tmTpPct, setTmTpPct] = useState(String(merged.tp_pct ?? 5.0))
+  const [tmTrailingPct, setTmTrailingPct] = useState(String(merged.trailing_stop_pct ?? 1.0))
+  const [tmInterval, setTmInterval] = useState(String(merged.interval ?? '1h'))
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -1717,6 +1886,21 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         trailing_stop_type: gtTrailingType,
         trailing_stop_pct: parseFloat(gtTrailingPct),
         trailing_stop_atr_mult: parseFloat(gtTrailingAtrMult),
+      } : bot.bot_type === 'trend_magic' ? {
+        symbol: symbol,
+        dex: dex,
+        rsi_period: parseInt(tmRsiPeriod),
+        rsi_overbought: parseFloat(tmRsiOverbought),
+        rsi_oversold: parseFloat(tmRsiOversold),
+        ema_period: parseInt(tmEmaPeriod),
+        dca_level_1_pct: parseFloat(tmDca1Pct),
+        dca_level_2_pct: parseFloat(tmDca2Pct),
+        tp_pct: parseFloat(tmTpPct),
+        trailing_stop_pct: parseFloat(tmTrailingPct),
+        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        leverage: parseInt(leverage),
+        interval: tmInterval,
+        sides: tmSides,
       } : {
         symbol: symbol,
         dex: dex,
@@ -2263,6 +2447,100 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL = peak − ATR14 × multiplier. Higher = wider trailing stop.</p>
                 </div>
               )}
+            </>
+          ) : bot.bot_type === 'trend_magic' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Interval</label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                  {['1m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '1d'].map(iv => (
+                    <button key={iv} type="button" onClick={() => setTmInterval(iv)}
+                      style={{ padding: '6px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: tmInterval === iv ? '#8b5cf622' : '#13131f',
+                        color: tmInterval === iv ? '#8b5cf6' : '#6b7280',
+                      }}>
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Sides</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['long', 'short'].map(s => (
+                    <button key={s} type="button" onClick={() => setTmSides(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: tmSides.includes(s) ? '#8b5cf6' : '#1a1a2e',
+                        backgroundColor: tmSides.includes(s) ? '#8b5cf618' : '#0d0d14',
+                        color: tmSides.includes(s) ? '#8b5cf6' : '#6b7280',
+                      }}>
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>RSI Period</label>
+                  <input style={inputStyle} type="number" step="1" value={tmRsiPeriod} onChange={e => setTmRsiPeriod(e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>EMA Period</label>
+                  <input style={inputStyle} type="number" step="1" value={tmEmaPeriod} onChange={e => setTmEmaPeriod(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>RSI Overbought</label>
+                  <input style={inputStyle} type="number" step="1" value={tmRsiOverbought} onChange={e => setTmRsiOverbought(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long signal when RSI &gt; this (uptrend momentum)</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>RSI Oversold</label>
+                  <input style={inputStyle} type="number" step="1" value={tmRsiOversold} onChange={e => setTmRsiOversold(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Short signal when RSI &lt; this (downtrend momentum)</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>DCA Level 1 %</label>
+                  <input style={inputStyle} type="number" step="0.5" value={tmDca1Pct} onChange={e => setTmDca1Pct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>First DCA below/above entry. Default 7%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>DCA Level 2 %</label>
+                  <input style={inputStyle} type="number" step="0.5" value={tmDca2Pct} onChange={e => setTmDca2Pct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Second DCA below/above entry. Default 14%</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Take Profit %</label>
+                  <input style={inputStyle} type="number" step="0.5" value={tmTpPct} onChange={e => setTmTpPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>TP % above/below avg entry</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Trailing Stop %</label>
+                  <input style={inputStyle} type="number" step="0.1" value={tmTrailingPct} onChange={e => setTmTrailingPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL trails % below/above peak</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, alignItems: 'center' }}>
+                  {[1, 2, 3, 5, 10].map(lv => (
+                    <button key={lv} type="button" onClick={() => setLeverage(String(lv))}
+                      style={{ padding: '6px 12px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: leverage === String(lv) ? '#8b5cf622' : '#13131f',
+                        color: leverage === String(lv) ? '#8b5cf6' : '#6b7280',
+                      }}>
+                      {lv}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
             </>
           ) : (
             <>

@@ -110,6 +110,8 @@ class BotManager:
             await self._run_passivbot_dca_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "golden_trap":
             await self._run_golden_trap_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "trend_magic":
+            await self._run_trend_magic_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             raise ValueError(f"Unknown bot type: {bot_type}")
 
@@ -378,6 +380,41 @@ class BotManager:
         self._add_log(bot_id, "info", (
             f"Golden Trap Bot initializing — {coin} MA={ma_period} envelopes={envelopes} "
             f"sides={sides} trailing={trailing_stop_type} allocation=${allocated_usdc}"
+        ))
+        await bot.run()
+
+
+    async def _run_trend_magic_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.trend_magic.strategy import TrendMagicBot
+
+        symbol = config.get("symbol", "BTC")
+        dex    = config.get("dex", "") or None
+        coin   = f"{dex}:{symbol}" if dex else symbol
+
+        bot = TrendMagicBot(
+            private_key=private_key,
+            master_address=master_address,
+            coin=coin,
+            allocated_usdc=float(config.get("allocated_usdc", 100)),
+            sz_decimals=await get_sz_decimals(coin),
+            leverage=int(config.get("leverage", 1)),
+            interval=config.get("interval", "1h"),
+            rsi_period=int(config.get("rsi_period", 14)),
+            rsi_overbought=float(config.get("rsi_overbought", 70.0)),
+            rsi_oversold=float(config.get("rsi_oversold", 30.0)),
+            ema_period=int(config.get("ema_period", 200)),
+            dca_level_1_pct=float(config.get("dca_level_1_pct", 7.0)),
+            dca_level_2_pct=float(config.get("dca_level_2_pct", 14.0)),
+            tp_pct=float(config.get("tp_pct", 5.0)),
+            trailing_stop_pct=float(config.get("trailing_stop_pct", 1.0)),
+            sides=config.get("sides") or ["long", "short"],
+            dex=dex,
+            log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+        )
+        self._add_log(bot_id, "info", (
+            f"Trend Magic Bot initializing — {coin} "
+            f"RSI({config.get('rsi_period', 14)}) EMA({config.get('ema_period', 200)}) "
+            f"sides={config.get('sides', ['long', 'short'])} allocation=${config.get('allocated_usdc', 100)}"
         ))
         await bot.run()
 

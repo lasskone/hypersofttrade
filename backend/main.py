@@ -108,7 +108,7 @@ async def run_backtest(body: dict):
     coin = f"{dex}:{symbol}" if dex else symbol
 
     # Strategies that need 1m candles for OHLC-accurate simulation
-    _1m_strategies = ("envelope_dca", "bb_rsi", "ema_cross", "golden_trap")
+    _1m_strategies = ("envelope_dca", "bb_rsi", "ema_cross", "golden_trap", "trend_magic")
     if bot_type in _1m_strategies:
         date_range_days = int(body.get("date_range_days", 14))
         fetch_interval  = "1m"
@@ -205,6 +205,22 @@ async def run_backtest(body: dict):
                 trailing_stop_type=str(body.get("trailing_stop_type", "fixed")),
                 trailing_stop_pct=float(body.get("trailing_stop_pct", 2.0)),
                 trailing_stop_atr_mult=float(body.get("trailing_stop_atr_mult", 1.5)),
+            )
+        elif bot_type == "trend_magic":
+            from services.backtest_engine import run_trend_magic_backtest
+            result = run_trend_magic_backtest(
+                candles_1m=candles,
+                allocation=allocation,
+                rsi_period=int(body.get("rsi_period", 14)),
+                rsi_overbought=float(body.get("rsi_overbought", 70.0)),
+                rsi_oversold=float(body.get("rsi_oversold", 30.0)),
+                ema_period=int(body.get("ema_period", 200)),
+                dca_level_1_pct=float(body.get("dca_level_1_pct", 7.0)),
+                dca_level_2_pct=float(body.get("dca_level_2_pct", 14.0)),
+                tp_pct=float(body.get("tp_pct", 5.0)),
+                trailing_stop_pct=float(body.get("trailing_stop_pct", 1.0)),
+                leverage=int(body.get("leverage", 1)),
+                sides=body.get("sides") or ["long", "short"],
             )
         else:
             raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
