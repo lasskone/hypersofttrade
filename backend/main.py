@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,12 +38,20 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 # CORS — allow the Next.js frontend (and localhost for development)
 # ---------------------------------------------------------------------------
+_extra_origin = os.environ.get("FRONTEND_URL", "").strip()
+_allowed_origins = [
+    "https://hypersofttrade-frontend-production.up.railway.app",
+    "https://hypersofttrade.com",
+    "https://www.hypersofttrade.com",
+    "https://api.hypersofttrade.com",
+    "http://localhost:3000",
+]
+if _extra_origin and _extra_origin not in _allowed_origins:
+    _allowed_origins.append(_extra_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://hypersofttrade-frontend-production.up.railway.app",
-        "http://localhost:3000",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

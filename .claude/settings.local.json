@@ -54,7 +54,8 @@
       "Bash(python -m py_compile backend/main.py backend/services/hyperliquid_service.py backend/routers/account.py backend/routers/orders.py backend/routers/bots.py backend/routers/saved_backtests.py)",
       "Bash(python -m py_compile bots/envelope/strategy.py)",
       "Bash(npx --no tsc --noEmit)",
-      "Bash(python -m py_compile bots/trend_magic/strategy.py)"
+      "Bash(python -m py_compile bots/trend_magic/strategy.py)",
+      "WebFetch(domain:tradingview.github.io)"
     ]
   }
 }
