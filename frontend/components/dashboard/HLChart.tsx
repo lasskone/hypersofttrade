@@ -49,8 +49,6 @@ interface Props {
 export default function HLChart({ symbol, height = 420, initialInterval, positions = [], openOrders = [] }: Props) {
   const containerRef    = useRef<HTMLDivElement>(null)
   const chartRef        = useRef<any>(null)
-  const rsiContainerRef = useRef<HTMLDivElement>(null)
-  const rsiChartRef     = useRef<any>(null)
   const loadingRef      = useRef(false)
   const candleSeriesRef = useRef<any>(null)
   const emaSeriesRef    = useRef<any>(null)
@@ -67,8 +65,6 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const isDraggingRef      = useRef(false)
   const dragStartYRef      = useRef(0)
   const dragStartHeightRef = useRef(0)
-  const isCrosshairSyncRef = useRef(false)
-  const rsiDataMapRef      = useRef<Map<number, number>>(new Map())
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -183,8 +179,8 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     return rsi
   }
 
-  // Main chart height: subtract toolbar (50px) and RSI pane if visible
-  const mainChartH = chartHeight - 50 - (showRSI ? RSI_HEIGHT + 1 : 0)
+  // Total chart height — toolbar is 50px; RSI pane lives inside the chart canvas
+  const totalChartH = chartHeight - 50
 
   useEffect(() => {
     if (loadingRef.current) return
@@ -195,14 +191,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     const init = async () => {
       if (!containerRef.current) { loadingRef.current = false; return }
 
-      // Destroy existing charts
+      // Destroy existing chart
       if (chartRef.current) {
         try { chartRef.current.remove() } catch {}
         chartRef.current = null
-      }
-      if (rsiChartRef.current) {
-        try { rsiChartRef.current.remove() } catch {}
-        rsiChartRef.current = null
       }
 
       setLoading(true)
@@ -237,7 +229,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         // ── Main chart ────────────────────────────────────────────────
         const chart = createChart(containerRef.current, {
           width: containerRef.current.clientWidth,
-          height: mainChartH,
+          height: totalChartH,
           layout: {
             background: { type: ColorType.Solid, color: '#0a0a0f' },
             textColor: '#9ca3af',
@@ -267,28 +259,12 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         })))
         candleSeriesRef.current = candleSeries
 
-        // Crosshair OHLC + sync to RSI chart
+        // Crosshair OHLC update
         chart.subscribeCrosshairMove((param: any) => {
-          if (!param.time) {
-            if (rsiChartRef.current) {
-              try { rsiChartRef.current.clearCrosshairPosition() } catch {}
-            }
-            return
-          }
+          if (!param.time) return
           const data = param.seriesData?.get(candleSeries)
           if (data && data.open !== undefined) {
             setOhlc({ time: param.time, open: data.open, high: data.high, low: data.low, close: data.close, volume: 0 })
-          }
-          // Sync crosshair to RSI chart
-          if (!isCrosshairSyncRef.current && rsiChartRef.current && rsiSeriesRef.current) {
-            isCrosshairSyncRef.current = true
-            const rsiVal = rsiDataMapRef.current.get(param.time as number)
-            if (rsiVal !== undefined) {
-              try { rsiChartRef.current.setCrosshairPosition(rsiVal, param.time, rsiSeriesRef.current) } catch {}
-            } else {
-              try { rsiChartRef.current.clearCrosshairPosition() } catch {}
-            }
-            isCrosshairSyncRef.current = false
           }
         })
 
@@ -321,112 +297,13 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         // Save viewport on scroll/zoom — debounced 500ms
         const saveRangeHandler = (range: any) => {
           if (!range) return
-          if (isProgrammaticRef.current) return  // skip saves triggered by fitContent/setVisibleLogicalRange
+          if (isProgrammaticRef.current) return
           if (saveDebounceRef.current !== null) clearTimeout(saveDebounceRef.current)
           saveDebounceRef.current = setTimeout(() => {
             try { localStorage.setItem(rangeKey, JSON.stringify(range)) } catch {}
           }, 500)
         }
         chart.timeScale().subscribeVisibleLogicalRangeChange(saveRangeHandler)
-
-        // ── RSI chart ─────────────────────────────────────────────────
-        if (showRSI && rsiContainerRef.current) {
-          const rsiChart = createChart(rsiContainerRef.current, {
-            width: rsiContainerRef.current.clientWidth,
-            height: RSI_HEIGHT,
-            layout: {
-              background: { type: ColorType.Solid, color: '#0a0a0f' },
-              textColor: '#9ca3af',
-            },
-            grid: {
-              vertLines: { color: 'rgba(26,26,46,0.4)' },
-              horzLines: { color: 'rgba(26,26,46,0.4)' },
-            },
-            rightPriceScale: {
-              borderColor: '#1a1a2e',
-              scaleMargins: { top: 0.1, bottom: 0.1 },
-            },
-            timeScale: { borderColor: '#1a1a2e', visible: false },
-            crosshair: { mode: CrosshairMode.Normal },
-          })
-          rsiChartRef.current = rsiChart
-
-          // RSI line
-          const rsiSeries = rsiChart.addSeries(LineSeries, {
-            color: '#a78bfa', lineWidth: 1 as const, priceLineVisible: false,
-          })
-          const rsiData = calcRSI(candles, rsiPeriod)
-          rsiSeries.setData(rsiData)
-          rsiSeriesRef.current = rsiSeries
-          // Build time→value map for crosshair sync
-          const rsiMap = new Map<number, number>()
-          rsiData.forEach(d => rsiMap.set(d.time as number, d.value))
-          rsiDataMapRef.current = rsiMap
-
-          // Overbought (70)
-          const ob = rsiChart.addSeries(LineSeries, {
-            color: 'rgba(239,68,68,0.5)', lineWidth: 1 as const,
-            lineStyle: 2, priceLineVisible: false,
-          })
-          ob.setData(candles.slice(rsiPeriod + 1).map(c => ({ time: c.time as any, value: 70 })))
-
-          // Oversold (30)
-          const os = rsiChart.addSeries(LineSeries, {
-            color: 'rgba(0,212,170,0.5)', lineWidth: 1 as const,
-            lineStyle: 2, priceLineVisible: false,
-          })
-          os.setData(candles.slice(rsiPeriod + 1).map(c => ({ time: c.time as any, value: 30 })))
-
-          // Sync time scales bidirectionally
-          chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-            if (range) rsiChart.timeScale().setVisibleLogicalRange(range)
-          })
-          rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-            if (range) chart.timeScale().setVisibleLogicalRange(range)
-          })
-
-          // Apply the main chart's current viewport to RSI immediately — the
-          // bidirectional subscription only fires on future changes, so the RSI
-          // would otherwise start at its own default "fit all" view.
-          // Also match the right price scale width: the main chart (e.g. "$95,000")
-          // has a wider price scale than the RSI ("70"), which shifts the content
-          // areas apart and causes candles and RSI values to appear misaligned.
-          setTimeout(() => {
-            if (!chartRef.current || !rsiChartRef.current) return
-            const currentRange = chartRef.current.timeScale().getVisibleLogicalRange()
-            if (currentRange) rsiChartRef.current.timeScale().setVisibleLogicalRange(currentRange)
-            try {
-              const w = chartRef.current.priceScale('right').width()
-              if (w > 0) rsiChart.priceScale('right').applyOptions({ minimumWidth: w })
-            } catch {}
-          }, 0)
-
-          // Sync crosshair from RSI chart back to main chart
-          rsiChart.subscribeCrosshairMove((param: any) => {
-            if (!param.time) {
-              if (!isCrosshairSyncRef.current) {
-                try { chart.clearCrosshairPosition() } catch {}
-              }
-              return
-            }
-            if (!isCrosshairSyncRef.current) {
-              const c = candleDataRef.current.find((x: any) => x.time === (param.time as number))
-              if (c) {
-                isCrosshairSyncRef.current = true
-                try { chart.setCrosshairPosition(c.close, param.time, candleSeries) } catch {}
-                isCrosshairSyncRef.current = false
-              }
-            }
-          })
-
-          // RSI resize observer
-          const rsiRO = new ResizeObserver(() => {
-            if (rsiContainerRef.current && rsiChartRef.current) {
-              rsiChartRef.current.applyOptions({ width: rsiContainerRef.current.clientWidth })
-            }
-          })
-          rsiRO.observe(rsiContainerRef.current)
-        }
 
         // Main chart resize observer
         const observer = new ResizeObserver(() => {
@@ -466,13 +343,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         saveDebounceRef.current = null
       }
       setChartReady(false)
+      rsiSeriesRef.current = null
       if (chartRef.current) {
         try { chartRef.current.remove() } catch {}
         chartRef.current = null
-      }
-      if (rsiChartRef.current) {
-        try { rsiChartRef.current.remove() } catch {}
-        rsiChartRef.current = null
       }
       loadingRef.current = false
     }
@@ -529,90 +403,73 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
 
   // RSI period — update data without rebuilding
   useEffect(() => {
-    if (!rsiChartRef.current || !candleDataRef.current.length || !rsiSeriesRef.current) return
+    if (!chartRef.current || !candleDataRef.current.length || !rsiSeriesRef.current) return
     const rsiData = calcRSI(candleDataRef.current, rsiPeriod)
     rsiSeriesRef.current.setData(rsiData)
-    const m = new Map<number, number>()
-    rsiData.forEach(d => m.set(d.time as number, d.value))
-    rsiDataMapRef.current = m
   }, [rsiPeriod, chartReady])
 
-  // Height — resize without rebuilding
+  // Height — resize without rebuilding; re-pin RSI pane height if present
   useEffect(() => {
     if (chartRef.current) {
-      chartRef.current.applyOptions({ height: mainChartH })
+      chartRef.current.applyOptions({ height: totalChartH })
+      try {
+        if (chartRef.current.panes().length > 1) {
+          chartRef.current.panes()[1].setHeight(RSI_HEIGHT)
+        }
+      } catch {}
     }
-  }, [mainChartH])
+  }, [totalChartH])
 
-  // showRSI — create/destroy RSI chart without rebuilding main chart
+  // RSI — add/remove as pane 1 on the main chart (no separate chart instance)
   useEffect(() => {
-    if (!chartReady || !chartRef.current) return
-    if (candleDataRef.current.length > 0) {
-      if (rsiChartRef.current) {
-        try { rsiChartRef.current.remove() } catch {}
-        rsiChartRef.current = null
-        rsiSeriesRef.current = null
-      }
-      if (showRSI && rsiContainerRef.current) {
-        import('lightweight-charts').then(({ createChart, LineSeries, ColorType, CrosshairMode }) => {
-          if (!rsiContainerRef.current || !chartRef.current) return
-          const rsiChart = createChart(rsiContainerRef.current, {
-            width: rsiContainerRef.current.clientWidth,
-            height: RSI_HEIGHT,
-            layout: { background: { type: ColorType.Solid, color: '#0a0a0f' }, textColor: '#9ca3af' },
-            grid: { vertLines: { color: 'rgba(26,26,46,0.4)' }, horzLines: { color: 'rgba(26,26,46,0.4)' } },
-            rightPriceScale: { borderColor: '#1a1a2e', scaleMargins: { top: 0.1, bottom: 0.1 } },
-            timeScale: { borderColor: '#1a1a2e', visible: false },
-            crosshair: { mode: CrosshairMode.Normal },
-          })
-          rsiChartRef.current = rsiChart
-          const s = rsiChart.addSeries(LineSeries, { color: '#a78bfa', lineWidth: 1, priceLineVisible: false })
-          const rsiData2 = calcRSI(candleDataRef.current, rsiPeriod)
-          s.setData(rsiData2)
-          rsiSeriesRef.current = s
-          // Build time→value map for crosshair sync
-          const rsiMap2 = new Map<number, number>()
-          rsiData2.forEach((d: any) => rsiMap2.set(d.time as number, d.value))
-          rsiDataMapRef.current = rsiMap2
-          const ob = rsiChart.addSeries(LineSeries, { color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false })
-          ob.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 70 })))
-          const os = rsiChart.addSeries(LineSeries, { color: 'rgba(0,212,170,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false })
-          os.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 30 })))
-          chartRef.current.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
-            if (range) rsiChart.timeScale().setVisibleLogicalRange(range)
-          })
-          rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
-            if (range && chartRef.current) chartRef.current.timeScale().setVisibleLogicalRange(range)
-          })
-          // Same initial alignment fix as in the init effect: apply current viewport
-          // and match price scale width so content areas share the same x-position.
-          setTimeout(() => {
-            if (!chartRef.current || !rsiChartRef.current) return
-            const currentRange = chartRef.current.timeScale().getVisibleLogicalRange()
-            if (currentRange) rsiChartRef.current.timeScale().setVisibleLogicalRange(currentRange)
-            try {
-              const w = chartRef.current.priceScale('right').width()
-              if (w > 0) rsiChart.priceScale('right').applyOptions({ minimumWidth: w })
-            } catch {}
-          }, 0)
-          // Sync crosshair from RSI chart back to main chart
-          rsiChart.subscribeCrosshairMove((param: any) => {
-            if (!param.time) {
-              if (!isCrosshairSyncRef.current && chartRef.current) {
-                try { chartRef.current.clearCrosshairPosition() } catch {}
-              }
-              return
-            }
-            if (!isCrosshairSyncRef.current && chartRef.current && candleSeriesRef.current) {
-              const c = candleDataRef.current.find((x: any) => x.time === (param.time as number))
-              if (c) {
-                isCrosshairSyncRef.current = true
-                try { chartRef.current.setCrosshairPosition(c.close, param.time, candleSeriesRef.current) } catch {}
-                isCrosshairSyncRef.current = false
-              }
-            }
-          })
-        })
+    if (!chartReady || !chartRef.current || !candleDataRef.current.length) return
+
+    if (showRSI) {
+      import('lightweight-charts').then(({ LineSeries }) => {
+        if (!chartRef.current) return
+
+        // Clean up any lingering RSI state
+        if (rsiSeriesRef.current) {
+          try { chartRef.current.removeSeries(rsiSeriesRef.current) } catch {}
+          rsiSeriesRef.current = null
+        }
+        if (chartRef.current.panes().length > 1) {
+          try { chartRef.current.removePane(1) } catch {}
+        }
+
+        const rsiData = calcRSI(candleDataRef.current, rsiPeriod)
+
+        // Third argument = pane index 1 — auto-created if absent
+        const s = chartRef.current.addSeries(LineSeries, {
+          color: '#a78bfa', lineWidth: 1, priceLineVisible: false,
+        }, 1)
+        s.setData(rsiData)
+        rsiSeriesRef.current = s
+
+        // Overbought line (70)
+        const ob = chartRef.current.addSeries(LineSeries, {
+          color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false,
+        }, 1)
+        ob.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 70 })))
+
+        // Oversold line (30)
+        const os = chartRef.current.addSeries(LineSeries, {
+          color: 'rgba(0,212,170,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false,
+        }, 1)
+        os.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 30 })))
+
+        // Pin RSI pane to exact pixel height
+        try {
+          if (chartRef.current.panes().length > 1) {
+            chartRef.current.panes()[1].setHeight(RSI_HEIGHT)
+          }
+        } catch {}
+      })
+    } else {
+      // Remove RSI pane — also destroys all series inside it
+      rsiSeriesRef.current = null
+      if (chartRef.current.panes().length > 1) {
+        try { chartRef.current.removePane(1) } catch {}
       }
     }
   }, [showRSI, chartReady])
@@ -972,7 +829,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
         </div>
       </div>
 
-      {/* ── Chart area ────────────────────────────────────────────────── */}
+      {/* ── Chart area (RSI pane lives inside this canvas) ─────────────── */}
       <div style={{ position: 'relative' }}>
         {loading && (
           <div style={{
@@ -983,22 +840,8 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
             <span style={{ color: '#6b7280', fontSize: '13px' }}>Loading chart…</span>
           </div>
         )}
-        <div ref={containerRef} style={{ width: '100%', height: `${mainChartH}px` }} />
+        <div ref={containerRef} style={{ width: '100%', height: `${totalChartH}px` }} />
       </div>
-
-      {/* ── RSI pane ──────────────────────────────────────────────────── */}
-      {showRSI && (
-        <div style={{ borderTop: '1px solid #1a1a2e' }}>
-          <div style={{
-            padding: '3px 12px', fontSize: '10px', color: '#a78bfa',
-            background: '#0a0a0f', display: 'flex', justifyContent: 'space-between',
-          }}>
-            <span>RSI ({rsiPeriod})</span>
-            <span style={{ color: '#4b5563' }}>70 / 30</span>
-          </div>
-          <div ref={rsiContainerRef} style={{ width: '100%', height: `${RSI_HEIGHT}px` }} />
-        </div>
-      )}
 
       {/* ── Drag handle ───────────────────────────────────────────────── */}
       <div
