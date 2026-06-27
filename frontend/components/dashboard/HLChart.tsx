@@ -385,6 +385,22 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
             if (range) chart.timeScale().setVisibleLogicalRange(range)
           })
 
+          // Apply the main chart's current viewport to RSI immediately — the
+          // bidirectional subscription only fires on future changes, so the RSI
+          // would otherwise start at its own default "fit all" view.
+          // Also match the right price scale width: the main chart (e.g. "$95,000")
+          // has a wider price scale than the RSI ("70"), which shifts the content
+          // areas apart and causes candles and RSI values to appear misaligned.
+          setTimeout(() => {
+            if (!chartRef.current || !rsiChartRef.current) return
+            const currentRange = chartRef.current.timeScale().getVisibleLogicalRange()
+            if (currentRange) rsiChartRef.current.timeScale().setVisibleLogicalRange(currentRange)
+            try {
+              const w = chartRef.current.priceScale('right').width()
+              if (w > 0) rsiChart.priceScale('right').applyOptions({ minimumWidth: w })
+            } catch {}
+          }, 0)
+
           // Sync crosshair from RSI chart back to main chart
           rsiChart.subscribeCrosshairMove((param: any) => {
             if (!param.time) {
@@ -568,6 +584,17 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
           rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
             if (range && chartRef.current) chartRef.current.timeScale().setVisibleLogicalRange(range)
           })
+          // Same initial alignment fix as in the init effect: apply current viewport
+          // and match price scale width so content areas share the same x-position.
+          setTimeout(() => {
+            if (!chartRef.current || !rsiChartRef.current) return
+            const currentRange = chartRef.current.timeScale().getVisibleLogicalRange()
+            if (currentRange) rsiChartRef.current.timeScale().setVisibleLogicalRange(currentRange)
+            try {
+              const w = chartRef.current.priceScale('right').width()
+              if (w > 0) rsiChart.priceScale('right').applyOptions({ minimumWidth: w })
+            } catch {}
+          }, 0)
           // Sync crosshair from RSI chart back to main chart
           rsiChart.subscribeCrosshairMove((param: any) => {
             if (!param.time) {
