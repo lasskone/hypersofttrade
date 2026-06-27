@@ -783,6 +783,96 @@ export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
   )
 }
 
+// ── Searchable multi-select for markets (used by TM scanner and GC blocked coins) ──
+function MarketMultiSelect({
+  markets, marketsLoading, selected, onSelect, onRemove, accentColor,
+  placeholder = 'Search and select pairs…',
+}: {
+  markets: Market[]
+  marketsLoading: boolean
+  selected: string[]
+  onSelect: (sym: string) => void
+  onRemove: (sym: string) => void
+  accentColor: string
+  placeholder?: string
+}) {
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const displayName = (m: Market) =>
+    m.dex && m.dex !== 'main' ? `${m.name} [${m.dex}]` : m.name
+
+  const filtered = markets.filter(m => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return m.name.toLowerCase().includes(q) ||
+      (m.display_name ?? '').toLowerCase().includes(q) ||
+      m.dex.toLowerCase().includes(q)
+  })
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      {selected.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
+          {selected.map(sym => (
+            <span key={sym} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: accentColor + '18', border: `1px solid ${accentColor}44`, borderRadius: 4, padding: '3px 8px', fontSize: 12, color: accentColor }}>
+              {sym}
+              <span style={{ cursor: 'pointer', lineHeight: 1 }} onClick={() => onRemove(sym)}>×</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div style={{ fontSize: 11, color: accentColor, marginBottom: 4, opacity: 0.75 }}>
+          {selected.length} pair{selected.length !== 1 ? 's' : ''} selected
+        </div>
+      )}
+      <input
+        value={search}
+        onChange={e => { setSearch(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        placeholder={marketsLoading ? 'Loading markets…' : placeholder}
+        disabled={marketsLoading}
+        style={{ width: '100%', background: '#0d0d14', border: `1px solid ${open ? accentColor + '88' : '#1a1a2e'}`, borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }}
+      />
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 220, overflowY: 'auto' as const, zIndex: 3000, marginTop: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: 12, textAlign: 'center' as const, color: '#6b7280', fontSize: 13 }}>No markets found</div>
+          ) : filtered.slice(0, 80).map(m => {
+            const isSel = selected.includes(m.name)
+            return (
+              <div key={m.name}
+                onClick={() => { if (!isSel) { onSelect(m.name); setSearch(''); setOpen(false) } }}
+                style={{ padding: '8px 12px', cursor: isSel ? 'default' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'transparent', opacity: isSel ? 0.35 : 1 }}
+                onMouseEnter={e => { if (!isSel) (e.currentTarget as HTMLDivElement).style.background = '#1a1a2e' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
+              >
+                <span style={{ color: 'white', fontSize: 13 }}>{displayName(m)}</span>
+                <span style={{ color: '#4b5563', fontSize: 12 }}>
+                  {isSel ? '✓' : m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : ''}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function CreateBotModal({ walletAddress, botType, onClose, onCreated, initialSymbol, initialDex, initialParams, initialInterval }: { walletAddress: string, botType: string, onClose: () => void, onCreated: () => void, initialSymbol?: string, initialDex?: string, initialParams?: Record<string, number>, initialInterval?: string }) {
   const ip = initialParams ?? {}
   const [name, setName] = useState(`My ${BOT_TYPES[botType as keyof typeof BOT_TYPES]?.name ?? 'Bot'}`)
@@ -845,7 +935,6 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [tmInterval, setTmInterval] = useState('1h')
   const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>('single')
   const [tmScanSymbols, setTmScanSymbols] = useState<string[]>([])
-  const [tmScanInput, setTmScanInput] = useState('')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -1530,36 +1619,16 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
               {tmScanMode === 'multi' && (
                 <div>
                   <label style={labelStyle}>Pairs to scan</label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
-                    {tmScanSymbols.map(sym => (
-                      <span key={sym} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#8b5cf618', border: '1px solid #8b5cf644', borderRadius: 4, padding: '3px 8px', fontSize: 12, color: '#8b5cf6' }}>
-                        {sym}
-                        <span style={{ cursor: 'pointer', lineHeight: 1, color: '#8b5cf6' }} onClick={() => setTmScanSymbols(prev => prev.filter(s => s !== sym))}>×</span>
-                      </span>
-                    ))}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input style={{ ...inputStyle, flex: 1 }} value={tmScanInput} onChange={e => setTmScanInput(e.target.value.toUpperCase())}
-                      placeholder="BTC, ETH, SOL…"
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' || e.key === ',') {
-                          e.preventDefault()
-                          const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
-                          if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
-                          setTmScanInput('')
-                        }
-                      }}
-                    />
-                    <button type="button" onClick={() => {
-                      const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
-                      if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
-                      setTmScanInput('')
-                    }}
-                      style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#8b5cf6', color: 'white' }}>
-                      Add
-                    </button>
-                  </div>
-                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Type a symbol and press Enter or click Add. Allocation is split across all active pairs.</p>
+                  <MarketMultiSelect
+                    markets={markets}
+                    marketsLoading={marketsLoading}
+                    selected={tmScanSymbols}
+                    onSelect={sym => setTmScanSymbols(prev => [...prev, sym])}
+                    onRemove={sym => setTmScanSymbols(prev => prev.filter(s => s !== sym))}
+                    accentColor="#8b5cf6"
+                    placeholder="Search and select pairs…"
+                  />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Select pairs to scan. Allocation is split across all active pairs.</p>
                 </div>
               )}
               <div>
@@ -1855,7 +1924,6 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [tmInterval, setTmInterval] = useState(String(cfg.interval ?? def.interval ?? '1h'))
   const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>(cfg.scan_pairs ? 'multi' : 'single')
   const [tmScanSymbols, setTmScanSymbols] = useState<string[]>(Array.isArray(cfg.scan_symbols) ? cfg.scan_symbols : [])
-  const [tmScanInput, setTmScanInput] = useState('')
   // golden_copy fields
   const [gcTargetWallet, setGcTargetWallet] = useState(String(cfg.target_wallet ?? def.target_wallet ?? ''))
   const [gcScaleMode, setGcScaleMode] = useState(String(cfg.scale_mode ?? def.scale_mode ?? 'proportional'))
@@ -1864,7 +1932,6 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [gcCopyLongs, setGcCopyLongs] = useState(Boolean(cfg.copy_longs ?? def.copy_longs ?? true))
   const [gcCopyShorts, setGcCopyShorts] = useState(Boolean(cfg.copy_shorts ?? def.copy_shorts ?? true))
   const [gcBlockedCoins, setGcBlockedCoins] = useState<string[]>(Array.isArray(cfg.blocked_coins) ? cfg.blocked_coins : [])
-  const [gcBlockedInput, setGcBlockedInput] = useState('')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -2570,36 +2637,16 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               {tmScanMode === 'multi' && (
                 <div>
                   <label style={labelStyle}>Pairs to scan</label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
-                    {tmScanSymbols.map(sym => (
-                      <span key={sym} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#8b5cf618', border: '1px solid #8b5cf644', borderRadius: 4, padding: '3px 8px', fontSize: 12, color: '#8b5cf6' }}>
-                        {sym}
-                        <span style={{ cursor: 'pointer', lineHeight: 1, color: '#8b5cf6' }} onClick={() => setTmScanSymbols(prev => prev.filter(s => s !== sym))}>×</span>
-                      </span>
-                    ))}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input style={{ ...inputStyle, flex: 1 }} value={tmScanInput} onChange={e => setTmScanInput(e.target.value.toUpperCase())}
-                      placeholder="BTC, ETH, SOL…"
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' || e.key === ',') {
-                          e.preventDefault()
-                          const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
-                          if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
-                          setTmScanInput('')
-                        }
-                      }}
-                    />
-                    <button type="button" onClick={() => {
-                      const sym = tmScanInput.trim().replace(/,/g, '').toUpperCase()
-                      if (sym && !tmScanSymbols.includes(sym)) setTmScanSymbols(prev => [...prev, sym])
-                      setTmScanInput('')
-                    }}
-                      style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#8b5cf6', color: 'white' }}>
-                      Add
-                    </button>
-                  </div>
-                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Type a symbol and press Enter or click Add. Allocation is split across all active pairs.</p>
+                  <MarketMultiSelect
+                    markets={markets}
+                    marketsLoading={marketsLoading}
+                    selected={tmScanSymbols}
+                    onSelect={sym => setTmScanSymbols(prev => [...prev, sym])}
+                    onRemove={sym => setTmScanSymbols(prev => prev.filter(s => s !== sym))}
+                    accentColor="#8b5cf6"
+                    placeholder="Search and select pairs…"
+                  />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Select pairs to scan. Allocation is split across all active pairs.</p>
                 </div>
               )}
               <div>
@@ -2765,35 +2812,15 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
               </div>
               <div>
                 <label style={labelStyle}>Blocked Coins</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
-                  {gcBlockedCoins.map(coin => (
-                    <span key={coin} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ef444418', border: '1px solid #ef444444', borderRadius: 4, padding: '3px 8px', fontSize: 12, color: '#ef4444' }}>
-                      {coin}
-                      <span style={{ cursor: 'pointer', lineHeight: 1 }} onClick={() => setGcBlockedCoins(prev => prev.filter(c => c !== coin))}>×</span>
-                    </span>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input style={{ ...inputStyle, flex: 1 }} value={gcBlockedInput} onChange={e => setGcBlockedInput(e.target.value.toUpperCase())}
-                    placeholder="BTC, ETH…"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ',') {
-                        e.preventDefault()
-                        const coin = gcBlockedInput.trim().replace(/,/g, '').toUpperCase()
-                        if (coin && !gcBlockedCoins.includes(coin)) setGcBlockedCoins(prev => [...prev, coin])
-                        setGcBlockedInput('')
-                      }
-                    }}
-                  />
-                  <button type="button" onClick={() => {
-                    const coin = gcBlockedInput.trim().replace(/,/g, '').toUpperCase()
-                    if (coin && !gcBlockedCoins.includes(coin)) setGcBlockedCoins(prev => [...prev, coin])
-                    setGcBlockedInput('')
-                  }}
-                    style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#ef4444', color: 'white' }}>
-                    Block
-                  </button>
-                </div>
+                <MarketMultiSelect
+                  markets={markets}
+                  marketsLoading={marketsLoading}
+                  selected={gcBlockedCoins}
+                  onSelect={coin => setGcBlockedCoins(prev => [...prev, coin])}
+                  onRemove={coin => setGcBlockedCoins(prev => prev.filter(c => c !== coin))}
+                  accentColor="#ef4444"
+                  placeholder="Search coins to block…"
+                />
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Coins to never copy even if target wallet holds them.</p>
               </div>
               <div>
