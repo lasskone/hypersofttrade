@@ -286,6 +286,17 @@ const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
     allocated_usdc: 100,
     leverage: 1,
   },
+  golden_copy: {
+    target_wallet: '',
+    scale_mode: 'proportional',
+    min_position_pct: 0.01,
+    poll_interval_seconds: 60,
+    copy_longs: true,
+    copy_shorts: true,
+    blocked_coins: [] as string[],
+    allocated_usdc: 100,
+    leverage: 1,
+  },
 }
 
 interface Bot {
@@ -1779,67 +1790,81 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
 }
 
 function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, walletAddress: string, onClose: () => void, onUpdated: () => void }) {
-  const merged = { ...(BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}), ...(bot.config ?? {}) }
+  // Read bot config fresh each open — bot.config takes priority; fall back to type defaults
+  const def = BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}
+  const cfg: any = bot.config ?? {}
   const [name, setName] = useState(bot.name ?? '')
-  const [symbol, setSymbol] = useState<string>(String(merged.symbol ?? bot.symbol ?? ''))
-  const [dex, setDex] = useState<string>(String(merged.dex ?? ''))
-  const [levels, setLevels] = useState(String(merged.levels ?? 10))
-  const [rangePct, setRangePct] = useState(String(merged.range_pct ?? 5))
-  const [stopLossPct, setStopLossPct] = useState(String(merged.stop_loss_pct ?? 10))
-  const [takeProfitPct, setTakeProfitPct] = useState(String(merged.take_profit_pct ?? 30))
-  const [leverage, setLeverage] = useState(String(merged.leverage ?? 1))
-  const [maPeriod, setMaPeriod] = useState(String(merged.ma_period ?? 5))
-  const [envelope1, setEnvelope1] = useState(String(merged.envelope_1_pct ?? 7))
-  const [envelope2, setEnvelope2] = useState(String(merged.envelope_2_pct ?? 10))
-  const [envelope3, setEnvelope3] = useState(String(merged.envelope_3_pct ?? 15))
-  const [envelopeInterval, setEnvelopeInterval] = useState(String(merged.interval ?? '4h'))
-  const [entryThreshold, setEntryThreshold] = useState(String(merged.entry_threshold_pct ?? 0.01))
-  const [exitThreshold, setExitThreshold] = useState(String(merged.exit_threshold_pct ?? 0.005))
-  const [minHoldHours, setMinHoldHours] = useState(String(merged.min_hold_hours ?? 4))
-  const [scanAllPairs, setScanAllPairs] = useState(Boolean(merged.scan_all_pairs ?? false))
-  const [bbPeriod, setBbPeriod] = useState(String(merged.bb_period ?? 20))
-  const [bbStd, setBbStd] = useState(String(merged.bb_std ?? 2.0))
-  const [rsiPeriod, setRsiPeriod] = useState(String(merged.rsi_period ?? 14))
-  const [rsiOversold, setRsiOversold] = useState(String(merged.rsi_oversold ?? 30))
-  const [rsiOverbought, setRsiOverbought] = useState(String(merged.rsi_overbought ?? 70))
-  const [btInterval, setBtInterval] = useState(String(merged.interval ?? '4h'))
-  const [emaFast, setEmaFast] = useState(String(merged.ema_fast ?? 9))
-  const [emaSlow, setEmaSlow] = useState(String(merged.ema_slow ?? 21))
-  const [useAtrStop, setUseAtrStop] = useState(Boolean(merged.use_atr_stop ?? false))
-  const [atrMultiplier, setAtrMultiplier] = useState(String(merged.atr_multiplier ?? 2.0))
-  const [emaInterval, setEmaInterval] = useState(String(merged.interval ?? '4h'))
-  const [envelopeSides, setEnvelopeSides] = useState<string[]>(Array.isArray(merged.sides) ? merged.sides : ['long'])
-  const [pbDirection, setPbDirection] = useState(String(merged.direction ?? 'long'))
-  const [pbWalletExposureLimit, setPbWalletExposureLimit] = useState(String(merged.wallet_exposure_limit ?? 0.1))
-  const [pbEntryInitialQtyPct, setPbEntryInitialQtyPct] = useState(String(merged.entry_initial_qty_pct ?? 0.01))
-  const [pbDoubleDownFactor, setPbDoubleDownFactor] = useState(String(merged.double_down_factor ?? 0.9))
-  const [pbEntryGridSpacingPct, setPbEntryGridSpacingPct] = useState(String(merged.entry_grid_spacing_pct ?? 0.003))
-  const [pbEntryGridSpacingWeWeight, setPbEntryGridSpacingWeWeight] = useState(String(merged.entry_grid_spacing_we_weight ?? 0.5))
-  const [pbCloseGridMarkupStart, setPbCloseGridMarkupStart] = useState(String(merged.close_grid_markup_start ?? 0.001))
-  const [pbCloseGridMarkupEnd, setPbCloseGridMarkupEnd] = useState(String(merged.close_grid_markup_end ?? 0.003))
-  const [pbCloseGridQtyPct, setPbCloseGridQtyPct] = useState(String(merged.close_grid_qty_pct ?? 0.05))
-  const [pbTrailingEnabled, setPbTrailingEnabled] = useState(Boolean(merged.trailing_enabled ?? false))
-  const [pbTrailingThresholdPct, setPbTrailingThresholdPct] = useState(String(merged.trailing_threshold_pct ?? 0.02))
-  const [pbTrailingRetracementPct, setPbTrailingRetracementPct] = useState(String(merged.trailing_retracement_pct ?? 0.005))
-  const [pbUnstuckEnabled, setPbUnstuckEnabled] = useState(Boolean(merged.unstuck_enabled ?? true))
-  const [pbUnstuckLossAllowancePct, setPbUnstuckLossAllowancePct] = useState(String(merged.unstuck_loss_allowance_pct ?? 0.02))
-  const [pbUnstuckClosePct, setPbUnstuckClosePct] = useState(String(merged.unstuck_close_pct ?? 0.02))
-  const [gtTrailingType, setGtTrailingType] = useState(String(merged.trailing_stop_type ?? 'fixed'))
-  const [gtTrailingPct, setGtTrailingPct] = useState(String(merged.trailing_stop_pct ?? 2.0))
-  const [gtTrailingAtrMult, setGtTrailingAtrMult] = useState(String(merged.trailing_stop_atr_mult ?? 1.5))
-  const [tmSides, setTmSides] = useState<string[]>(Array.isArray(merged.sides) ? merged.sides : ['long', 'short'])
-  const [tmRsiPeriod, setTmRsiPeriod] = useState(String(merged.rsi_period ?? 14))
-  const [tmRsiOverbought, setTmRsiOverbought] = useState(String(merged.rsi_overbought ?? 70))
-  const [tmRsiOversold, setTmRsiOversold] = useState(String(merged.rsi_oversold ?? 30))
-  const [tmEmaPeriod, setTmEmaPeriod] = useState(String(merged.ema_period ?? 200))
-  const [tmDca1Pct, setTmDca1Pct] = useState(String(merged.dca_level_1_pct ?? 7.0))
-  const [tmDca2Pct, setTmDca2Pct] = useState(String(merged.dca_level_2_pct ?? 14.0))
-  const [tmTpPct, setTmTpPct] = useState(String(merged.tp_pct ?? 5.0))
-  const [tmTrailingPct, setTmTrailingPct] = useState(String(merged.trailing_stop_pct ?? 1.0))
-  const [tmInterval, setTmInterval] = useState(String(merged.interval ?? '1h'))
-  const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>(merged.scan_pairs ? 'multi' : 'single')
-  const [tmScanSymbols, setTmScanSymbols] = useState<string[]>(Array.isArray(merged.scan_symbols) ? merged.scan_symbols : [])
+  const [symbol, setSymbol] = useState<string>(String(cfg.symbol ?? bot.symbol ?? ''))
+  const [dex, setDex] = useState<string>(String(cfg.dex ?? ''))
+  const [levels, setLevels] = useState(String(cfg.levels ?? def.levels ?? 10))
+  const [rangePct, setRangePct] = useState(String(cfg.range_pct ?? def.range_pct ?? 5))
+  const [stopLossPct, setStopLossPct] = useState(String(cfg.stop_loss_pct ?? def.stop_loss_pct ?? 10))
+  const [takeProfitPct, setTakeProfitPct] = useState(String(cfg.take_profit_pct ?? def.take_profit_pct ?? 30))
+  const [leverage, setLeverage] = useState(String(cfg.leverage ?? def.leverage ?? 1))
+  const [maPeriod, setMaPeriod] = useState(String(cfg.ma_period ?? def.ma_period ?? 5))
+  const [envelope1, setEnvelope1] = useState(String(cfg.envelope_1_pct ?? def.envelope_1_pct ?? 7))
+  const [envelope2, setEnvelope2] = useState(String(cfg.envelope_2_pct ?? def.envelope_2_pct ?? 10))
+  const [envelope3, setEnvelope3] = useState(String(cfg.envelope_3_pct ?? def.envelope_3_pct ?? 15))
+  const [envelopeInterval, setEnvelopeInterval] = useState(String(cfg.interval ?? def.interval ?? '4h'))
+  const [entryThreshold, setEntryThreshold] = useState(String(cfg.entry_threshold_pct ?? def.entry_threshold_pct ?? 0.01))
+  const [exitThreshold, setExitThreshold] = useState(String(cfg.exit_threshold_pct ?? def.exit_threshold_pct ?? 0.005))
+  const [minHoldHours, setMinHoldHours] = useState(String(cfg.min_hold_hours ?? def.min_hold_hours ?? 4))
+  const [scanAllPairs, setScanAllPairs] = useState(Boolean(cfg.scan_all_pairs ?? def.scan_all_pairs ?? false))
+  const [bbPeriod, setBbPeriod] = useState(String(cfg.bb_period ?? def.bb_period ?? 20))
+  const [bbStd, setBbStd] = useState(String(cfg.bb_std ?? def.bb_std ?? 2.0))
+  const [rsiPeriod, setRsiPeriod] = useState(String(cfg.rsi_period ?? def.rsi_period ?? 14))
+  const [rsiOversold, setRsiOversold] = useState(String(cfg.rsi_oversold ?? def.rsi_oversold ?? 30))
+  const [rsiOverbought, setRsiOverbought] = useState(String(cfg.rsi_overbought ?? def.rsi_overbought ?? 70))
+  const [btInterval, setBtInterval] = useState(String(cfg.interval ?? def.interval ?? '4h'))
+  const [emaFast, setEmaFast] = useState(String(cfg.ema_fast ?? def.ema_fast ?? 9))
+  const [emaSlow, setEmaSlow] = useState(String(cfg.ema_slow ?? def.ema_slow ?? 21))
+  const [useAtrStop, setUseAtrStop] = useState(Boolean(cfg.use_atr_stop ?? def.use_atr_stop ?? false))
+  const [atrMultiplier, setAtrMultiplier] = useState(String(cfg.atr_multiplier ?? def.atr_multiplier ?? 2.0))
+  const [emaInterval, setEmaInterval] = useState(String(cfg.interval ?? def.interval ?? '4h'))
+  const [envelopeSides, setEnvelopeSides] = useState<string[]>(Array.isArray(cfg.sides) ? cfg.sides : (Array.isArray(def.sides) ? def.sides : ['long']))
+  const [pbDirection, setPbDirection] = useState(String(cfg.direction ?? def.direction ?? 'long'))
+  const [pbWalletExposureLimit, setPbWalletExposureLimit] = useState(String(cfg.wallet_exposure_limit ?? def.wallet_exposure_limit ?? 0.1))
+  const [pbEntryInitialQtyPct, setPbEntryInitialQtyPct] = useState(String(cfg.entry_initial_qty_pct ?? def.entry_initial_qty_pct ?? 0.01))
+  const [pbDoubleDownFactor, setPbDoubleDownFactor] = useState(String(cfg.double_down_factor ?? def.double_down_factor ?? 0.9))
+  const [pbEntryGridSpacingPct, setPbEntryGridSpacingPct] = useState(String(cfg.entry_grid_spacing_pct ?? def.entry_grid_spacing_pct ?? 0.003))
+  const [pbEntryGridSpacingWeWeight, setPbEntryGridSpacingWeWeight] = useState(String(cfg.entry_grid_spacing_we_weight ?? def.entry_grid_spacing_we_weight ?? 0.5))
+  const [pbCloseGridMarkupStart, setPbCloseGridMarkupStart] = useState(String(cfg.close_grid_markup_start ?? def.close_grid_markup_start ?? 0.001))
+  const [pbCloseGridMarkupEnd, setPbCloseGridMarkupEnd] = useState(String(cfg.close_grid_markup_end ?? def.close_grid_markup_end ?? 0.003))
+  const [pbCloseGridQtyPct, setPbCloseGridQtyPct] = useState(String(cfg.close_grid_qty_pct ?? def.close_grid_qty_pct ?? 0.05))
+  const [pbTrailingEnabled, setPbTrailingEnabled] = useState(Boolean(cfg.trailing_enabled ?? def.trailing_enabled ?? false))
+  const [pbTrailingThresholdPct, setPbTrailingThresholdPct] = useState(String(cfg.trailing_threshold_pct ?? def.trailing_threshold_pct ?? 0.02))
+  const [pbTrailingRetracementPct, setPbTrailingRetracementPct] = useState(String(cfg.trailing_retracement_pct ?? def.trailing_retracement_pct ?? 0.005))
+  const [pbUnstuckEnabled, setPbUnstuckEnabled] = useState(Boolean(cfg.unstuck_enabled ?? def.unstuck_enabled ?? true))
+  const [pbUnstuckLossAllowancePct, setPbUnstuckLossAllowancePct] = useState(String(cfg.unstuck_loss_allowance_pct ?? def.unstuck_loss_allowance_pct ?? 0.02))
+  const [pbUnstuckClosePct, setPbUnstuckClosePct] = useState(String(cfg.unstuck_close_pct ?? def.unstuck_close_pct ?? 0.02))
+  const [gtTrailingType, setGtTrailingType] = useState(String(cfg.trailing_stop_type ?? def.trailing_stop_type ?? 'fixed'))
+  const [gtTrailingPct, setGtTrailingPct] = useState(String(cfg.trailing_stop_pct ?? def.trailing_stop_pct ?? 2.0))
+  const [gtTrailingAtrMult, setGtTrailingAtrMult] = useState(String(cfg.trailing_stop_atr_mult ?? def.trailing_stop_atr_mult ?? 1.5))
+  const [tmSides, setTmSides] = useState<string[]>(Array.isArray(cfg.sides) ? cfg.sides : (Array.isArray(def.sides) ? def.sides : ['long', 'short']))
+  const [tmRsiPeriod, setTmRsiPeriod] = useState(String(cfg.rsi_period ?? def.rsi_period ?? 14))
+  const [tmRsiOverbought, setTmRsiOverbought] = useState(String(cfg.rsi_overbought ?? def.rsi_overbought ?? 70))
+  const [tmRsiOversold, setTmRsiOversold] = useState(String(cfg.rsi_oversold ?? def.rsi_oversold ?? 30))
+  const [tmEmaPeriod, setTmEmaPeriod] = useState(String(cfg.ema_period ?? def.ema_period ?? 200))
+  const [tmDca1Pct, setTmDca1Pct] = useState(String(cfg.dca_level_1_pct ?? def.dca_level_1_pct ?? 7.0))
+  const [tmDca2Pct, setTmDca2Pct] = useState(String(cfg.dca_level_2_pct ?? def.dca_level_2_pct ?? 14.0))
+  const [tmEntryAmount, setTmEntryAmount] = useState(cfg.entry_amount_usdc != null ? String(cfg.entry_amount_usdc) : '')
+  const [tmDca1Amount, setTmDca1Amount] = useState(cfg.dca1_amount_usdc != null ? String(cfg.dca1_amount_usdc) : '')
+  const [tmDca2Amount, setTmDca2Amount] = useState(cfg.dca2_amount_usdc != null ? String(cfg.dca2_amount_usdc) : '')
+  const [tmTpPct, setTmTpPct] = useState(String(cfg.tp_pct ?? def.tp_pct ?? 5.0))
+  const [tmTrailingPct, setTmTrailingPct] = useState(String(cfg.trailing_stop_pct ?? def.trailing_stop_pct ?? 1.0))
+  const [tmInterval, setTmInterval] = useState(String(cfg.interval ?? def.interval ?? '1h'))
+  const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>(cfg.scan_pairs ? 'multi' : 'single')
+  const [tmScanSymbols, setTmScanSymbols] = useState<string[]>(Array.isArray(cfg.scan_symbols) ? cfg.scan_symbols : [])
   const [tmScanInput, setTmScanInput] = useState('')
+  // golden_copy fields
+  const [gcTargetWallet, setGcTargetWallet] = useState(String(cfg.target_wallet ?? def.target_wallet ?? ''))
+  const [gcScaleMode, setGcScaleMode] = useState(String(cfg.scale_mode ?? def.scale_mode ?? 'proportional'))
+  const [gcMinPositionPct, setGcMinPositionPct] = useState(String(cfg.min_position_pct ?? def.min_position_pct ?? 0.01))
+  const [gcPollInterval, setGcPollInterval] = useState(String(cfg.poll_interval_seconds ?? def.poll_interval_seconds ?? 60))
+  const [gcCopyLongs, setGcCopyLongs] = useState(Boolean(cfg.copy_longs ?? def.copy_longs ?? true))
+  const [gcCopyShorts, setGcCopyShorts] = useState(Boolean(cfg.copy_shorts ?? def.copy_shorts ?? true))
+  const [gcBlockedCoins, setGcBlockedCoins] = useState<string[]>(Array.isArray(cfg.blocked_coins) ? cfg.blocked_coins : [])
+  const [gcBlockedInput, setGcBlockedInput] = useState('')
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -1884,7 +1909,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         range_pct: parseFloat(rangePct),
         stop_loss_pct: parseFloat(stopLossPct),
         take_profit_pct: parseFloat(takeProfitPct),
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
       } : bot.bot_type === 'envelope_dca' ? {
         symbol: symbol,
@@ -1894,7 +1919,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         envelope_2_pct: parseFloat(envelope2),
         envelope_3_pct: parseFloat(envelope3),
         stop_loss_pct: parseFloat(stopLossPct),
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
         interval: envelopeInterval,
         sides: envelopeSides,
@@ -1904,7 +1929,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         entry_threshold_pct: parseFloat(entryThreshold),
         exit_threshold_pct: parseFloat(exitThreshold),
         min_hold_hours: parseInt(minHoldHours),
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
         scan_all_pairs: scanAllPairs,
       } : bot.bot_type === 'bb_rsi' ? {
@@ -1917,7 +1942,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         rsi_overbought: parseFloat(rsiOverbought),
         stop_loss_pct: parseFloat(stopLossPct),
         interval: btInterval,
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
       } : bot.bot_type === 'ema_cross' ? {
         symbol: symbol,
@@ -1928,7 +1953,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         use_atr_stop: useAtrStop,
         atr_multiplier: parseFloat(atrMultiplier),
         interval: emaInterval,
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
       } : bot.bot_type === 'golden_trap' ? {
         symbol: symbol,
@@ -1938,7 +1963,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         envelope_2_pct: parseFloat(envelope2),
         envelope_3_pct: parseFloat(envelope3),
         stop_loss_pct: parseFloat(stopLossPct),
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
         interval: envelopeInterval,
         sides: envelopeSides,
@@ -1954,14 +1979,29 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         ema_period: parseInt(tmEmaPeriod),
         dca_level_1_pct: parseFloat(tmDca1Pct),
         dca_level_2_pct: parseFloat(tmDca2Pct),
+        ...(tmEntryAmount !== '' && { entry_amount_usdc: parseFloat(tmEntryAmount) }),
+        ...(tmDca1Amount !== '' && { dca1_amount_usdc: parseFloat(tmDca1Amount) }),
+        ...(tmDca2Amount !== '' && { dca2_amount_usdc: parseFloat(tmDca2Amount) }),
         tp_pct: parseFloat(tmTpPct),
         trailing_stop_pct: parseFloat(tmTrailingPct),
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
         interval: tmInterval,
         sides: tmSides,
         scan_pairs: tmScanMode === 'multi',
         scan_symbols: tmScanMode === 'multi' ? tmScanSymbols : [],
+      } : bot.bot_type === 'golden_copy' ? {
+        symbol: symbol,
+        dex: dex,
+        target_wallet: gcTargetWallet,
+        scale_mode: gcScaleMode,
+        min_position_pct: parseFloat(gcMinPositionPct),
+        poll_interval_seconds: parseInt(gcPollInterval),
+        copy_longs: gcCopyLongs,
+        copy_shorts: gcCopyShorts,
+        blocked_coins: gcBlockedCoins,
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
+        leverage: parseInt(leverage),
       } : {
         symbol: symbol,
         dex: dex,
@@ -1980,7 +2020,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         unstuck_enabled: pbUnstuckEnabled,
         unstuck_loss_allowance_pct: parseFloat(pbUnstuckLossAllowancePct),
         unstuck_close_pct: parseFloat(pbUnstuckClosePct),
-        allocated_usdc: parseFloat(merged.allocated_usdc ?? 100),
+        allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
       }
       const finalConfig = { ...config, bot_type: bot.bot_type }
@@ -2625,6 +2665,23 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Second DCA below/above entry. Default 14%</p>
                 </div>
               </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label style={labelStyle}>Entry Amount USDC</label>
+                  <input style={inputStyle} type="number" step="1" value={tmEntryAmount} onChange={e => setTmEntryAmount(e.target.value)} placeholder="auto" />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Override entry size. Leave blank for auto (15% of alloc).</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>DCA1 Amount USDC</label>
+                  <input style={inputStyle} type="number" step="1" value={tmDca1Amount} onChange={e => setTmDca1Amount(e.target.value)} placeholder="auto" />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Override DCA1 size. Leave blank for auto (35% of alloc).</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>DCA2 Amount USDC</label>
+                  <input style={inputStyle} type="number" step="1" value={tmDca2Amount} onChange={e => setTmDca2Amount(e.target.value)} placeholder="auto" />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Override DCA2 size. Leave blank for auto (50% of alloc).</p>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label style={labelStyle}>Take Profit %</label>
@@ -2652,6 +2709,105 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
                 </div>
                 <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
+              </div>
+            </>
+          ) : bot.bot_type === 'golden_copy' ? (
+            <>
+              <div>
+                <label style={labelStyle}>Target Wallet Address</label>
+                <input style={inputStyle} value={gcTargetWallet} onChange={e => setGcTargetWallet(e.target.value)}
+                  placeholder="0x…" />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Hyperliquid wallet address to mirror trades from.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Scale Mode</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { label: 'Proportional', value: 'proportional' },
+                    { label: 'Fixed', value: 'fixed' },
+                    { label: 'Equal', value: 'equal' },
+                  ].map(opt => (
+                    <button key={opt.value} type="button" onClick={() => setGcScaleMode(opt.value)}
+                      style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
+                        borderColor: gcScaleMode === opt.value ? '#00d4aa' : '#1a1a2e',
+                        backgroundColor: gcScaleMode === opt.value ? '#00d4aa18' : '#0d0d14',
+                        color: gcScaleMode === opt.value ? '#00d4aa' : '#6b7280',
+                      }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Proportional: scale by allocation ratio. Fixed: exact USDC per trade. Equal: split allocation equally.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelStyle}>Min Position %</label>
+                  <input style={inputStyle} type="number" step="0.001" value={gcMinPositionPct} onChange={e => setGcMinPositionPct(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Skip positions smaller than this % of target wallet. 0.01 = 1%</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Poll Interval (seconds)</label>
+                  <input style={inputStyle} type="number" step="10" value={gcPollInterval} onChange={e => setGcPollInterval(e.target.value)} />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>How often to check target wallet for changes.</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e', flex: 1 }}>
+                  <input type="checkbox" id="gc-copy-longs-edit" checked={gcCopyLongs} onChange={e => setGcCopyLongs(e.target.checked)}
+                    style={{ accentColor: '#00d4aa', width: 16, height: 16, cursor: 'pointer' }} />
+                  <label htmlFor="gc-copy-longs-edit" style={{ fontSize: 12, color: '#9ca3af', fontWeight: 700, cursor: 'pointer' }}>Copy Longs</label>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 6, background: '#13131f', border: '1px solid #1a1a2e', flex: 1 }}>
+                  <input type="checkbox" id="gc-copy-shorts-edit" checked={gcCopyShorts} onChange={e => setGcCopyShorts(e.target.checked)}
+                    style={{ accentColor: '#00d4aa', width: 16, height: 16, cursor: 'pointer' }} />
+                  <label htmlFor="gc-copy-shorts-edit" style={{ fontSize: 12, color: '#9ca3af', fontWeight: 700, cursor: 'pointer' }}>Copy Shorts</label>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Blocked Coins</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 6 }}>
+                  {gcBlockedCoins.map(coin => (
+                    <span key={coin} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ef444418', border: '1px solid #ef444444', borderRadius: 4, padding: '3px 8px', fontSize: 12, color: '#ef4444' }}>
+                      {coin}
+                      <span style={{ cursor: 'pointer', lineHeight: 1 }} onClick={() => setGcBlockedCoins(prev => prev.filter(c => c !== coin))}>×</span>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input style={{ ...inputStyle, flex: 1 }} value={gcBlockedInput} onChange={e => setGcBlockedInput(e.target.value.toUpperCase())}
+                    placeholder="BTC, ETH…"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ',') {
+                        e.preventDefault()
+                        const coin = gcBlockedInput.trim().replace(/,/g, '').toUpperCase()
+                        if (coin && !gcBlockedCoins.includes(coin)) setGcBlockedCoins(prev => [...prev, coin])
+                        setGcBlockedInput('')
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => {
+                    const coin = gcBlockedInput.trim().replace(/,/g, '').toUpperCase()
+                    if (coin && !gcBlockedCoins.includes(coin)) setGcBlockedCoins(prev => [...prev, coin])
+                    setGcBlockedInput('')
+                  }}
+                    style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#ef4444', color: 'white' }}>
+                    Block
+                  </button>
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>Coins to never copy even if target wallet holds them.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Leverage</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {['1', '2', '3', '5', '10'].map(lev => (
+                    <button key={lev} onClick={() => setLeverage(lev)}
+                      style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid', borderColor: leverage === lev ? '#00d4aa' : '#1a1a2e', backgroundColor: leverage === lev ? '#00d4aa18' : '#0d0d14', color: leverage === lev ? '#00d4aa' : '#6b7280' }}>
+                      {lev}x
+                    </button>
+                  ))}
+                  <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+                </div>
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage. Higher leverage amplifies both gains and losses.</p>
               </div>
             </>
           ) : (
