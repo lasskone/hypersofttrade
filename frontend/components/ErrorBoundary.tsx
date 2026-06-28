@@ -23,6 +23,9 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      const msg = (this.state.error?.message ?? '').toLowerCase();
+      const isNoWallet = /wallet|injected|provider|ethereum/.test(msg);
+
       return (
         <div
           style={{
@@ -53,10 +56,29 @@ export class ErrorBoundary extends React.Component<
           >
             H
           </div>
-          <h2 style={{ color: '#26a69a', margin: 0 }}>Something went wrong</h2>
-          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14 }}>
-            Please refresh the page and try again.
-          </p>
+          {isNoWallet ? (
+            <>
+              <h2 style={{ color: '#26a69a', margin: 0 }}>No wallet detected</h2>
+              <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, textAlign: 'center', maxWidth: 340 }}>
+                No wallet detected. Please install MetaMask or another Web3 wallet to use HyperSoftTrade.
+              </p>
+              <a
+                href="https://metamask.io/download/"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ marginTop: 8, color: '#00d4aa', fontSize: 14, fontWeight: 600 }}
+              >
+                Install MetaMask →
+              </a>
+            </>
+          ) : (
+            <>
+              <h2 style={{ color: '#26a69a', margin: 0 }}>Something went wrong</h2>
+              <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14 }}>
+                Please refresh the page and try again.
+              </p>
+            </>
+          )}
           <button
             onClick={() => {
               this.setState({ hasError: false, error: null });
