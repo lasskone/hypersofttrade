@@ -27,6 +27,13 @@ const nextConfig = {
         "wss://*.walletconnect.com",
         "https://*.walletconnect.org",
         "wss://*.walletconnect.org",
+        // Web3Modal / AppKit (WalletConnect's modal layer)
+        "https://api.web3modal.org",
+        "https://*.web3modal.org",
+        "https://api.web3modal.com",
+        "https://*.web3modal.com",
+        "https://appkit.walletconnect.com",
+        "https://*.appkit.walletconnect.com",
         // Coinbase Wallet
         "https://*.coinbase.com",
         "wss://*.coinbase.com",
@@ -34,7 +41,7 @@ const nextConfig = {
         "https://www.hypersofttrade.com",
         "https://api.hypersofttrade.com",
       ].join(' '),
-      "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org https://*.coinbase.com",
+      "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org https://*.coinbase.com https://*.web3modal.org https://*.web3modal.com",
     ].join('; ');
 
     return [
