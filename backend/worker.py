@@ -346,9 +346,15 @@ async def _check_trailing_stops() -> None:
                 if new_peak != peak_price:
                     updates["peak_price"] = new_peak
 
-                # Only modify on Hyperliquid when SL moved more than 0.05%
-                moved = cur_sl_price is None or abs(trail_sl - cur_sl_price) / (cur_sl_price or 1) > 0.0005
-                if moved and sl_oid is not None:
+                # Only modify when SL improved (favorable direction) by more than 0.05%.
+                # For long: higher SL = better (trailing up). For short: lower SL = better (trailing down).
+                improved = (
+                    cur_sl_price is None
+                    or (is_long and trail_sl > cur_sl_price)        # long: SL moved up
+                    or (not is_long and trail_sl < cur_sl_price)    # short: SL moved down
+                )
+                significant = cur_sl_price is None or abs(trail_sl - cur_sl_price) / (cur_sl_price or 1) > 0.0005
+                if improved and significant and sl_oid is not None:
                     positions = await _get_positions(wallet, dex)
                     sz = positions.get(coin) or positions.get(coin.split(":")[-1] if ":" in coin else coin)
 

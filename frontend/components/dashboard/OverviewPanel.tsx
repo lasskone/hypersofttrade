@@ -217,7 +217,7 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
       setExistingTs(data.trailing_stop);
       setTsActivationPct('');
       setTsTrailPct('');
-      showToast(`✅ Trailing stop set — activates at +${actPct}%, trails ${trailPct}%`);
+      showToast(`✅ Trailing stop set — activates at ${isLong ? '+' : '-'}${actPct}%, trails ${trailPct}%`);
     } catch (e: any) {
       showToast(`❌ ${e.message}`);
     } finally {
@@ -684,7 +684,7 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
               </div>
               {parseFloat(tsActivationPct) > 0 && parseFloat(tsTrailPct) > 0 && (
                 <p style={{ fontSize: 10, color: '#9ca3af', marginBottom: 8 }}>
-                  Activates at ${(entryPx * (1 + (isLong ? 1 : -1) * parseFloat(tsActivationPct) / 100)).toFixed(2)} · SL trails {tsTrailPct}% from peak, never below break-even
+                  Activates at ${(entryPx * (1 + (isLong ? 1 : -1) * parseFloat(tsActivationPct) / 100)).toFixed(2)} · SL trails {tsTrailPct}% from peak, never {isLong ? 'below' : 'above'} break-even
                 </p>
               )}
               <button
