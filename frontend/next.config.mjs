@@ -18,15 +18,23 @@ const nextConfig = {
         "wss://*.supabase.co",
         "https://arb1.arbitrum.io",
         "https://ethereum.publicnode.com",
+        // WalletConnect — wildcard + explicit subdomains that some browsers
+        // refuse to match via *.walletconnect.com alone
         "https://*.walletconnect.com",
+        "https://pulse.walletconnect.com",
+        "https://relay.walletconnect.com",
+        "https://explorer-api.walletconnect.com",
         "wss://*.walletconnect.com",
         "https://*.walletconnect.org",
         "wss://*.walletconnect.org",
+        // Coinbase Wallet
+        "https://*.coinbase.com",
+        "wss://*.coinbase.com",
         "https://hypersofttrade.com",
         "https://www.hypersofttrade.com",
         "https://api.hypersofttrade.com",
       ].join(' '),
-      "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org",
+      "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org https://*.coinbase.com",
     ].join('; ');
 
     return [

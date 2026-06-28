@@ -119,13 +119,20 @@ export default function DashboardPage() {
 
     // Wallet connected — show 'checking' (same branded loading screen) while
     // we hit the API. Small delay lets the RainbowKit modal close gracefully.
+    const capturedAddress = address;
     setStep('checking');
     const timer = setTimeout(() => {
       const checkStatus = async () => {
         setIsChecking(true);
         try {
-          const res = await fetch(`${API_URL}/account/${address}/status`);
+          const res = await fetch(`${API_URL}/account/${capturedAddress}/status`);
           const data = await res.json();
+          // Guard: if the wallet disconnected while the fetch was in flight,
+          // don't set step to 'dashboard' with a stale (now-undefined) address.
+          if (!isConnected) {
+            setStep('connect');
+            return;
+          }
           if (!data.is_affiliated) {
             setAffiliationError(
               'This wallet is not linked to HyperSoftTrade. ' +
@@ -296,6 +303,9 @@ export default function DashboardPage() {
 
   // ── Step: api_setup ──────────────────────────────────────────────────────────
   if (step === 'api_setup') {
+    // Guard: address may briefly be undefined during the disconnect transition —
+    // avoid passing it to child components that call address.slice() for display.
+    if (!address) return null;
     return (
       <>
         {/* Blurred dashboard in background */}
@@ -309,12 +319,12 @@ export default function DashboardPage() {
             overflow: 'hidden',
           }}
         >
-          <DashboardLayout address={address!} section={section} onNavigate={setSection} />
+          <DashboardLayout address={address} section={section} onNavigate={setSection} />
         </div>
 
         {/* API key modal on top */}
         <ApiKeyModal
-          walletAddress={address!}
+          walletAddress={address}
           onComplete={() => setStep('dashboard')}
         />
       </>
@@ -322,7 +332,10 @@ export default function DashboardPage() {
   }
 
   // ── Step: dashboard ──────────────────────────────────────────────────────────
+  // Guard: address may briefly be undefined during the disconnect transition —
+  // avoid passing it to child components that call address.slice() for display.
+  if (!address) return null;
   return (
-    <DashboardLayout address={address!} section={section} onNavigate={setSection} />
+    <DashboardLayout address={address} section={section} onNavigate={setSection} />
   );
 }
