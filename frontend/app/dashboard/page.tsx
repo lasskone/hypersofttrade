@@ -125,10 +125,25 @@ export default function DashboardPage() {
       const checkStatus = async () => {
         setIsChecking(true);
         try {
-          const res = await fetch(`${API_URL}/account/${capturedAddress}/status`);
-          const data = await res.json();
+          // Always call verify-affiliation first so the DB is refreshed from
+          // Hyperliquid on every connect — this ensures users who signed up
+          // after our link was shared (or are in the master referral list)
+          // are recognised without needing a separate manual verification step.
+          await fetch(`${API_URL}/account/verify-affiliation`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ wallet_address: capturedAddress }),
+          });
+
           // Guard: if the wallet disconnected while the fetch was in flight,
           // don't set step to 'dashboard' with a stale (now-undefined) address.
+          if (!isConnected) {
+            setStep('connect');
+            return;
+          }
+
+          const res = await fetch(`${API_URL}/account/${capturedAddress}/status`);
+          const data = await res.json();
           if (!isConnected) {
             setStep('connect');
             return;

@@ -542,21 +542,65 @@ class HyperliquidService:
     # ------------------------------------------------------------------
 
     async def check_affiliation(self, wallet_address: str, referral_code: str) -> bool:
-        """Return True if *wallet_address* is referred by *referral_code*."""
+        """
+        Two-step affiliation check:
+
+        Step 1 — direct: fetch the user's own referredBy field. This works for
+        wallets that signed up through our referral link.
+
+        Step 2 — master list: fetch the KNS master account's full referral list
+        and check if the wallet appears there. This covers users who already had a
+        Hyperliquid account and were affiliated via other means (e.g. airdrop,
+        direct referral by another user, etc.).
+
+        Returns True if either check passes.
+        """
+        from core.config import settings
+
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Step 1: check user's own referredBy code
+                resp1 = await client.post(
                     INFO_ENDPOINT,
                     json={"type": "referral", "user": wallet_address},
                     headers={"Content-Type": "application/json"},
-                    timeout=10.0,
                 )
-                data = response.json()
-                referred_by = data.get("referredBy") or {}
+                data1 = resp1.json()
+                referred_by = data1.get("referredBy") or {}
                 code = referred_by.get("code", "")
-                result = code.strip().upper() == referral_code.strip().upper()
-                print(f"[affiliation] referredBy={referred_by} code='{code}' expected='{referral_code}' result={result}")
-                return result
+                if code.strip().upper() == referral_code.strip().upper():
+                    print(f"[affiliation] {wallet_address} directly referred by '{referral_code}' ✅")
+                    return True
+
+                print(f"[affiliation] {wallet_address} referredBy='{code}' (expected '{referral_code}') — checking master list…")
+
+                # Step 2: fetch master account's full referral list
+                master_address = settings.hyperliquid_master_address
+                if not master_address:
+                    print(f"[affiliation] HYPERLIQUID_MASTER_ADDRESS not set — skipping master list check")
+                    return False
+
+                resp2 = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "referral", "user": master_address},
+                    headers={"Content-Type": "application/json"},
+                )
+                data2 = resp2.json()
+                referrals = data2.get("referrals") or []
+                referred_addresses = [
+                    r.get("referee", "").lower()
+                    for r in referrals
+                    if isinstance(r, dict)
+                ]
+                print(f"[affiliation] master list has {len(referred_addresses)} referee(s)")
+
+                if wallet_address.lower() in referred_addresses:
+                    print(f"[affiliation] {wallet_address} found in master referral list ✅")
+                    return True
+
+                print(f"[affiliation] {wallet_address} NOT found in any referral list ❌")
+                return False
+
         except Exception as e:
             print(f"[affiliation] ERROR type={type(e)} msg={e}")
             return False
