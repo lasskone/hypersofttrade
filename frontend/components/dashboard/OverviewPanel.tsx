@@ -164,7 +164,10 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
   const [tsTrailPct, setTsTrailPct] = useState('');
   const [tsLoading, setTsLoading] = useState(false);
 
-  const isLong = parseFloat(pos.size) > 0;
+  const isLong =
+    pos.side?.toLowerCase().includes('long') ||
+    pos.side === 'Buy' ||
+    parseFloat(pos.size || '0') > 0;
   const absSize = Math.abs(parseFloat(pos.size));
   const entryPx = parseFloat(String(pos.entry_price ?? 0));
   const direction = isLong ? 1 : -1;
@@ -684,7 +687,10 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
               </div>
               {parseFloat(tsActivationPct) > 0 && parseFloat(tsTrailPct) > 0 && (
                 <p style={{ fontSize: 10, color: '#9ca3af', marginBottom: 8 }}>
-                  Activates at ${(entryPx * (1 + (isLong ? 1 : -1) * parseFloat(tsActivationPct) / 100)).toFixed(2)} · SL trails {tsTrailPct}% from peak, never {isLong ? 'below' : 'above'} break-even
+                  Activates at ${(isLong
+                    ? entryPx * (1 + parseFloat(tsActivationPct) / 100)
+                    : entryPx * (1 - parseFloat(tsActivationPct) / 100)
+                  ).toFixed(2)} · Initial SL: ${entryPx.toFixed(2)} (break-even) · Trails {tsTrailPct}% from peak
                 </p>
               )}
               <button
