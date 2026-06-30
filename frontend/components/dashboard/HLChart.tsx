@@ -58,6 +58,8 @@ interface Props {
     type?: string
     is_trigger?: boolean
     isTrigger?: boolean
+    is_position_tpsl?: boolean
+    trigger_px?: number | null
     order_id?: number
   }>
 }
@@ -595,26 +597,35 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
       }
     })
 
-    // Resting limit orders
+    // Resting limit orders + manual TP/SL trigger orders
     openOrders.forEach(o => {
       if (!matches(o.coin)) return
-      if (o.is_trigger || o.isTrigger) return
-      const price = parseFloat(String(o.price ?? o.limitPx ?? 0))
+      if (o.is_position_tpsl || (o as any).isPositionTpsl) return  // skip position-attached TP/SL only
+      const isTriggerOrder = o.is_trigger || o.isTrigger
+      const price = isTriggerOrder
+        ? (o.trigger_px || parseFloat(String(o.price ?? 0)))
+        : parseFloat(String(o.price ?? o.limitPx ?? 0))
       if (!price || price <= 0) return
       const size = parseFloat(String(o.sz ?? o.size ?? 0))
       const side = String(o.side ?? '').toUpperCase()
       const isBuy = side === 'B' || side === 'BUY' || side === 'LONG'
-      const color = isBuy ? '#26a69a' : '#ef5350'
-      const label = `${isBuy ? 'Buy' : 'Sell'} ${coinShort(o.coin)} ${size} @ $${price}`
+      const isTP = String(o.order_type ?? '').includes('Take Profit')
+      const isSL = String(o.order_type ?? '').includes('Stop')
+      const color = isTP ? '#26a69a' : isSL ? '#ef5350' : (isBuy ? '#26a69a' : '#ef5350')
+      const lineStyle = (isTP || isSL) ? 2 : 1
+      const label = isTP ? `TP ${coinShort(o.coin)} $${price}`
+                  : isSL ? `SL ${coinShort(o.coin)} $${price}`
+                  : `${isBuy ? 'Buy' : 'Sell'} ${coinShort(o.coin)} ${size} @ $${price}`
       const pl = candleSeriesRef.current.createPriceLine({
         price, color,
-        lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: label,
+        lineWidth: 1, lineStyle, axisLabelVisible: true, title: label,
       })
       tpslOrderLinesRef.current.push(pl)
       if (o.order_id != null) {
+        const dragOrderType: DragMeta['order_type'] = isTP ? 'tp' : isSL ? 'sl' : 'limit'
         draggableLinesRef.current.push({
           priceLine: pl, originalPrice: price, color,
-          meta: { oid: o.order_id, coin: o.coin, is_buy: isBuy, sz: size, order_type: 'limit', label },
+          meta: { oid: o.order_id, coin: o.coin, is_buy: isBuy, sz: size, order_type: dragOrderType, label },
         })
       }
     })
