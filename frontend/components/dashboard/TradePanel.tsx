@@ -879,6 +879,9 @@ export function TradePanel({
                     positions={openPositions}
                     openOrders={openOrders}
                     initialInterval={chartInterval}
+                    walletAddress={walletAddress}
+                    szDecimals={selectedMarket.sz_decimals ?? 5}
+                    onOrderModified={onRefresh}
                   />
                 )}
               </div>

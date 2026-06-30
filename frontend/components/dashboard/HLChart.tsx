@@ -19,10 +19,22 @@ interface Candle {
   volume: number
 }
 
+interface DragMeta {
+  oid: number
+  coin: string
+  is_buy: boolean
+  sz: number
+  order_type: 'limit' | 'tp' | 'sl'
+  label: string
+}
+
 interface Props {
   symbol: string
   height?: number
   initialInterval?: string
+  walletAddress?: string
+  szDecimals?: number
+  onOrderModified?: () => void
   positions?: Array<{
     symbol: string
     side: string
@@ -32,6 +44,8 @@ interface Props {
     mark_price: number
     tp_price?: number
     sl_price?: number
+    tp_orders?: any[]
+    sl_orders?: any[]
   }>
   openOrders?: Array<{
     coin: string
@@ -44,10 +58,11 @@ interface Props {
     type?: string
     is_trigger?: boolean
     isTrigger?: boolean
+    order_id?: number
   }>
 }
 
-export default function HLChart({ symbol, height = 420, initialInterval, positions = [], openOrders = [] }: Props) {
+export default function HLChart({ symbol, height = 420, initialInterval, walletAddress, szDecimals = 5, onOrderModified, positions = [], openOrders = [] }: Props) {
   const containerRef    = useRef<HTMLDivElement>(null)
   const chartRef        = useRef<any>(null)
   const loadingRef      = useRef(false)
@@ -66,6 +81,11 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const isDraggingRef      = useRef(false)
   const dragStartYRef      = useRef(0)
   const dragStartHeightRef = useRef(0)
+
+  // Draggable order-line state
+  const draggableLinesRef    = useRef<Array<{ priceLine: any; meta: DragMeta; originalPrice: number; color: string }>>([])
+  const orderDragActiveRef   = useRef(false)
+  const orderDragLineIdxRef  = useRef(-1)
 
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
@@ -97,6 +117,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
   const [ohlc, setOhlc]                             = useState<Candle | null>(null)
   const [chartReady, setChartReady]                 = useState(false)
   const [timeRemaining, setTimeRemaining]           = useState('')
+  const [dragConfirm, setDragConfirm] = useState<{ meta: DragMeta; newPrice: number; x: number; y: number } | null>(null)
 
   // Close EMA period dropdown on outside click
   useEffect(() => {
@@ -525,6 +546,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
       try { candleSeriesRef.current?.removePriceLine(pl) } catch {}
     })
     tpslOrderLinesRef.current = []
+    draggableLinesRef.current = []
 
     const coinShort = (s: string) => s.split(':').pop() ?? s
     const matches = (coin: string) => {
@@ -536,27 +558,40 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     // TP / SL from positions
     positions.forEach(pos => {
       if (!matches(pos.symbol)) return
+      const isLong = String(pos.side ?? '').toLowerCase() !== 'short'
+      const closeSide = !isLong  // closing a long = sell (is_buy=false); closing a short = buy (is_buy=true)
+
       if (pos.tp_price && pos.tp_price > 0) {
+        const color = '#26a69a'
+        const label = `TP ${coinShort(pos.symbol)} $${pos.tp_price}`
         const pl = candleSeriesRef.current.createPriceLine({
-          price: pos.tp_price,
-          color: '#26a69a',
-          lineWidth: 1,
-          lineStyle: 2,
-          axisLabelVisible: true,
-          title: `TP ${coinShort(pos.symbol)} $${pos.tp_price}`,
+          price: pos.tp_price, color,
+          lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: label,
         })
         tpslOrderLinesRef.current.push(pl)
+        const oid = (pos as any).tp_orders?.[0]?.oid
+        if (oid != null) {
+          draggableLinesRef.current.push({
+            priceLine: pl, originalPrice: pos.tp_price, color,
+            meta: { oid, coin: pos.symbol, is_buy: closeSide, sz: pos.size, order_type: 'tp', label },
+          })
+        }
       }
       if (pos.sl_price && pos.sl_price > 0) {
+        const color = '#ef5350'
+        const label = `SL ${coinShort(pos.symbol)} $${pos.sl_price}`
         const pl = candleSeriesRef.current.createPriceLine({
-          price: pos.sl_price,
-          color: '#ef5350',
-          lineWidth: 1,
-          lineStyle: 2,
-          axisLabelVisible: true,
-          title: `SL ${coinShort(pos.symbol)} $${pos.sl_price}`,
+          price: pos.sl_price, color,
+          lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: label,
         })
         tpslOrderLinesRef.current.push(pl)
+        const oid = (pos as any).sl_orders?.[0]?.oid
+        if (oid != null) {
+          draggableLinesRef.current.push({
+            priceLine: pl, originalPrice: pos.sl_price, color,
+            meta: { oid, coin: pos.symbol, is_buy: closeSide, sz: pos.size, order_type: 'sl', label },
+          })
+        }
       }
     })
 
@@ -569,15 +604,19 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
       const size = parseFloat(String(o.sz ?? o.size ?? 0))
       const side = String(o.side ?? '').toUpperCase()
       const isBuy = side === 'B' || side === 'BUY' || side === 'LONG'
+      const color = isBuy ? '#26a69a' : '#ef5350'
+      const label = `${isBuy ? 'Buy' : 'Sell'} ${coinShort(o.coin)} ${size} @ $${price}`
       const pl = candleSeriesRef.current.createPriceLine({
-        price,
-        color: isBuy ? '#26a69a' : '#ef5350',
-        lineWidth: 1,
-        lineStyle: 1,
-        axisLabelVisible: true,
-        title: `${isBuy ? 'Buy' : 'Sell'} ${coinShort(o.coin)} ${size} @ $${price}`,
+        price, color,
+        lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: label,
       })
       tpslOrderLinesRef.current.push(pl)
+      if (o.order_id != null) {
+        draggableLinesRef.current.push({
+          priceLine: pl, originalPrice: price, color,
+          meta: { oid: o.order_id, coin: o.coin, is_buy: isBuy, sz: size, order_type: 'limit', label },
+        })
+      }
     })
   }, [chartReady, positions, openOrders, symbol])
 
@@ -632,6 +671,67 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
       document.removeEventListener('mouseup', onMouseUp)
     }
   }, [])
+
+  // ── Drag-to-modify order price lines ────────────────────────────────────
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const HIT_PX = 10  // pixels tolerance for detecting a drag target
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (!candleSeriesRef.current) return
+      const rect = container.getBoundingClientRect()
+      const clickY = e.clientY - rect.top
+
+      for (let i = 0; i < draggableLinesRef.current.length; i++) {
+        const entry = draggableLinesRef.current[i]
+        const lineY = candleSeriesRef.current.priceToCoordinate(entry.priceLine.options().price)
+        if (lineY == null) continue
+        if (Math.abs(clickY - lineY) <= HIT_PX) {
+          orderDragActiveRef.current = true
+          orderDragLineIdxRef.current = i
+          e.stopPropagation()  // prevent chart pan
+          e.preventDefault()
+          return
+        }
+      }
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!orderDragActiveRef.current) return
+      const idx = orderDragLineIdxRef.current
+      if (idx < 0 || !candleSeriesRef.current) return
+      const container = containerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const y = e.clientY - rect.top
+      const newPrice = candleSeriesRef.current.coordinateToPrice(y)
+      if (newPrice == null || newPrice <= 0) return
+      draggableLinesRef.current[idx].priceLine.applyOptions({ price: newPrice })
+    }
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (!orderDragActiveRef.current) return
+      orderDragActiveRef.current = false
+      const idx = orderDragLineIdxRef.current
+      orderDragLineIdxRef.current = -1
+      if (idx < 0 || !candleSeriesRef.current) return
+      const entry = draggableLinesRef.current[idx]
+      const finalPrice = entry.priceLine.options().price as number
+      if (Math.abs(finalPrice - entry.originalPrice) < 0.0001) return  // no real movement
+      setDragConfirm({ meta: entry.meta, newPrice: finalPrice, x: e.clientX, y: e.clientY })
+    }
+
+    container.addEventListener('mousedown', onMouseDown, { capture: true })
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown, { capture: true } as any)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [chartReady])
 
   // ── Real-time candle updates via Hyperliquid WebSocket ───────────────────
   useEffect(() => {
@@ -713,6 +813,44 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
 
   const fmtPrice = (n: number) =>
     n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
+
+  const handleDragCancel = () => {
+    if (!dragConfirm) return
+    // Restore original price on the line
+    const entry = draggableLinesRef.current.find(e => e.meta.oid === dragConfirm.meta.oid)
+    if (entry) entry.priceLine.applyOptions({ price: entry.originalPrice })
+    setDragConfirm(null)
+  }
+
+  const handleDragConfirm = async () => {
+    if (!dragConfirm || !walletAddress) { setDragConfirm(null); return }
+    const { meta, newPrice } = dragConfirm
+    setDragConfirm(null)
+    try {
+      const res = await fetch(`${API_URL}/orders/modify-price`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          coin: meta.coin,
+          oid: meta.oid,
+          new_price: newPrice,
+          is_buy: meta.is_buy,
+          sz: meta.sz,
+          sz_decimals: szDecimals,
+          order_type: meta.order_type,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        console.error('[drag-modify] failed', err)
+      } else {
+        onOrderModified?.()
+      }
+    } catch (err) {
+      console.error('[drag-modify] fetch error', err)
+    }
+  }
 
   return (
     <div style={{ background: '#0a0a0f', borderRadius: '8px', overflow: 'hidden' }}>
@@ -914,6 +1052,42 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
                 padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
                 background: '#00d4aa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
               }}>OK</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Drag-to-modify confirm portal ────────────────────────────── */}
+      {dragConfirm && createPortal(
+        <div style={{
+          position: 'fixed',
+          top: Math.min(dragConfirm.y - 10, typeof window !== 'undefined' ? window.innerHeight - 110 : dragConfirm.y),
+          left: Math.min(dragConfirm.x + 12, typeof window !== 'undefined' ? window.innerWidth - 220 : dragConfirm.x),
+          zIndex: 99999,
+          background: '#0d0d14',
+          border: '1px solid #374151',
+          borderRadius: '8px',
+          padding: '10px 14px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          minWidth: '200px',
+        }}>
+          <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>
+            Move <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{dragConfirm.meta.order_type.toUpperCase()}</span> to{' '}
+            <span style={{ color: '#f59e0b', fontWeight: 600 }}>${dragConfirm.newPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>?
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleDragConfirm}
+              style={{
+                flex: 1, padding: '5px 0', fontSize: '12px', cursor: 'pointer',
+                background: '#26a69a', color: '#0a0a0f', border: 'none', borderRadius: '5px', fontWeight: 700,
+              }}>Confirm</button>
+            <button
+              onClick={handleDragCancel}
+              style={{
+                flex: 1, padding: '5px 0', fontSize: '12px', cursor: 'pointer',
+                background: '#374151', color: '#9ca3af', border: 'none', borderRadius: '5px',
+              }}>Cancel</button>
           </div>
         </div>,
         document.body

@@ -760,6 +760,63 @@ class HyperliquidService:
         print(f"[modify_order] oid={oid} coin={coin} new_trigger_px={px} tpsl={tpsl} result={result}")
         return result
 
+    async def modify_order_price(
+        self,
+        private_key: str,
+        master_address: str,
+        coin: str,
+        oid: int,
+        is_buy: bool,
+        sz: float,
+        sz_decimals: int,
+        new_price: float,
+        order_type: str,   # "limit" | "tp" | "sl"
+    ) -> dict:
+        """Modify any order's price — handles plain limit orders as well as TP/SL triggers."""
+        dex_name = coin.split(":")[0] if ":" in coin else None
+        import asyncio
+        import eth_account
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+
+        factor = 10 ** sz_decimals
+        rounded_sz = math.floor(sz * factor) / factor
+        if rounded_sz <= 0:
+            raise ValueError("Size too small after rounding.")
+
+        account = eth_account.Account.from_key(private_key)
+        dex_list = [dex_name] if dex_name else []
+        exchange = Exchange(
+            account, constants.MAINNET_API_URL,
+            account_address=master_address,
+            perp_dexs=dex_list if dex_list else None,
+        )
+
+        # Price rounding — consistent with existing modify_order logic
+        if new_price >= 1000:
+            px = round(new_price)
+        elif new_price >= 10:
+            px = round(new_price, 1)
+        else:
+            px = round(new_price, 2)
+
+        if order_type == "limit":
+            order_type_dict = {"limit": {"tif": "Gtc"}}
+            reduce_only = False
+        elif order_type == "tp":
+            order_type_dict = {"trigger": {"triggerPx": px, "isMarket": False, "tpsl": "tp"}}
+            reduce_only = True
+        else:  # "sl"
+            order_type_dict = {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": "sl"}}
+            reduce_only = True
+
+        result = await asyncio.to_thread(
+            exchange.modify_order,
+            oid, coin, is_buy, rounded_sz, px, order_type_dict, reduce_only,
+        )
+        print(f"[modify_order_price] oid={oid} coin={coin} order_type={order_type} px={px} result={result}")
+        return result
+
     async def close_position(
         self,
         private_key: str,
