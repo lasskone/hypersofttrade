@@ -446,6 +446,30 @@ export function TradePanel({
     setChartInterval(interval)
   }
 
+  const handleOrderRowClick = async (o: any) => {
+    const coin: string = o?.coin ?? ''
+    if (!coin) return
+    // Find matching market — exact name first, then strip DEX prefix from either side
+    const coinBase = coin.split(':').pop() ?? coin
+    const market = markets.find(m => m.name === coin)
+      ?? markets.find(m => (m.name.split(':').pop() ?? m.name) === coinBase)
+    if (market) handleSelectMarket(market)
+    // Look up the bot's configured interval for this coin; fall back to 15m
+    let interval = '15m'
+    try {
+      const res = await fetch(`${API_URL}/bots/?wallet_address=${walletAddress}`)
+      if (res.ok) {
+        const data = await res.json()
+        const bots: any[] = data.bots ?? []
+        const bot =
+          bots.find((b: any) => b.symbol === coin && (b.status === 'running' || b.desired_status === 'running')) ??
+          bots.find((b: any) => b.symbol === coin)
+        if (bot?.config?.interval) interval = bot.config.interval
+      }
+    } catch { /* non-blocking */ }
+    setChartInterval(interval)
+  }
+
   const maxLev = selectedMarket?.max_leverage || 50
 
   return (
@@ -1062,8 +1086,12 @@ export function TradePanel({
                             const orderDate = o?.time ? new Date(o.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
                             const isTrigger = o?.is_trigger || o?.is_position_tpsl
                             return (
-                              <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                                <td className="px-4 py-3">
+                              <tr key={i}
+                                className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                                style={{ borderColor: 'rgba(255,255,255,0.08)', cursor: 'pointer' }}
+                                onClick={() => handleOrderRowClick(o)}
+                                title="Click to switch chart to this symbol">
+                                <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                   <input type="checkbox" checked={selectedOrders.has(o?.order_id)}
                                     onChange={e => {
                                       const next = new Set(selectedOrders)
@@ -1090,9 +1118,9 @@ export function TradePanel({
                                 <td className="px-5 py-3">
                                   <span className="text-xs px-2 py-0.5 rounded font-medium" style={{ backgroundColor: '#1a1a2e', color: '#6b7280' }}>Manual</span>
                                 </td>
-                                <td className="px-5 py-3">
+                                <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
                                   {confirmingOrderIdx === i ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={e => e.stopPropagation()}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                       <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>Cancel order?</span>
                                       <button
                                         onClick={async () => { setConfirmingOrderIdx(null); await handleCancelOrder(o?.coin, o?.order_id); onRefresh?.() }}

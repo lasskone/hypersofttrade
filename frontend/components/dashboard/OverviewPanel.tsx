@@ -1222,9 +1222,21 @@ export function OverviewPanel({
                   const orderDate = o?.time ? new Date(o.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
                   const isTrigger = o?.is_trigger || o?.is_position_tpsl;
                   return (
-                    <tr key={i} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                      style={{ borderColor: '#1a1a2e' }}>
-                      <td className="px-4 py-3">
+                    <tr key={i}
+                      className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                      style={{ borderColor: '#1a1a2e', cursor: onSelectMarket ? 'pointer' : undefined }}
+                      title={onSelectMarket ? 'Click to view symbol chart' : undefined}
+                      onClick={() => {
+                        if (onSelectMarket) {
+                          const matchingBot = bots.find((b: any) =>
+                            b.symbol === o?.coin && (b.status === 'running' || b.desired_status === 'running')
+                          )
+                          const interval = matchingBot?.config?.interval ?? '15m'
+                          onSelectMarket(o?.coin ?? '', '', interval)
+                        }
+                        if (onNavigate) onNavigate('trade')
+                      }}>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedOrders.has(o?.order_id)}
@@ -1257,7 +1269,7 @@ export function OverviewPanel({
                           Manual
                         </span>
                       </td>
-                      <td className="px-5 py-3">
+                      <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
                         {confirmingOrderIdx === i ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Cancel order?</span>
