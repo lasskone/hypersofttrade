@@ -262,6 +262,7 @@ const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
     dca_level_2_pct: 14.0,
     tp_pct: 5.0,
     trailing_stop_pct: 1.0,
+    stop_loss_pct: 10.0,
     allocated_usdc: 100,
     leverage: 1,
     interval: '1h',
@@ -932,6 +933,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [tmDca2Pct, setTmDca2Pct] = useState('14.0')
   const [tmTpPct, setTmTpPct] = useState('5.0')
   const [tmTrailingPct, setTmTrailingPct] = useState('1.0')
+  const [tmStopLossPct, setTmStopLossPct] = useState('10')
   const [tmInterval, setTmInterval] = useState('1h')
   const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>('single')
   const [tmScanSymbols, setTmScanSymbols] = useState<string[]>([])
@@ -1049,6 +1051,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             dca_level_2_pct: parseFloat(tmDca2Pct),
             tp_pct: parseFloat(tmTpPct),
             trailing_stop_pct: parseFloat(tmTrailingPct),
+            stop_loss_pct: parseFloat(tmStopLossPct),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
             interval: tmInterval,
@@ -1707,6 +1710,11 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                 </div>
               </div>
               <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" step="0.5" value={tmStopLossPct} onChange={e => setTmStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Wide protective stop-loss before trailing activates. Independent from Trailing Stop %.</p>
+              </div>
+              <div>
                 <label style={labelStyle}>Leverage</label>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, alignItems: 'center' }}>
                   {[1, 2, 3, 5, 10].map(lv => (
@@ -1921,6 +1929,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [tmDca2Amount, setTmDca2Amount] = useState(cfg.dca2_amount_usdc != null ? String(cfg.dca2_amount_usdc) : '')
   const [tmTpPct, setTmTpPct] = useState(String(cfg.tp_pct ?? def.tp_pct ?? 5.0))
   const [tmTrailingPct, setTmTrailingPct] = useState(String(cfg.trailing_stop_pct ?? def.trailing_stop_pct ?? 1.0))
+  const [tmStopLossPct, setTmStopLossPct] = useState(String(cfg.stop_loss_pct ?? def.stop_loss_pct ?? 10.0))
   const [tmInterval, setTmInterval] = useState(String(cfg.interval ?? def.interval ?? '1h'))
   const [tmScanMode, setTmScanMode] = useState<'single' | 'multi'>(cfg.scan_pairs ? 'multi' : 'single')
   const [tmScanSymbols, setTmScanSymbols] = useState<string[]>(Array.isArray(cfg.scan_symbols) ? cfg.scan_symbols : [])
@@ -2051,6 +2060,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         ...(tmDca2Amount !== '' && { dca2_amount_usdc: parseFloat(tmDca2Amount) }),
         tp_pct: parseFloat(tmTpPct),
         trailing_stop_pct: parseFloat(tmTrailingPct),
+        stop_loss_pct: parseFloat(tmStopLossPct),
         allocated_usdc: parseFloat(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? 100)),
         leverage: parseInt(leverage),
         interval: tmInterval,
@@ -2740,6 +2750,11 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <input style={inputStyle} type="number" step="0.1" value={tmTrailingPct} onChange={e => setTmTrailingPct(e.target.value)} />
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>SL trails % below/above peak</p>
                 </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Stop Loss %</label>
+                <input style={inputStyle} type="number" step="0.5" value={tmStopLossPct} onChange={e => setTmStopLossPct(e.target.value)} />
+                <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Wide protective stop-loss before trailing activates. Independent from Trailing Stop %.</p>
               </div>
               <div>
                 <label style={labelStyle}>Leverage</label>

@@ -94,6 +94,7 @@ class TrendMagicBot:
         dca_level_2_pct:    float             = 14.0,
         tp_pct:             float             = 5.0,
         trailing_stop_pct:  float             = 1.0,
+        stop_loss_pct:      float             = 10.0,
         sides:              Optional[list[str]] = None,
         dex:                Optional[str]     = None,
         scan_pairs:         bool              = False,
@@ -114,6 +115,7 @@ class TrendMagicBot:
         self.dca_pcts          = [dca_level_1_pct, dca_level_2_pct]
         self.tp_pct            = tp_pct
         self.trailing_stop_pct = trailing_stop_pct
+        self.stop_loss_pct     = stop_loss_pct
         self.sides             = [s.lower() for s in (sides or ["long", "short"])]
         self.dex               = dex
         self.scan_pairs        = scan_pairs
@@ -732,8 +734,8 @@ class TrendMagicBot:
                  else entry_px * (1 - self.tp_pct / 100))
         await self._sc_reduce_limit(coin, sz_dec, close_buy, current_sz, tp_px)
 
-        sl_px = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
-                 else entry_px * (1 + self.trailing_stop_pct / 100))
+        sl_px = (entry_px * (1 - self.stop_loss_pct / 100) if is_long
+                 else entry_px * (1 + self.stop_loss_pct / 100))
         pair_st["sl_oid"] = await self._sc_stop_market(coin, sz_dec, close_buy, current_sz, sl_px)
 
         self.log("info", (
@@ -873,8 +875,8 @@ class TrendMagicBot:
                             f"[{coin}] Trailing not activated yet "
                             f"— price={cur_price:.4f} target={activation_price:.4f}"
                         ))
-                        fixed_sl = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
-                                    else entry_px * (1 + self.trailing_stop_pct / 100))
+                        fixed_sl = (entry_px * (1 - self.stop_loss_pct / 100) if is_long
+                                    else entry_px * (1 + self.stop_loss_pct / 100))
                         await self._sc_modify_sl(
                             coin, sz_dec, pair_st, close_buy, close_sz, fixed_sl)
                         # DCA re-place
@@ -946,7 +948,7 @@ class TrendMagicBot:
         self.log("info", (
             f"Trend Magic Scanner starting — {len(self._scan_coins)} pairs: {self._scan_coins} | "
             f"{self.interval} | RSI({self.rsi_period}) | EMA({self.ema_period}) | "
-            f"TP={self.tp_pct}% | TSL={self.trailing_stop_pct}% | "
+            f"TP={self.tp_pct}% | SL={self.stop_loss_pct}% | TSL={self.trailing_stop_pct}% | "
             f"Sides={self.sides} | Total alloc=${self.allocated_usdc}"
         ))
 
@@ -1039,9 +1041,9 @@ class TrendMagicBot:
                  else entry_px * (1 - self.tp_pct / 100))
         await self._place_limit_reduce(close_buy, current_sz, tp_px)
 
-        # Initial SL — stop-market, reduce-only
-        sl_px = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
-                 else entry_px * (1 + self.trailing_stop_pct / 100))
+        # Initial SL — stop-market, reduce-only (wide protective SL, not trailing distance)
+        sl_px = (entry_px * (1 - self.stop_loss_pct / 100) if is_long
+                 else entry_px * (1 + self.stop_loss_pct / 100))
         new_oid = await self._place_stop_market(close_buy, current_sz, sl_px)
         self._sl_oid = new_oid
 
@@ -1062,7 +1064,7 @@ class TrendMagicBot:
             f"Trend Magic Bot started — {self.coin} | {self.interval} | "
             f"RSI({self.rsi_period}) ob={self.rsi_overbought} os={self.rsi_oversold} | "
             f"EMA({self.ema_period}) | DCA={self.dca_pcts}% | TP={self.tp_pct}% | "
-            f"TSL={self.trailing_stop_pct}% | Sides={self.sides} | "
+            f"SL={self.stop_loss_pct}% | TSL={self.trailing_stop_pct}% | Sides={self.sides} | "
             f"Allocation=${self.allocated_usdc} | Leverage={self.leverage}x"
         ))
 
@@ -1196,8 +1198,8 @@ class TrendMagicBot:
                                 f"Trailing not activated yet "
                                 f"— price={cur_price:.4f} target={activation_price:.4f}"
                             ))
-                            fixed_sl = (entry_px * (1 - self.trailing_stop_pct / 100) if is_long
-                                        else entry_px * (1 + self.trailing_stop_pct / 100))
+                            fixed_sl = (entry_px * (1 - self.stop_loss_pct / 100) if is_long
+                                        else entry_px * (1 + self.stop_loss_pct / 100))
                             await self._modify_or_replace_sl(close_buy, close_sz, fixed_sl)
                             # DCA re-place (only in Phase 1)
                             n_dca = len(self.dca_pcts)
