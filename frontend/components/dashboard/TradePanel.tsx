@@ -249,12 +249,19 @@ export function TradePanel({
         if (!Array.isArray(data)) throw new Error('Invalid market data')
         setMarkets(data)
         if (initialMarket) {
+          const sym = initialMarket.symbol
+          const symBase = sym.split(':').pop() ?? sym
           const match = data.find((m: Market) =>
-            m.name === initialMarket.symbol &&
-            (m.dex === initialMarket.dex || (!initialMarket.dex && m.dex === 'main'))
-          )
+            m.name === sym && (m.dex === initialMarket.dex || (!initialMarket.dex && m.dex === 'main'))
+          ) ?? data.find((m: Market) => m.name === sym)
+            ?? data.find((m: Market) => (m.name.split(':').pop() ?? m.name) === symBase)
           if (match) {
             handleSelectMarket(match)
+          } else if (sym) {
+            // Coin not in markets list — switch chart to it directly via stub
+            setSelectedMarket({ name: sym, display_name: sym, max_leverage: 50, sz_decimals: 5, mark_price: 0, dex: initialMarket.dex || 'main', only_isolated: false, prev_day_px: 0, funding: 0 })
+            setMarkPrice(0)
+            setPrevMarkPrice(0)
           } else {
             const btc = data.find((m: Market) => m.name === 'BTC')
             if (btc) { setSelectedMarket(btc); setMarkPrice(btc.mark_price); setLeverage(Math.min(10, btc.max_leverage)) }
@@ -424,12 +431,28 @@ export function TradePanel({
     } catch (e: any) { console.error('Cancel selected failed:', e) }
   }
 
+  // Switch to a market by symbol — tries markets list first, falls back to a stub
+  // so the chart always switches even for HIP-3 or unknown coins.
+  const switchToMarket = (coin: string, dex: string, markPx = 0, szDec = 5) => {
+    const coinBase = coin.split(':').pop() ?? coin
+    const market = markets.find(m => m.name === coin && m.dex === (dex || 'main'))
+      ?? markets.find(m => m.name === coin)
+      ?? markets.find(m => (m.name.split(':').pop() ?? m.name) === coinBase)
+    if (market) {
+      handleSelectMarket(market)
+    } else {
+      // Coin not in markets list — synthesize a stub so the chart still switches
+      setSelectedMarket({ name: coin, display_name: coin, max_leverage: 50, sz_decimals: szDec, mark_price: markPx, dex: dex || 'main', only_isolated: false, prev_day_px: 0, funding: 0 })
+      setMarkPrice(markPx)
+      setPrevMarkPrice(markPx)
+    }
+  }
+
   const handlePositionRowClick = async (pos: any) => {
     const posSymbol: string = pos?.symbol ?? ''
     const posDex: string = pos?.dex ?? 'main'
-    // Switch chart to clicked position's market
-    const market = markets.find(m => m.name === posSymbol && m.dex === (posDex || 'main'))
-    if (market) handleSelectMarket(market)
+    if (!posSymbol) return
+    switchToMarket(posSymbol, posDex, parseFloat(String(pos?.mark_price ?? pos?.entry_price ?? 0)), pos?.sz_decimals ?? 5)
     // Look up the bot's configured interval for this symbol; fall back to 15m
     let interval = '15m'
     try {
@@ -449,11 +472,7 @@ export function TradePanel({
   const handleOrderRowClick = async (o: any) => {
     const coin: string = o?.coin ?? ''
     if (!coin) return
-    // Find matching market — exact name first, then strip DEX prefix from either side
-    const coinBase = coin.split(':').pop() ?? coin
-    const market = markets.find(m => m.name === coin)
-      ?? markets.find(m => (m.name.split(':').pop() ?? m.name) === coinBase)
-    if (market) handleSelectMarket(market)
+    switchToMarket(coin, '')
     // Look up the bot's configured interval for this coin; fall back to 15m
     let interval = '15m'
     try {

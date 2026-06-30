@@ -1091,14 +1091,15 @@ export function OverviewPanel({
                   return (
                     <tr key={i}
                       className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                      style={{ borderColor: '#1a1a2e', cursor: onSelectMarket ? 'pointer' : undefined }}
+                      style={{ borderColor: '#1a1a2e', cursor: 'pointer' }}
+                      title="Click to view symbol chart"
                       onClick={() => {
                         if (onSelectMarket) {
                           const matchingBot = bots.find((b: any) =>
                             b.symbol === pos?.symbol && (b.status === 'running' || b.desired_status === 'running')
                           )
                           const interval = matchingBot?.config?.interval ?? '15m'
-                          onSelectMarket(pos?.symbol ?? '', pos?.dex === 'main' ? '' : (pos?.dex ?? ''), interval)
+                          onSelectMarket(pos?.symbol ?? '', pos?.dex ?? 'main', interval)
                         }
                         if (onNavigate) onNavigate('trade')
                       }}>
@@ -1224,8 +1225,8 @@ export function OverviewPanel({
                   return (
                     <tr key={i}
                       className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                      style={{ borderColor: '#1a1a2e', cursor: onSelectMarket ? 'pointer' : undefined }}
-                      title={onSelectMarket ? 'Click to view symbol chart' : undefined}
+                      style={{ borderColor: '#1a1a2e', cursor: 'pointer' }}
+                      title="Click to view symbol chart"
                       onClick={() => {
                         if (onSelectMarket) {
                           const matchingBot = bots.find((b: any) =>
