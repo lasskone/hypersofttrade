@@ -95,6 +95,9 @@ class TrendMagicBot:
         tp_pct:             float             = 5.0,
         trailing_stop_pct:  float             = 1.0,
         stop_loss_pct:      float             = 10.0,
+        entry_amount_usdc:  float             = 10.0,
+        dca1_amount_usdc:   float             = 20.0,
+        dca2_amount_usdc:   float             = 30.0,
         sides:              Optional[list[str]] = None,
         dex:                Optional[str]     = None,
         scan_pairs:         bool              = False,
@@ -114,9 +117,12 @@ class TrendMagicBot:
         self.ema_period        = ema_period
         self.dca_pcts          = [dca_level_1_pct, dca_level_2_pct]
         self.tp_pct            = tp_pct
-        self.trailing_stop_pct = trailing_stop_pct
-        self.stop_loss_pct     = stop_loss_pct
-        self.sides             = [s.lower() for s in (sides or ["long", "short"])]
+        self.trailing_stop_pct  = trailing_stop_pct
+        self.stop_loss_pct      = stop_loss_pct
+        self.entry_amount_usdc  = entry_amount_usdc
+        self.dca1_amount_usdc   = dca1_amount_usdc
+        self.dca2_amount_usdc   = dca2_amount_usdc
+        self.sides              = [s.lower() for s in (sides or ["long", "short"])]
         self.dex               = dex
         self.scan_pairs        = scan_pairs
         self.scan_symbols      = list(scan_symbols) if scan_symbols else []
@@ -699,10 +705,14 @@ class TrendMagicBot:
             pair_st["sl_oid"] = await self._sc_stop_market(coin, sz_dec, is_buy, size, new_sl_px)
 
     async def _sc_enter(self, coin: str, sz_dec: int, pair_st: dict,
-                        is_long: bool, cur_price: float, alloc: float) -> None:
-        """Market entry for a scan pair → 2s wait → DCA limits + TP + initial SL."""
+                        is_long: bool, cur_price: float) -> None:
+        """Market entry for a scan pair → 2s wait → DCA limits + TP + initial SL.
+
+        Sizing uses fixed USD amounts (entry_amount_usdc / dca1_amount_usdc / dca2_amount_usdc)
+        so every pair gets the same allocation regardless of how many pairs are active.
+        """
         side_str   = "Long" if is_long else "Short"
-        initial_sz = (_FIB_WEIGHTS[0] * alloc * self.leverage) / cur_price
+        initial_sz = (self.entry_amount_usdc * self.leverage) / cur_price
 
         success = await self._sc_market_order(coin, sz_dec, is_long, initial_sz)
         if not success:
@@ -724,10 +734,11 @@ class TrendMagicBot:
         close_buy  = not is_long
         current_sz = round_size(abs(real_pos["szi"]), sz_dec)
 
+        dca_amounts = [self.dca1_amount_usdc, self.dca2_amount_usdc]
         for j, dca_pct in enumerate(self.dca_pcts):
             dca_px = (entry_px * (1 - dca_pct / 100) if is_long
                       else entry_px * (1 + dca_pct / 100))
-            dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+            dca_sz = (dca_amounts[j] * self.leverage) / dca_px
             await self._sc_dca_limit(coin, sz_dec, is_long, dca_sz, dca_px)
 
         tp_px = (entry_px * (1 + self.tp_pct / 100) if is_long
@@ -759,11 +770,6 @@ class TrendMagicBot:
         all_positions = results[0] if not isinstance(results[0], Exception) else {}
         all_orders    = results[1] if not isinstance(results[1], Exception) else {}
         all_candles   = results[2:]
-
-        active_count = sum(
-            1 for c in self._scan_coins
-            if isinstance(all_positions.get(c), dict) and all_positions[c]["szi"] != 0.0
-        )
 
         pairs_with_position: list = []
 
@@ -820,15 +826,12 @@ class TrendMagicBot:
                 pair_st["entry_price"]         = None
                 pair_st["in_long"]             = None
 
-                alloc = self.allocated_usdc / max(active_count + 1, 1)
                 if "long" in self.sides and long_signal:
-                    self.log("info", f"[{coin}] Long signal — entering (alloc=${alloc:.2f})")
-                    await self._sc_enter(coin, sz_dec, pair_st, True, cur_price, alloc)
-                    active_count += 1
+                    self.log("info", f"[{coin}] Long signal — entering")
+                    await self._sc_enter(coin, sz_dec, pair_st, True, cur_price)
                 elif "short" in self.sides and short_signal:
-                    self.log("info", f"[{coin}] Short signal — entering (alloc=${alloc:.2f})")
-                    await self._sc_enter(coin, sz_dec, pair_st, False, cur_price, alloc)
-                    active_count += 1
+                    self.log("info", f"[{coin}] Short signal — entering")
+                    await self._sc_enter(coin, sz_dec, pair_st, False, cur_price)
             else:
                 is_long   = has_long
                 close_buy = not is_long
@@ -839,7 +842,6 @@ class TrendMagicBot:
 
                 entry_px  = pair_st["entry_price"]
                 close_sz  = round_size(abs(real_szi), sz_dec)
-                alloc     = self.allocated_usdc / max(active_count, 1)
 
                 tp_px = (entry_px * (1 + self.tp_pct / 100) if is_long
                          else entry_px * (1 - self.tp_pct / 100))
@@ -880,22 +882,23 @@ class TrendMagicBot:
                         await self._sc_modify_sl(
                             coin, sz_dec, pair_st, close_buy, close_sz, fixed_sl)
                         # DCA re-place
-                        n_dca      = len(self.dca_pcts)
-                        buy_count  = sum(1 for o in orders
-                                         if o.get("side") == "B" and not o.get("reduceOnly", False))
-                        sell_count = sum(1 for o in orders
-                                         if o.get("side") == "A" and not o.get("reduceOnly", False))
+                        n_dca        = len(self.dca_pcts)
+                        dca_amounts  = [self.dca1_amount_usdc, self.dca2_amount_usdc]
+                        buy_count    = sum(1 for o in orders
+                                           if o.get("side") == "B" and not o.get("reduceOnly", False))
+                        sell_count   = sum(1 for o in orders
+                                           if o.get("side") == "A" and not o.get("reduceOnly", False))
                         if is_long:
                             dca_start = max(0, n_dca - buy_count)
                             for j in range(dca_start, n_dca):
                                 dca_px = entry_px * (1 - self.dca_pcts[j] / 100)
-                                dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+                                dca_sz = (dca_amounts[j] * self.leverage) / dca_px
                                 await self._sc_dca_limit(coin, sz_dec, True, dca_sz, dca_px)
                         else:
                             dca_start = max(0, n_dca - sell_count)
                             for j in range(dca_start, n_dca):
                                 dca_px = entry_px * (1 + self.dca_pcts[j] / 100)
-                                dca_sz = (_FIB_WEIGHTS[j + 1] * alloc * self.leverage) / dca_px
+                                dca_sz = (dca_amounts[j] * self.leverage) / dca_px
                                 await self._sc_dca_limit(coin, sz_dec, False, dca_sz, dca_px)
                 else:
                     # ── Phase 3: trailing active ──────────────────────────────
@@ -948,9 +951,20 @@ class TrendMagicBot:
         self.log("info", (
             f"Trend Magic Scanner starting — {len(self._scan_coins)} pairs: {self._scan_coins} | "
             f"{self.interval} | RSI({self.rsi_period}) | EMA({self.ema_period}) | "
+            f"Entry=${self.entry_amount_usdc} DCA1=${self.dca1_amount_usdc} DCA2=${self.dca2_amount_usdc} | "
             f"TP={self.tp_pct}% | SL={self.stop_loss_pct}% | TSL={self.trailing_stop_pct}% | "
-            f"Sides={self.sides} | Total alloc=${self.allocated_usdc}"
+            f"Sides={self.sides} | Leverage={self.leverage}x"
         ))
+
+        # ── Minimum notional check at startup ────────────────────────────────
+        for lvl, amt in enumerate([self.entry_amount_usdc, self.dca1_amount_usdc, self.dca2_amount_usdc]):
+            level_notional = amt * self.leverage
+            if level_notional < 10.0:
+                min_amt = 10.0 / max(self.leverage, 1)
+                self.log("warning", (
+                    f"Scanner Level {lvl} notional ${level_notional:.2f} below $10 minimum. "
+                    f"Increase amount to at least ${min_amt:.0f} USDC"
+                ))
 
         for coin in self._scan_coins:
             self._pair_state[coin] = {
