@@ -35,7 +35,7 @@ class PlaceOrderRequest(BaseModel):
     wallet_address: str   # master MetaMask address
     coin: str             # e.g. "BTC", "ETH", "xyz:XYZ100"
     is_buy: bool
-    size: float           # USD notional
+    size: float           # asset size (already converted from USD/price by frontend)
     price: float          # mark price (for market orders)
     order_type: str       # "market" or "limit"
     limit_price: float = 0.0

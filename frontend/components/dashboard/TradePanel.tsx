@@ -344,6 +344,11 @@ export function TradePanel({
     const factor = Math.pow(10, szDec)
     const roundedSize = Math.floor(assetSize * factor) / factor
     if (roundedSize <= 0) { setOrderMessage({ type: 'error', text: 'Order size too small. Increase USD amount.' }); return }
+    // BUG A: require an explicit valid limit price — no silent mark-price fallback
+    if (orderType === 'limit') {
+      const lp = parseFloat(limitPrice)
+      if (!lp || lp <= 0) { setOrderMessage({ type: 'error', text: 'Please enter a valid limit price.' }); return }
+    }
     setPlacing(true)
     setOrderMessage(null)
     try {
@@ -358,7 +363,7 @@ export function TradePanel({
         body: JSON.stringify({
           wallet_address: walletAddress, coin: selectedMarket.name, is_buy: side === 'buy',
           size: roundedSize, price: markPrice, order_type: orderType,
-          limit_price: parseFloat(limitPrice) || markPrice, leverage, sz_decimals: szDec,
+          limit_price: parseFloat(limitPrice), leverage, sz_decimals: szDec,
         }),
       })
       const data = await res.json()

@@ -640,12 +640,10 @@ class HyperliquidService:
         master_address = MetaMask wallet address (master account)
         """
         dex_name = coin.split(":")[0] if ":" in coin else None
-        # Round size to asset precision (floor to avoid float_to_wire errors)
-        factor = 10 ** sz_decimals
-        size = math.floor(size * factor) / factor
+        # Size is already rounded by the frontend; just validate it is positive
         if size <= 0:
             raise ValueError(
-                f"Size too small after rounding to {sz_decimals} decimals. "
+                f"Size must be greater than 0 (received {size}). "
                 f"Increase USD amount."
             )
 
@@ -684,9 +682,16 @@ class HyperliquidService:
                 {"limit": {"tif": "Ioc"}},
             )
         else:
+            # BUG D: round limit price by magnitude to prevent float_to_wire encoding errors
+            if price >= 1000:
+                rounded_price = round(price)
+            elif price >= 10:
+                rounded_price = round(price, 1)
+            else:
+                rounded_price = round(price, 2)
             order_result = await asyncio.to_thread(
                 exchange.order,
-                coin, is_buy, size, price,
+                coin, is_buy, size, rounded_price,
                 {"limit": {"tif": "Gtc"}},
             )
 

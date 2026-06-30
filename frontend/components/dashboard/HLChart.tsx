@@ -42,6 +42,7 @@ interface Props {
     size?: number
     order_type?: string
     type?: string
+    is_trigger?: boolean
     isTrigger?: boolean
   }>
 }
@@ -562,7 +563,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, positio
     // Resting limit orders
     openOrders.forEach(o => {
       if (!matches(o.coin)) return
-      if (o.isTrigger) return
+      if (o.is_trigger || o.isTrigger) return
       const price = parseFloat(String(o.price ?? o.limitPx ?? 0))
       if (!price || price <= 0) return
       const size = parseFloat(String(o.sz ?? o.size ?? 0))
