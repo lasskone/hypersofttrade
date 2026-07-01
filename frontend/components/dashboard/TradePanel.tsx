@@ -67,6 +67,19 @@ const fmtOrderType = (raw: unknown): string => {
   return s || 'Limit'
 }
 
+// Hyperliquid 5 significant figures price formatter
+const fmtHLPrice = (price: number): string => {
+  if (!price || price === 0) return '0'
+  const absPrice = Math.abs(price)
+  if (absPrice >= 10000) return price.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  if (absPrice >= 1000)  return price.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  if (absPrice >= 100)   return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (absPrice >= 10)    return price.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+  if (absPrice >= 1)     return price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+  if (absPrice >= 0.1)   return price.toLocaleString('en-US', { minimumFractionDigits: 5, maximumFractionDigits: 5 })
+  return price.toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })
+}
+
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
 // ── Table helpers ─────────────────────────────────────────────────────────────
@@ -580,7 +593,7 @@ export function TradePanel({
           <div>
             <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Mark Price</div>
             <div style={{ color: priceColor, fontWeight: '700', fontSize: '18px', fontVariantNumeric: 'tabular-nums' }}>
-              ${markPrice > 0 ? fmt(markPrice) : '—'}
+              ${markPrice > 0 ? fmtHLPrice(markPrice) : '—'}
             </div>
           </div>
           <div>
@@ -721,7 +734,7 @@ export function TradePanel({
                 <div>
                   <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px', letterSpacing: '0.5px' }}>LIMIT PRICE (USD)</label>
                   <input type="number" value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
-                    placeholder={markPrice > 0 ? markPrice.toFixed(2) : '0.00'}
+                    placeholder={markPrice > 0 ? fmtHLPrice(markPrice) : '0.00'}
                     style={{ width: '100%', background: '#0a0a0f', border: '1px solid rgba(255,255,255,0.08)',
                       borderRadius: '6px', padding: '8px 12px', color: 'white', fontSize: '14px', boxSizing: 'border-box', outline: 'none' }}
                     onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
@@ -776,7 +789,7 @@ export function TradePanel({
             {/* Order Summary */}
             <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '12px', overflow: 'hidden' }}>
               {([
-                ['Entry Price', entryPrice > 0 ? `$${fmt(entryPrice)}` : '—'],
+                ['Entry Price', entryPrice > 0 ? `$${fmtHLPrice(entryPrice)}` : '—'],
                 ['Size', sizeNum > 0 ? `$${sizeNum.toFixed(2)}` : '—'],
                 ['Leverage', `${leverage}x`],
                 ['Est. Liq. Price', sizeNum > 0 && entryPrice > 0 ? `$${fmt(liqPrice)}` : '—'],
@@ -886,7 +899,7 @@ export function TradePanel({
                           <div key={i} style={{ position: 'relative', height: '22px', display: 'flex', alignItems: 'center' }}>
                             <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: `${(ask.total / maxCum) * 100}%`, background: 'rgba(239,68,68,0.10)' }} />
                             <div style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr', padding: '0 6px', fontSize: '11px' }}>
-                              <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>{parseFloat(ask.price).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}</span>
+                              <span style={{ color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>{fmtHLPrice(parseFloat(ask.price))}</span>
                               <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{parseFloat(ask.size).toFixed(3)}</span>
                               <span style={{ color: '#6b7280', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>{fmtQty(ask.total)}</span>
                             </div>
@@ -900,7 +913,7 @@ export function TradePanel({
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       borderTop: '1px solid rgba(255,255,255,0.08)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                       <span style={{ fontSize: '12px', color: priceColor, fontWeight: '700', fontVariantNumeric: 'tabular-nums' }}>
-                        {markPrice > 0 ? fmt(markPrice) : '—'}
+                        {markPrice > 0 ? fmtHLPrice(markPrice) : '—'}
                       </span>
                       {spread > 0 && markPrice > 0 && (
                         <span style={{ fontSize: '9px', color: '#4b5563' }}>{((spread / markPrice) * 100).toFixed(3)}%</span>
@@ -918,7 +931,7 @@ export function TradePanel({
                           <div key={i} style={{ position: 'relative', height: '22px', display: 'flex', alignItems: 'center' }}>
                             <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: `${(bid.total / maxCum) * 100}%`, background: 'rgba(0,212,170,0.10)' }} />
                             <div style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr', padding: '0 6px', fontSize: '11px' }}>
-                              <span style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>{parseFloat(bid.price).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}</span>
+                              <span style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>{fmtHLPrice(parseFloat(bid.price))}</span>
                               <span style={{ color: '#9ca3af', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{parseFloat(bid.size).toFixed(3)}</span>
                               <span style={{ color: '#6b7280', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '10px' }}>{fmtQty(bid.total)}</span>
                             </div>

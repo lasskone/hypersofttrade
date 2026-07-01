@@ -822,8 +822,17 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
     }
   }, [symbol, selectedInterval, chartReady])
 
-  const fmtPrice = (n: number) =>
-    n?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) || '—'
+  const fmtPrice = (n: number): string => {
+    if (!n || n === 0) return '—'
+    const abs = Math.abs(n)
+    if (abs >= 10000) return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    if (abs >= 1000)  return n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    if (abs >= 100)   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (abs >= 10)    return n.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+    if (abs >= 1)     return n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+    if (abs >= 0.1)   return n.toLocaleString('en-US', { minimumFractionDigits: 5, maximumFractionDigits: 5 })
+    return n.toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })
+  }
 
   const handleDragCancel = () => {
     if (!dragConfirm) return

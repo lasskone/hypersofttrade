@@ -39,6 +39,19 @@ const fmtOpened = (val: unknown): string => {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
+// Hyperliquid 5 significant figures price formatter
+const fmtHLPrice = (price: number): string => {
+  if (!price || price === 0) return '0'
+  const absPrice = Math.abs(price)
+  if (absPrice >= 10000) return price.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  if (absPrice >= 1000)  return price.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  if (absPrice >= 100)   return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (absPrice >= 10)    return price.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+  if (absPrice >= 1)     return price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+  if (absPrice >= 0.1)   return price.toLocaleString('en-US', { minimumFractionDigits: 5, maximumFractionDigits: 5 })
+  return price.toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })
+}
+
 const isBuySide = (side: unknown): boolean => {
   const s = String(side ?? '').toUpperCase();
   return s === 'B' || s === 'BUY';
@@ -410,7 +423,7 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
         <div className="grid grid-cols-3 gap-3 mb-6">
           {[
             { label: 'Size', value: `${absSize}` },
-            { label: 'Entry Price', value: `$${fmt(pos.entry_price)}` },
+            { label: 'Entry Price', value: `$${fmtHLPrice(parseFloat(String(pos.entry_price ?? 0)))}` },
             { label: 'Unrealized PnL', value: `${upnl >= 0 ? '+' : ''}$${fmt(upnl)}`, color: upnl >= 0 ? '#10b981' : '#ef4444' },
           ].map(({ label, value, color }) => (
             <div key={label} className="rounded-lg p-3 text-center" style={{ backgroundColor: '#13131f' }}>
@@ -582,7 +595,7 @@ export function PositionModal({ pos, walletAddress, onClose, onAction, onRefresh
                         </>
                       ) : (
                         <>
-                          <span style={{ fontSize: 12, color: '#e5e7eb', flex: 1 }}>${fmt(o.trigger_px)}</span>
+                          <span style={{ fontSize: 12, color: '#e5e7eb', flex: 1 }}>${fmtHLPrice(parseFloat(String(o.trigger_px ?? 0)))}</span>
                           <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>
                             {fmt(sz, 4)} / {fmt(origSz, 4)}{pct !== null ? ` (${pct}%)` : ''}
                           </span>
@@ -1120,8 +1133,8 @@ export function OverviewPanel({
                         </span>
                       </td>
                       <TD>{fmt(pos?.size, 4)}</TD>
-                      <TD>${fmt(pos?.entry_price)}</TD>
-                      <TD>${fmt(pos?.mark_price ?? 0)}</TD>
+                      <TD>${fmtHLPrice(parseFloat(String(pos?.entry_price ?? 0)))}</TD>
+                      <TD>${fmtHLPrice(parseFloat(String(pos?.mark_price ?? 0)))}</TD>
                       <TD>${fmt(notional)}</TD>
                       <TD color="#9ca3af">${fmt(margin)}</TD>
                       <td className="px-5 py-3">
@@ -1132,15 +1145,15 @@ export function OverviewPanel({
                       </td>
                       <td className="px-5 py-3">
                         {tpPx ? (
-                          <p className="text-xs" style={{ color: '#10b981' }}>TP ${fmt(tpPx)}</p>
+                          <p className="text-xs" style={{ color: '#10b981' }}>TP ${fmtHLPrice(tpPx)}</p>
                         ) : null}
                         {slPx ? (
-                          <p className="text-xs mt-0.5" style={{ color: '#ef4444' }}>SL ${fmt(slPx)}</p>
+                          <p className="text-xs mt-0.5" style={{ color: '#ef4444' }}>SL ${fmtHLPrice(slPx)}</p>
                         ) : null}
                         {!tpPx && !slPx ? <span className="text-xs text-gray-600">—</span> : null}
                       </td>
                       <TD>{fmt(pos?.leverage, 0)}x {pos?.leverage_type ?? ''}</TD>
-                      <TD>{liqPx > 0 ? `$${fmt(liqPx)}` : '—'}</TD>
+                      <TD>{liqPx > 0 ? `$${fmtHLPrice(liqPx)}` : '—'}</TD>
                       <td className="px-5 py-3">
                         <p className="text-xs text-gray-400">{fmtOpened(pos?.opened_at)}</p>
                       </td>
@@ -1272,7 +1285,7 @@ export function OverviewPanel({
                           {typeBadge.label}
                         </span>
                       </td>
-                      <TD>${fmt(o?.price)}</TD>
+                      <TD>${fmtHLPrice(parseFloat(String(o?.price ?? 0)))}</TD>
                       <TD>{fmt(o?.size, 4)}</TD>
                       <td className="px-5 py-3">
                         <p className="text-xs text-gray-300">{orderTime}</p>
@@ -1362,7 +1375,7 @@ export function OverviewPanel({
                       style={{ borderColor: '#1a1a2e' }}>
                       <td className="px-5 py-3 font-semibold text-white text-sm">{f?.coin ?? '—'}</td>
                       <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
-                      <TD>${fmt(f?.price)}</TD>
+                      <TD>${fmtHLPrice(parseFloat(String(f?.price ?? 0)))}</TD>
                       <TD>{fmt(f?.size, 4)}</TD>
                       <TD color={cpnl > 0 ? '#10b981' : cpnl < 0 ? '#ef4444' : '#6b7280'}>
                         {cpnl === 0 ? '—' : fmtPnl(cpnl)}
