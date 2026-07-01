@@ -206,6 +206,18 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
   // Total chart height — toolbar is 50px; RSI pane lives inside the chart canvas
   const totalChartH = chartHeight - 50
 
+  const getPricePrecision = (price: number): { precision: number; minMove: number } => {
+    if (!price || price <= 0) return { precision: 2, minMove: 0.01 }
+    const abs = Math.abs(price)
+    if (abs >= 10000) return { precision: 0, minMove: 1 }
+    if (abs >= 1000)  return { precision: 1, minMove: 0.1 }
+    if (abs >= 100)   return { precision: 2, minMove: 0.01 }
+    if (abs >= 10)    return { precision: 3, minMove: 0.001 }
+    if (abs >= 1)     return { precision: 4, minMove: 0.0001 }
+    if (abs >= 0.1)   return { precision: 5, minMove: 0.00001 }
+    return { precision: 6, minMove: 0.000001 }
+  }
+
   useEffect(() => {
     if (loadingRef.current) return
     loadingRef.current = true
@@ -277,10 +289,12 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
           upColor: '#00d4aa', downColor: '#ef4444',
           borderUpColor: '#00d4aa', borderDownColor: '#ef4444',
           wickUpColor: '#00d4aa', wickDownColor: '#ef4444',
+          priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
         })
         candleSeries.setData(candles.map(c => ({
           time: c.time as any, open: c.open, high: c.high, low: c.low, close: c.close,
         })))
+        candleSeries.applyOptions({ priceFormat: getPricePrecision(candles[candles.length - 1].close) })
         candleSeriesRef.current = candleSeries
 
         // Crosshair OHLC update
@@ -781,6 +795,11 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
 
           if (candleSeriesRef.current) {
             candleSeriesRef.current.update(bar)
+            const newFmt = getPricePrecision(Number(data.c))
+            const curPrecision = (candleSeriesRef.current.options() as any).priceFormat?.precision
+            if (newFmt.precision !== curPrecision) {
+              candleSeriesRef.current.applyOptions({ priceFormat: newFmt })
+            }
           }
 
           // Keep candleDataRef in sync: replace last if same candle, else append
