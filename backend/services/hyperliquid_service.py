@@ -631,6 +631,7 @@ class HyperliquidService:
         size: float,
         price: float,
         order_type: str,
+        dex: str | None = None,
         leverage: int = 1,
         sz_decimals: int = 5,
     ) -> dict:
@@ -638,8 +639,8 @@ class HyperliquidService:
         Place an order on Hyperliquid using the SDK.
         private_key    = API wallet private key (decrypted)
         master_address = MetaMask wallet address (master account)
+        dex            = HIP-3 DEX identifier (e.g. "xyz"); None or "main" = standard perps
         """
-        dex_name = coin.split(":")[0] if ":" in coin else None
         # Size is already rounded by the frontend; just validate it is positive
         if size <= 0:
             raise ValueError(
@@ -655,10 +656,8 @@ class HyperliquidService:
 
         account = eth_account.Account.from_key(private_key)
 
-        # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
-        # coin has already been stripped to short name at this point
-        # We need the original coin passed to the method — use the dex extracted before stripping
-        dex_list = [dex_name] if dex_name else []
+        # Build perp_dexs list for HIP-3 coins; standard HL perps use None
+        dex_list = [dex] if dex and dex != "main" else []
         exchange = Exchange(
             account,
             constants.MAINNET_API_URL,

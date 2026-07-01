@@ -35,7 +35,8 @@ def _supabase():
 
 class PlaceOrderRequest(BaseModel):
     wallet_address: str   # master MetaMask address
-    coin: str             # e.g. "BTC", "ETH", "xyz:XYZ100"
+    coin: str             # short coin name, e.g. "BTC", "ETH", "XYZ100"
+    dex: Optional[str] = None  # DEX identifier for HIP-3 coins, e.g. "xyz"; None/"main" = Hyperliquid perps
     is_buy: bool
     size: float           # asset size (already converted from USD/price by frontend)
     price: float          # mark price (for market orders)
@@ -237,6 +238,7 @@ async def place_order(body: PlaceOrderRequest):
             private_key=private_key,
             master_address=body.wallet_address,
             coin=body.coin,
+            dex=body.dex,
             is_buy=body.is_buy,
             size=body.size,
             price=exec_price,
