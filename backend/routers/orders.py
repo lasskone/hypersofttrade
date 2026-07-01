@@ -229,16 +229,23 @@ async def place_order(body: PlaceOrderRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
 
-    # 3. Determine execution price
+    # 3. Reconstruct full coin name — frontend strips the dex prefix before sending,
+    #    so we reattach it here: "XYZ100" + dex="xyz" → "xyz:XYZ100"
+    full_coin = (
+        f"{body.dex}:{body.coin}"
+        if body.dex and body.dex not in ("main", "", None)
+        else body.coin
+    )
+
+    # 4. Determine execution price
     exec_price = (body.limit_price or 0.0) if body.order_type == "limit" else body.price
 
-    # 4. Place order
+    # 5. Place order
     try:
         result_data = await hyperliquid_service.place_order(
             private_key=private_key,
             master_address=body.wallet_address,
-            coin=body.coin,
-            dex=body.dex,
+            coin=full_coin,
             is_buy=body.is_buy,
             size=body.size,
             price=exec_price,
