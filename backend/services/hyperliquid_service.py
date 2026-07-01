@@ -19,6 +19,17 @@ INFO_ENDPOINT = f"{MAINNET_API_URL}/info"
 logger = logging.getLogger("hyperliquid_service")
 
 
+def _round_price(price: float) -> float:
+    """Round price to Hyperliquid's 5 significant figures convention."""
+    if price >= 10000: return round(price, 0)
+    if price >= 1000:  return round(price, 1)
+    if price >= 100:   return round(price, 2)
+    if price >= 10:    return round(price, 3)
+    if price >= 1:     return round(price, 4)
+    if price >= 0.1:   return round(price, 5)
+    return round(price, 6)
+
+
 def _supabase():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
@@ -670,26 +681,14 @@ class HyperliquidService:
         if order_type == "market":
             slippage = 0.05
             raw_price = price * (1 + slippage) if is_buy else price * (1 - slippage)
-            # Round to appropriate precision based on price magnitude
-            if raw_price >= 1000:
-                limit_price = round(raw_price)        # whole number for high-price assets
-            elif raw_price >= 10:
-                limit_price = round(raw_price, 1)     # 1 decimal for mid-price assets
-            else:
-                limit_price = round(raw_price, 2)     # 2 decimals for low-price assets
+            limit_price = _round_price(raw_price)
             order_result = await asyncio.to_thread(
                 exchange.order,
                 coin, is_buy, size, limit_price,
                 {"limit": {"tif": "Ioc"}},
             )
         else:
-            # BUG D: round limit price by magnitude to prevent float_to_wire encoding errors
-            if price >= 1000:
-                rounded_price = round(price)
-            elif price >= 10:
-                rounded_price = round(price, 1)
-            else:
-                rounded_price = round(price, 2)
+            rounded_price = _round_price(price)
             order_result = await asyncio.to_thread(
                 exchange.order,
                 coin, is_buy, size, rounded_price,
