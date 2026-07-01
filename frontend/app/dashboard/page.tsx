@@ -123,6 +123,8 @@ export default function DashboardPage() {
     setStep('checking');
     const timer = setTimeout(() => {
       const checkStatus = async () => {
+        setAffiliationError('');
+        setStep('checking');
         setIsChecking(true);
         try {
           // Always call verify-affiliation first so the DB is refreshed from
@@ -262,7 +264,7 @@ export default function DashboardPage() {
                       Having trouble? Try disabling browser extensions or use incognito mode.
                     </p>
                   )}
-                  {isConnected && affiliationError && (
+                  {affiliationError && mounted && !isReconnecting && status === 'disconnected' && (
                     <div style={{
                       background: 'rgba(239,68,68,0.1)',
                       border: '1px solid rgba(239,68,68,0.3)',
