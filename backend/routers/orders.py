@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
+from typing import Optional
+
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -38,7 +40,7 @@ class PlaceOrderRequest(BaseModel):
     size: float           # asset size (already converted from USD/price by frontend)
     price: float          # mark price (for market orders)
     order_type: str       # "market" or "limit"
-    limit_price: float = 0.0
+    limit_price: Optional[float] = None
     leverage: int = 1
     sz_decimals: int = 5  # asset's decimal precision for size rounding
 
@@ -227,7 +229,7 @@ async def place_order(body: PlaceOrderRequest):
         raise HTTPException(status_code=500, detail="Failed to decrypt API key") from exc
 
     # 3. Determine execution price
-    exec_price = body.limit_price if body.order_type == "limit" else body.price
+    exec_price = (body.limit_price or 0.0) if body.order_type == "limit" else body.price
 
     # 4. Place order
     try:

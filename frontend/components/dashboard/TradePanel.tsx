@@ -377,7 +377,7 @@ export function TradePanel({
           body: JSON.stringify({
             wallet_address: walletAddress, coin: coinForApi, dex: dexForApi, is_buy: side === 'buy',
             size: roundedSize, price: markPrice, order_type: orderType,
-            limit_price: parseFloat(limitPrice), leverage, sz_decimals: szDec,
+            limit_price: parseFloat(limitPrice) || 0, leverage, sz_decimals: szDec,
           }),
         })
         const data = await res.json()
