@@ -359,26 +359,41 @@ export function TradePanel({
       }
       setPlacing(true)
       setOrderMessage(null)
+      // For HIP-3 coins (e.g. xyz:XYZ100), strip the dex prefix so the backend
+      // receives coin="XYZ100" + dex="xyz" rather than the combined "xyz:XYZ100".
+      const coinForApi = selectedMarket.name.includes(':')
+        ? selectedMarket.name.split(':').pop()!
+        : selectedMarket.name
+      const dexForApi = selectedMarket.dex
       try {
         try {
           await fetch(`${API_URL}/orders/set-leverage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ wallet_address: walletAddress, coin: selectedMarket.name, leverage, is_cross: !selectedMarket.only_isolated }),
+            body: JSON.stringify({ wallet_address: walletAddress, coin: coinForApi, dex: dexForApi, leverage, is_cross: !selectedMarket.only_isolated }),
           })
         } catch { /* non-blocking */ }
         const res = await fetch(`${API_URL}/orders/place`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            wallet_address: walletAddress, coin: selectedMarket.name, is_buy: side === 'buy',
+            wallet_address: walletAddress, coin: coinForApi, dex: dexForApi, is_buy: side === 'buy',
             size: roundedSize, price: markPrice, order_type: orderType,
             limit_price: parseFloat(limitPrice), leverage, sz_decimals: szDec,
           }),
         })
         const data = await res.json()
-        if (!res.ok) { setOrderMessage({ type: 'error', text: data.detail || 'Order failed' }); return }
+        if (!res.ok) {
+          const rawMsg = typeof data === 'object' ? (data.detail || data.message || JSON.stringify(data)) : String(data)
+          const msg = typeof rawMsg === 'string' ? rawMsg : JSON.stringify(rawMsg)
+          setOrderMessage({ type: 'error', text: msg })
+          return
+        }
         const statuses = data?.result?.response?.data?.statuses
         const firstStatus = Array.isArray(statuses) ? statuses[0] : null
-        if (firstStatus?.error) { setOrderMessage({ type: 'error', text: firstStatus.error }); return }
+        if (firstStatus?.error) {
+          const errText = typeof firstStatus.error === 'string' ? firstStatus.error : JSON.stringify(firstStatus.error)
+          setOrderMessage({ type: 'error', text: errText })
+          return
+        }
         setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
         setSize('')
         const tpVal = parseFloat(tpPrice)
@@ -388,7 +403,7 @@ export function TradePanel({
             await fetch(`${API_URL}/orders/tp-sl`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                wallet_address: walletAddress, coin: selectedMarket.name, is_long: side === 'buy',
+                wallet_address: walletAddress, coin: coinForApi, dex: dexForApi, is_long: side === 'buy',
                 size: roundedSize, sz_decimals: selectedMarket.sz_decimals || 5,
                 tp_price: tpVal > 0 ? tpVal : null, sl_price: slVal > 0 ? slVal : null,
               }),
