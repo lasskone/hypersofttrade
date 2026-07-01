@@ -346,63 +346,70 @@ export function TradePanel({
   }
 
   const handlePlaceOrder = async () => {
-    if (!selectedMarket || sizeNum <= 0) return
-    const szDec = selectedMarket.sz_decimals || 5
-    const factor = Math.pow(10, szDec)
-    const roundedSize = Math.floor(assetSize * factor) / factor
-    if (roundedSize <= 0) { setOrderMessage({ type: 'error', text: 'Order size too small. Increase USD amount.' }); return }
-    // BUG A: require an explicit valid limit price — no silent mark-price fallback
-    if (orderType === 'limit') {
-      const lp = parseFloat(limitPrice)
-      if (!lp || lp <= 0) { setOrderMessage({ type: 'error', text: 'Please enter a valid limit price.' }); return }
-    }
-    setPlacing(true)
-    setOrderMessage(null)
     try {
-      try {
-        await fetch(`${API_URL}/orders/set-leverage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ wallet_address: walletAddress, coin: selectedMarket.name, leverage, is_cross: !selectedMarket.only_isolated }),
-        })
-      } catch { /* non-blocking */ }
-      const res = await fetch(`${API_URL}/orders/place`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wallet_address: walletAddress, coin: selectedMarket.name, is_buy: side === 'buy',
-          size: roundedSize, price: markPrice, order_type: orderType,
-          limit_price: parseFloat(limitPrice), leverage, sz_decimals: szDec,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setOrderMessage({ type: 'error', text: data.detail || 'Order failed' }); return }
-      const statuses = data?.result?.response?.data?.statuses
-      const firstStatus = Array.isArray(statuses) ? statuses[0] : null
-      if (firstStatus?.error) { setOrderMessage({ type: 'error', text: firstStatus.error }); return }
-      setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
-      setSize('')
-      const tpVal = parseFloat(tpPrice)
-      const slVal = parseFloat(slPrice)
-      if ((tpVal > 0 || slVal > 0) && selectedMarket) {
-        try {
-          await fetch(`${API_URL}/orders/tp-sl`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              wallet_address: walletAddress, coin: selectedMarket.name, is_long: side === 'buy',
-              size: roundedSize, sz_decimals: selectedMarket.sz_decimals || 5,
-              tp_price: tpVal > 0 ? tpVal : null, sl_price: slVal > 0 ? slVal : null,
-            }),
-          })
-          const tpSlMsg = [tpVal > 0 ? `TP: $${tpVal}` : '', slVal > 0 ? `SL: $${slVal}` : ''].filter(Boolean).join(' | ')
-          setOrderMessage({ type: 'success', text: `Order placed! ${tpSlMsg}` })
-        } catch {
-          setOrderMessage({ type: 'success', text: 'Order placed! TP/SL may not have been set.' })
-        }
-        setTpPrice('')
-        setSlPrice('')
+      if (!selectedMarket || sizeNum <= 0) return
+      const szDec = selectedMarket.sz_decimals || 5
+      const factor = Math.pow(10, szDec)
+      const roundedSize = Math.floor(assetSize * factor) / factor
+      if (roundedSize <= 0) { setOrderMessage({ type: 'error', text: 'Order size too small. Increase USD amount.' }); return }
+      // BUG A: require an explicit valid limit price — no silent mark-price fallback
+      if (orderType === 'limit') {
+        const lp = parseFloat(limitPrice)
+        if (!lp || lp <= 0) { setOrderMessage({ type: 'error', text: 'Please enter a valid limit price.' }); return }
       }
-    } catch {
-      setOrderMessage({ type: 'error', text: 'Network error. Please try again.' })
-    } finally {
+      setPlacing(true)
+      setOrderMessage(null)
+      try {
+        try {
+          await fetch(`${API_URL}/orders/set-leverage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ wallet_address: walletAddress, coin: selectedMarket.name, leverage, is_cross: !selectedMarket.only_isolated }),
+          })
+        } catch { /* non-blocking */ }
+        const res = await fetch(`${API_URL}/orders/place`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            wallet_address: walletAddress, coin: selectedMarket.name, is_buy: side === 'buy',
+            size: roundedSize, price: markPrice, order_type: orderType,
+            limit_price: parseFloat(limitPrice), leverage, sz_decimals: szDec,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) { setOrderMessage({ type: 'error', text: data.detail || 'Order failed' }); return }
+        const statuses = data?.result?.response?.data?.statuses
+        const firstStatus = Array.isArray(statuses) ? statuses[0] : null
+        if (firstStatus?.error) { setOrderMessage({ type: 'error', text: firstStatus.error }); return }
+        setOrderMessage({ type: 'success', text: 'Order placed successfully!' })
+        setSize('')
+        const tpVal = parseFloat(tpPrice)
+        const slVal = parseFloat(slPrice)
+        if ((tpVal > 0 || slVal > 0) && selectedMarket) {
+          try {
+            await fetch(`${API_URL}/orders/tp-sl`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                wallet_address: walletAddress, coin: selectedMarket.name, is_long: side === 'buy',
+                size: roundedSize, sz_decimals: selectedMarket.sz_decimals || 5,
+                tp_price: tpVal > 0 ? tpVal : null, sl_price: slVal > 0 ? slVal : null,
+              }),
+            })
+            const tpSlMsg = [tpVal > 0 ? `TP: $${tpVal}` : '', slVal > 0 ? `SL: $${slVal}` : ''].filter(Boolean).join(' | ')
+            setOrderMessage({ type: 'success', text: `Order placed! ${tpSlMsg}` })
+          } catch {
+            setOrderMessage({ type: 'success', text: 'Order placed! TP/SL may not have been set.' })
+          }
+          setTpPrice('')
+          setSlPrice('')
+        }
+      } catch (networkErr) {
+        setOrderMessage({ type: 'error', text: 'Network error. Please try again.' })
+      } finally {
+        setPlacing(false)
+      }
+    } catch (err: unknown) {
+      console.error('[handlePlaceOrder] unexpected error for coin', selectedMarket?.name, ':', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      setOrderMessage({ type: 'error', text: `Order failed: ${msg}` })
       setPlacing(false)
     }
   }
