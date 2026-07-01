@@ -1221,7 +1221,21 @@ export function OverviewPanel({
                   const buy = isBuySide(o?.side);
                   const orderTime = o?.time ? new Date(o.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—';
                   const orderDate = o?.time ? new Date(o.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-                  const isTrigger = o?.is_trigger || o?.is_position_tpsl;
+                  const orderTypeStr = String(o?.order_type ?? '');
+                  const isTP = orderTypeStr.includes('Take Profit');
+                  const isSL = orderTypeStr.includes('Stop');
+                  const isReduceOnly = o?.is_trigger || isTP || isSL;
+                  // Type badge
+                  const typeBadge = isTP
+                    ? { label: 'Take Profit', bg: '#f59e0b18', color: '#f59e0b' }
+                    : isSL
+                    ? { label: 'Stop Loss',   bg: '#ef535018', color: '#ef5350' }
+                    : orderTypeStr.toLowerCase().includes('trigger')
+                    ? { label: 'Trigger',     bg: '#37415118', color: '#6b7280' }
+                    : { label: 'Limit',       bg: '#00d4aa18', color: '#00d4aa' };
+                  // Side: show position intent for reduce-only orders
+                  const sideLabel = isReduceOnly ? (buy ? 'Short' : 'Long') : (buy ? 'Buy' : 'Sell');
+                  const sideColor = isReduceOnly ? (buy ? '#ef4444' : '#10b981') : (buy ? '#10b981' : '#ef4444');
                   return (
                     <tr key={i}
                       className="border-b last:border-0 hover:bg-white/5 transition-colors"
@@ -1251,11 +1265,11 @@ export function OverviewPanel({
                         />
                       </td>
                       <td className="px-5 py-3 font-semibold text-white text-sm">{o?.coin ?? '—'}</td>
-                      <TD color={buy ? '#10b981' : '#ef4444'}>{buy ? 'Buy' : 'Sell'}</TD>
+                      <TD color={sideColor}>{sideLabel}</TD>
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
-                          style={{ backgroundColor: isTrigger ? '#f59e0b18' : '#00d4aa18', color: isTrigger ? '#f59e0b' : '#00d4aa' }}>
-                          {fmtOrderType(o?.order_type)}
+                          style={{ backgroundColor: typeBadge.bg, color: typeBadge.color }}>
+                          {typeBadge.label}
                         </span>
                       </td>
                       <TD>${fmt(o?.price)}</TD>
