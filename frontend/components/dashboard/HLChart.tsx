@@ -89,6 +89,12 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
   const orderDragActiveRef   = useRef(false)
   const orderDragLineIdxRef  = useRef(-1)
 
+  // RSI OB/OS line series refs (for drag-to-modify)
+  const obSeriesRef          = useRef<any>(null)
+  const osSeriesRef          = useRef<any>(null)
+  const rsiDragActiveRef     = useRef(false)
+  const rsiDragTypeRef       = useRef<'ob' | 'os' | null>(null)
+
   const [selectedInterval, setSelectedInterval]     = useState(initialInterval ?? '15m')
 
   // When a position is clicked in Overview, initialInterval prop updates — sync it
@@ -105,7 +111,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
   const [showVolume, setShowVolume]                 = useState(true)
   const [showRSI, setShowRSI]                       = useState(false)
   const [rsiPeriod, setRsiPeriod]                   = useState(14)
+  const [rsiOverbought, setRsiOverbought]           = useState(70)
+  const [rsiOversold, setRsiOversold]               = useState(30)
   const [showRSIPeriodInput, setShowRSIPeriodInput] = useState(false)
+  const [rsiDragLabel, setRsiDragLabel]             = useState<{ type: 'ob' | 'os'; value: number; x: number; y: number } | null>(null)
   const [loading, setLoading]                       = useState(true)
   const [chartHeight, setChartHeight] = useState<number>(() => {
     if (typeof window === 'undefined') return height
@@ -149,11 +158,15 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
         if (s.showVol !== undefined) setShowVolume(Boolean(s.showVol))
         if (s.showRSI !== undefined) setShowRSI(Boolean(s.showRSI))
         if (s.rsiPeriod !== undefined) setRsiPeriod(Number(s.rsiPeriod) || 14)
+        if (s.rsiOverbought !== undefined) setRsiOverbought(Number(s.rsiOverbought) || 70)
+        if (s.rsiOversold !== undefined) setRsiOversold(Number(s.rsiOversold) || 30)
       } else {
         setShowEMA(true); setEmaPeriod(20); setShowVolume(true); setShowRSI(false); setRsiPeriod(14)
+        setRsiOverbought(70); setRsiOversold(30)
       }
     } catch {
       setShowEMA(true); setEmaPeriod(20); setShowVolume(true); setShowRSI(false); setRsiPeriod(14)
+      setRsiOverbought(70); setRsiOversold(30)
     }
     const tid = setTimeout(() => { indicatorSaveBlockedRef.current = false }, 0)
     return () => clearTimeout(tid)
@@ -164,10 +177,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
     if (indicatorSaveBlockedRef.current) return
     try {
       localStorage.setItem(`hlchart_indicators_${symbol}`, JSON.stringify({
-        showEMA, emaPeriod, showVol: showVolume, showRSI, rsiPeriod,
+        showEMA, emaPeriod, showVol: showVolume, showRSI, rsiPeriod, rsiOverbought, rsiOversold,
       }))
     } catch {}
-  }, [symbol, showEMA, emaPeriod, showVolume, showRSI, rsiPeriod])
+  }, [symbol, showEMA, emaPeriod, showVolume, showRSI, rsiPeriod, rsiOverbought, rsiOversold])
 
   const calcEMA = (data: Candle[], period: number) => {
     const k = 2 / (period + 1)
@@ -484,17 +497,19 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
         s.setData(rsiData)
         rsiSeriesRef.current = s
 
-        // Overbought line (70)
+        // Overbought line
         const ob = chartRef.current.addSeries(LineSeries, {
           color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false,
         }, 1)
-        ob.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 70 })))
+        ob.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: rsiOverbought })))
+        obSeriesRef.current = ob
 
-        // Oversold line (30)
+        // Oversold line
         const os = chartRef.current.addSeries(LineSeries, {
           color: 'rgba(0,212,170,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false,
         }, 1)
-        os.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: 30 })))
+        os.setData(candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: rsiOversold })))
+        osSeriesRef.current = os
 
         // Pin RSI pane to exact pixel height
         try {
@@ -506,11 +521,126 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
     } else {
       // Remove RSI pane — also destroys all series inside it
       rsiSeriesRef.current = null
+      obSeriesRef.current = null
+      osSeriesRef.current = null
       if (chartRef.current.panes().length > 1) {
         try { chartRef.current.removePane(1) } catch {}
       }
     }
   }, [showRSI, chartReady])
+
+  // Update OB line data when rsiOverbought changes (without rebuilding pane)
+  useEffect(() => {
+    if (!obSeriesRef.current || !candleDataRef.current.length) return
+    obSeriesRef.current.setData(
+      candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: rsiOverbought }))
+    )
+  }, [rsiOverbought, rsiPeriod])
+
+  // Update OS line data when rsiOversold changes (without rebuilding pane)
+  useEffect(() => {
+    if (!osSeriesRef.current || !candleDataRef.current.length) return
+    osSeriesRef.current.setData(
+      candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: rsiOversold }))
+    )
+  }, [rsiOversold, rsiPeriod])
+
+  // ── Drag-to-modify RSI overbought/oversold lines ─────────────────────────
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const HIT_PX = 10
+    // RSI pane occupies the bottom RSI_HEIGHT pixels of the chart canvas
+    const rsiPaneTop = totalChartH - RSI_HEIGHT
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (!showRSI || !rsiSeriesRef.current) return
+      const rect = container.getBoundingClientRect()
+      const clickY = e.clientY - rect.top
+      // Only check when click is within RSI pane area (with tolerance)
+      if (clickY < rsiPaneTop - HIT_PX) return
+
+      const obY = rsiSeriesRef.current.priceToCoordinate(rsiOverbought)
+      const osY = rsiSeriesRef.current.priceToCoordinate(rsiOversold)
+
+      if (obY != null && Math.abs(clickY - obY) <= HIT_PX) {
+        rsiDragActiveRef.current = true
+        rsiDragTypeRef.current = 'ob'
+        e.stopPropagation()
+        e.preventDefault()
+        return
+      }
+      if (osY != null && Math.abs(clickY - osY) <= HIT_PX) {
+        rsiDragActiveRef.current = true
+        rsiDragTypeRef.current = 'os'
+        e.stopPropagation()
+        e.preventDefault()
+        return
+      }
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const clickY = e.clientY - rect.top
+
+      // Cursor: show ns-resize when hovering near OB/OS lines (only in RSI pane)
+      if (!rsiDragActiveRef.current && showRSI && rsiSeriesRef.current && clickY >= rsiPaneTop - HIT_PX) {
+        const obY = rsiSeriesRef.current.priceToCoordinate(rsiOverbought)
+        const osY = rsiSeriesRef.current.priceToCoordinate(rsiOversold)
+        const nearLine =
+          (obY != null && Math.abs(clickY - obY) <= HIT_PX) ||
+          (osY != null && Math.abs(clickY - osY) <= HIT_PX)
+        container.style.cursor = nearLine ? 'ns-resize' : ''
+      } else if (!rsiDragActiveRef.current) {
+        container.style.cursor = ''
+      }
+
+      if (!rsiDragActiveRef.current || !rsiSeriesRef.current) return
+      const y = e.clientY - rect.top
+      const rawVal = rsiSeriesRef.current.coordinateToPrice(y)
+      if (rawVal == null) return
+      const clamped = Math.max(0, Math.min(100, rawVal))
+
+      if (rsiDragTypeRef.current === 'ob' && obSeriesRef.current) {
+        obSeriesRef.current.setData(
+          candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: clamped }))
+        )
+      } else if (rsiDragTypeRef.current === 'os' && osSeriesRef.current) {
+        osSeriesRef.current.setData(
+          candleDataRef.current.slice(rsiPeriod + 1).map((c: any) => ({ time: c.time, value: clamped }))
+        )
+      }
+      setRsiDragLabel({ type: rsiDragTypeRef.current!, value: clamped, x: e.clientX, y: e.clientY })
+    }
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (!rsiDragActiveRef.current || !rsiSeriesRef.current) return
+      rsiDragActiveRef.current = false
+      const rect = container.getBoundingClientRect()
+      const y = e.clientY - rect.top
+      const rawVal = rsiSeriesRef.current.coordinateToPrice(y)
+      const clamped = rawVal != null ? Math.max(0, Math.min(100, rawVal)) : null
+      if (rsiDragTypeRef.current === 'ob') {
+        if (clamped != null) setRsiOverbought(parseFloat(clamped.toFixed(1)))
+      } else {
+        if (clamped != null) setRsiOversold(parseFloat(clamped.toFixed(1)))
+      }
+      rsiDragTypeRef.current = null
+      setRsiDragLabel(null)
+      container.style.cursor = ''
+    }
+
+    container.addEventListener('mousedown', onMouseDown, { capture: true })
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown, { capture: true } as any)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [chartReady, showRSI, rsiOverbought, rsiOversold, rsiPeriod, totalChartH])
 
   // ── Position lines ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1184,6 +1314,61 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
                 background: '#a78bfa', color: '#0a0a0f', border: 'none', borderRadius: '4px',
               }}>OK</button>
           </div>
+          <div style={{ width: '100%', height: '1px', background: '#1a1a2e', margin: '2px 0' }} />
+          <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Levels (drag or type)</span>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: 'rgba(239,68,68,0.8)', width: '22px' }}>OB</span>
+            <input
+              type="number" min="51" max="99" step="0.5" value={rsiOverbought}
+              onMouseDown={e => e.stopPropagation()}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                if (!isNaN(v) && v > rsiOversold && v <= 100) setRsiOverbought(v)
+              }}
+              style={{
+                width: '60px', background: '#0a0a0f', border: '1px solid rgba(239,68,68,0.4)',
+                borderRadius: '4px', color: 'rgba(239,68,68,0.9)', padding: '3px 6px', fontSize: '12px', outline: 'none',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: 'rgba(0,212,170,0.8)', width: '22px' }}>OS</span>
+            <input
+              type="number" min="1" max="49" step="0.5" value={rsiOversold}
+              onMouseDown={e => e.stopPropagation()}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                if (!isNaN(v) && v < rsiOverbought && v >= 0) setRsiOversold(v)
+              }}
+              style={{
+                width: '60px', background: '#0a0a0f', border: '1px solid rgba(0,212,170,0.4)',
+                borderRadius: '4px', color: 'rgba(0,212,170,0.9)', padding: '3px 6px', fontSize: '12px', outline: 'none',
+              }}
+            />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── RSI OB/OS drag label portal ───────────────────────────────── */}
+      {rsiDragLabel && createPortal(
+        <div style={{
+          position: 'fixed',
+          top: rsiDragLabel.y - 28,
+          left: rsiDragLabel.x + 12,
+          zIndex: 99999,
+          background: '#0d0d14',
+          border: `1px solid ${rsiDragLabel.type === 'ob' ? 'rgba(239,68,68,0.6)' : 'rgba(0,212,170,0.6)'}`,
+          borderRadius: '4px',
+          padding: '3px 8px',
+          fontSize: '12px',
+          fontWeight: 600,
+          color: rsiDragLabel.type === 'ob' ? 'rgba(239,68,68,0.9)' : 'rgba(0,212,170,0.9)',
+          pointerEvents: 'none',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+          whiteSpace: 'nowrap',
+        }}>
+          {rsiDragLabel.type === 'ob' ? 'OB' : 'OS'}: {rsiDragLabel.value.toFixed(1)}
         </div>,
         document.body
       )}

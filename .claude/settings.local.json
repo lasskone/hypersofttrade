@@ -55,7 +55,8 @@
       "Bash(python -m py_compile bots/envelope/strategy.py)",
       "Bash(npx --no tsc --noEmit)",
       "Bash(python -m py_compile bots/trend_magic/strategy.py)",
-      "WebFetch(domain:tradingview.github.io)"
+      "WebFetch(domain:tradingview.github.io)",
+      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('services/hyperliquid_service.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")"
     ]
   }
 }
