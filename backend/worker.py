@@ -305,7 +305,7 @@ async def _check_trailing_stops() -> None:
                     print(f"[trailing_stops] ts_id={ts_id} no open position for {coin}, skipping", flush=True)
                     continue
 
-                sz_decimals = sz_dec_map.get(coin, 5)
+                sz_decimals = sz_dec_map.get(coin, sz_dec_map.get(coin.split(":")[-1] if ":" in coin else coin, 5))
                 be_sl = entry_px
 
                 sl_result = await hyperliquid_service.place_tp_sl(
@@ -319,6 +319,9 @@ async def _check_trailing_stops() -> None:
                     oid = sl_result["sl"]["response"]["data"]["statuses"][0].get("resting", {}).get("oid")
                 except Exception:
                     pass
+
+                if oid is None:
+                    print(f"[trailing_stops] ts_id={ts_id} WARNING: could not extract sl_oid from place_tp_sl response — this trailing stop will not auto-update its SL. Raw response: {sl_result}", flush=True)
 
                 db.table("trailing_stops").update({
                     "status":          "active",
@@ -359,7 +362,7 @@ async def _check_trailing_stops() -> None:
                     sz = positions.get(coin) or positions.get(coin.split(":")[-1] if ":" in coin else coin)
 
                     if sz and sz > 0:
-                        sz_decimals = sz_dec_map.get(coin, 5)
+                        sz_decimals = sz_dec_map.get(coin, sz_dec_map.get(coin.split(":")[-1] if ":" in coin else coin, 5))
                         try:
                             await hyperliquid_service.modify_order(
                                 private_key=private_key, master_address=wallet, coin=coin,
@@ -383,6 +386,8 @@ async def _check_trailing_stops() -> None:
 
         except Exception as e:
             print(f"[trailing_stops] unexpected error ts_id={ts_id}: {e}", flush=True)
+
+        await asyncio.sleep(0.15)
 
 
 async def trailing_stop_loop() -> None:
