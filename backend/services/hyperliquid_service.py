@@ -39,6 +39,13 @@ class HyperliquidService:
 
     def __init__(self, referral_code: str = "KNS"):
         self.referral_code = referral_code
+        self._wallet_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_wallet_lock(self, master_address: str) -> asyncio.Lock:
+        key = master_address.lower()
+        if key not in self._wallet_locks:
+            self._wallet_locks[key] = asyncio.Lock()
+        return self._wallet_locks[key]
 
     # ------------------------------------------------------------------
     # Market data
@@ -667,33 +674,34 @@ class HyperliquidService:
         from hyperliquid.exchange import Exchange
         from hyperliquid.utils import constants
 
-        account = eth_account.Account.from_key(private_key)
+        async with self._get_wallet_lock(master_address):
+            account = eth_account.Account.from_key(private_key)
 
-        # Build perp_dexs list for HIP-3 coins; standard HL perps use None
-        dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(
-            account,
-            constants.MAINNET_API_URL,
-            account_address=master_address,
-            perp_dexs=dex_list if dex_list else None,
-        )
+            # Build perp_dexs list for HIP-3 coins; standard HL perps use None
+            dex_list = [dex_name] if dex_name else []
+            exchange = Exchange(
+                account,
+                constants.MAINNET_API_URL,
+                account_address=master_address,
+                perp_dexs=dex_list if dex_list else None,
+            )
 
-        if order_type == "market":
-            slippage = 0.05
-            raw_price = price * (1 + slippage) if is_buy else price * (1 - slippage)
-            limit_price = _round_price(raw_price)
-            order_result = await asyncio.to_thread(
-                exchange.order,
-                coin, is_buy, size, limit_price,
-                {"limit": {"tif": "Ioc"}},
-            )
-        else:
-            rounded_price = _round_price(price)
-            order_result = await asyncio.to_thread(
-                exchange.order,
-                coin, is_buy, size, rounded_price,
-                {"limit": {"tif": "Gtc"}},
-            )
+            if order_type == "market":
+                slippage = 0.05
+                raw_price = price * (1 + slippage) if is_buy else price * (1 - slippage)
+                limit_price = _round_price(raw_price)
+                order_result = await asyncio.to_thread(
+                    exchange.order,
+                    coin, is_buy, size, limit_price,
+                    {"limit": {"tif": "Ioc"}},
+                )
+            else:
+                rounded_price = _round_price(price)
+                order_result = await asyncio.to_thread(
+                    exchange.order,
+                    coin, is_buy, size, rounded_price,
+                    {"limit": {"tif": "Gtc"}},
+                )
 
         print(f"[order] result={order_result}")
         return order_result
@@ -711,13 +719,16 @@ class HyperliquidService:
         from hyperliquid.utils import constants
 
         dex_name = coin.split(":")[0] if ":" in coin else None
-        account = eth_account.Account.from_key(private_key)
-        # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
-        # coin has already been stripped to short name at this point
-        # We need the original coin passed to the method — use the dex extracted before stripping
-        dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
-        result = await asyncio.to_thread(exchange.cancel, coin, order_id)
+
+        async with self._get_wallet_lock(master_address):
+            account = eth_account.Account.from_key(private_key)
+            # Extract DEX name from coin prefix if HIP-3 (e.g. "xyz:XYZ100" → dex="xyz")
+            # coin has already been stripped to short name at this point
+            # We need the original coin passed to the method — use the dex extracted before stripping
+            dex_list = [dex_name] if dex_name else []
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+            result = await asyncio.to_thread(exchange.cancel, coin, order_id)
+
         print(f"[cancel_order] result={result}")
         return result
 
@@ -745,18 +756,20 @@ class HyperliquidService:
         if rounded_sz <= 0:
             raise ValueError("Size too small after rounding.")
 
-        account = eth_account.Account.from_key(private_key)
-        dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
-
         px = round(new_trigger_px) if new_trigger_px >= 1000 else round(new_trigger_px, 1) if new_trigger_px >= 10 else round(new_trigger_px, 2)
 
-        result = await asyncio.to_thread(
-            exchange.modify_order,
-            oid, coin, is_buy, rounded_sz, px,
-            {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": tpsl}},
-            True,  # reduce_only
-        )
+        async with self._get_wallet_lock(master_address):
+            account = eth_account.Account.from_key(private_key)
+            dex_list = [dex_name] if dex_name else []
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+
+            result = await asyncio.to_thread(
+                exchange.modify_order,
+                oid, coin, is_buy, rounded_sz, px,
+                {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": tpsl}},
+                True,  # reduce_only
+            )
+
         print(f"[modify_order] oid={oid} coin={coin} new_trigger_px={px} tpsl={tpsl} result={result}")
         return result
 
@@ -915,35 +928,36 @@ class HyperliquidService:
         if rounded_size <= 0:
             raise ValueError("Size too small after rounding.")
 
-        account = eth_account.Account.from_key(private_key)
-        dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
-
         # Close side is opposite of position side
         is_close_buy = not is_long
         results = {}
 
-        if tp_price is not None and tp_price > 0:
-            tp_px = round(tp_price) if tp_price >= 1000 else round(tp_price, 1) if tp_price >= 10 else round(tp_price, 2)
-            tp_result = await asyncio.to_thread(
-                exchange.order,
-                coin, is_close_buy, rounded_size, tp_px,
-                {"trigger": {"triggerPx": tp_px, "isMarket": True, "tpsl": "tp"}},
-                True,  # reduce_only
-            )
-            print(f"[tp_sl] TP result={tp_result}")
-            results["tp"] = tp_result
+        async with self._get_wallet_lock(master_address):
+            account = eth_account.Account.from_key(private_key)
+            dex_list = [dex_name] if dex_name else []
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
 
-        if sl_price is not None and sl_price > 0:
-            sl_px = round(sl_price) if sl_price >= 1000 else round(sl_price, 1) if sl_price >= 10 else round(sl_price, 2)
-            sl_result = await asyncio.to_thread(
-                exchange.order,
-                coin, is_close_buy, rounded_size, sl_px,
-                {"trigger": {"triggerPx": sl_px, "isMarket": True, "tpsl": "sl"}},
-                True,  # reduce_only
-            )
-            print(f"[tp_sl] SL result={sl_result}")
-            results["sl"] = sl_result
+            if tp_price is not None and tp_price > 0:
+                tp_px = round(tp_price) if tp_price >= 1000 else round(tp_price, 1) if tp_price >= 10 else round(tp_price, 2)
+                tp_result = await asyncio.to_thread(
+                    exchange.order,
+                    coin, is_close_buy, rounded_size, tp_px,
+                    {"trigger": {"triggerPx": tp_px, "isMarket": True, "tpsl": "tp"}},
+                    True,  # reduce_only
+                )
+                print(f"[tp_sl] TP result={tp_result}")
+                results["tp"] = tp_result
+
+            if sl_price is not None and sl_price > 0:
+                sl_px = round(sl_price) if sl_price >= 1000 else round(sl_price, 1) if sl_price >= 10 else round(sl_price, 2)
+                sl_result = await asyncio.to_thread(
+                    exchange.order,
+                    coin, is_close_buy, rounded_size, sl_px,
+                    {"trigger": {"triggerPx": sl_px, "isMarket": True, "tpsl": "sl"}},
+                    True,  # reduce_only
+                )
+                print(f"[tp_sl] SL result={sl_result}")
+                results["sl"] = sl_result
 
         return results
 
