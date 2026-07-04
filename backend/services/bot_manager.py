@@ -391,6 +391,11 @@ class BotManager:
         dex    = config.get("dex", "") or None
         coin   = f"{dex}:{symbol}" if dex else symbol
 
+        tm_optional_kwargs = {}
+        for key in ("entry_amount_usdc", "dca1_amount_usdc", "dca2_amount_usdc"):
+            if config.get(key) is not None:
+                tm_optional_kwargs[key] = float(config[key])
+
         bot = TrendMagicBot(
             private_key=private_key,
             master_address=master_address,
@@ -413,6 +418,7 @@ class BotManager:
             scan_pairs=config.get("scan_pairs", False),
             scan_symbols=config.get("scan_symbols") or [],
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+            **tm_optional_kwargs,
         )
         self._add_log(bot_id, "info", (
             f"Trend Magic Bot initializing — {coin} "
