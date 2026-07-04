@@ -296,8 +296,16 @@ class TrendMagicBot:
             limit_px = round_price(mid * 1.01 if is_buy else mid * 0.99)
             notional = size * limit_px
             if notional < 10.0:
-                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={limit_px})")
-                return False
+                bumped_size = size + (10 ** -self.sz_decimals)
+                bumped_size = round_size(bumped_size, self.sz_decimals)
+                bumped_notional = bumped_size * limit_px
+                if bumped_notional >= 10.0:
+                    self.log("info", f"Bumped size from {size} to {bumped_size} to clear $10 minimum (notional ${notional:.2f} → ${bumped_notional:.2f})")
+                    size = bumped_size
+                    notional = bumped_notional
+                else:
+                    self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={limit_px})")
+                    return False
             result   = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, limit_px,
                 {"limit": {"tif": "Ioc"}},
@@ -322,8 +330,16 @@ class TrendMagicBot:
             price = round_price(price)
             notional = size * price
             if notional < 10.0:
-                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
-                return None
+                bumped_size = size + (10 ** -self.sz_decimals)
+                bumped_size = round_size(bumped_size, self.sz_decimals)
+                bumped_notional = bumped_size * price
+                if bumped_notional >= 10.0:
+                    self.log("info", f"Bumped size from {size} to {bumped_size} to clear $10 minimum (notional ${notional:.2f} → ${bumped_notional:.2f})")
+                    size = bumped_size
+                    notional = bumped_notional
+                else:
+                    self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
+                    return None
             result = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, price,
                 {"limit": {"tif": "Gtc"}},
@@ -350,8 +366,16 @@ class TrendMagicBot:
             price = round_price(price)
             notional = size * price
             if notional < 10.0:
-                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
-                return None
+                bumped_size = size + (10 ** -self.sz_decimals)
+                bumped_size = round_size(bumped_size, self.sz_decimals)
+                bumped_notional = bumped_size * price
+                if bumped_notional >= 10.0:
+                    self.log("info", f"Bumped size from {size} to {bumped_size} to clear $10 minimum (notional ${notional:.2f} → ${bumped_notional:.2f})")
+                    size = bumped_size
+                    notional = bumped_notional
+                else:
+                    self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={price})")
+                    return None
             result = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, price,
                 {"limit": {"tif": "Gtc"}},
@@ -378,8 +402,16 @@ class TrendMagicBot:
             trigger_px = round_price(trigger_px)
             notional = size * trigger_px
             if notional < 10.0:
-                self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={trigger_px})")
-                return None
+                bumped_size = size + (10 ** -self.sz_decimals)
+                bumped_size = round_size(bumped_size, self.sz_decimals)
+                bumped_notional = bumped_size * trigger_px
+                if bumped_notional >= 10.0:
+                    self.log("info", f"Bumped size from {size} to {bumped_size} to clear $10 minimum (notional ${notional:.2f} → ${bumped_notional:.2f})")
+                    size = bumped_size
+                    notional = bumped_notional
+                else:
+                    self.log("warning", f"Skipping order: notional=${notional:.2f} < $10 minimum (size={size}, price={trigger_px})")
+                    return None
             result = await asyncio.to_thread(
                 self._exchange.order, self.coin, is_buy, size, trigger_px,
                 {"trigger": {"triggerPx": trigger_px, "isMarket": True, "tpsl": "sl"}},
