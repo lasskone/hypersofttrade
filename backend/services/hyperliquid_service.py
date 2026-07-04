@@ -893,16 +893,17 @@ class HyperliquidService:
         from hyperliquid.exchange import Exchange
         from hyperliquid.utils import constants
 
-        account = eth_account.Account.from_key(private_key)
-        dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+        async with self._get_wallet_lock(master_address):
+            account = eth_account.Account.from_key(private_key)
+            dex_list = [dex_name] if dex_name else []
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
 
-        result = await asyncio.to_thread(
-            exchange.update_leverage,
-            leverage,
-            coin,
-            is_cross,
-        )
+            result = await asyncio.to_thread(
+                exchange.update_leverage,
+                leverage,
+                coin,
+                is_cross,
+            )
         print(f"[set_leverage] coin={coin} leverage={leverage} is_cross={is_cross} result={result}")
         return result
 
