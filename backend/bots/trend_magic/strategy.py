@@ -857,6 +857,7 @@ class TrendMagicBot:
                 pair_st["peak_price"]         = None
                 pair_st["entry_price"]         = None
                 pair_st["in_long"]             = None
+                pair_st["position_size"]       = None
 
                 if "long" in self.sides and long_signal:
                     self.log("info", f"[{coin}] Long signal — entering")
@@ -905,6 +906,17 @@ class TrendMagicBot:
                         ))
                     else:
                         # ── Phase 1: waiting for activation ───────────────────
+                        # DCA fill detection
+                        if pair_st["position_size"] is None:
+                            pair_st["position_size"] = close_sz
+                        elif close_sz > pair_st["position_size"]:
+                            avg_entry = real_entry_px or entry_px
+                            self.log("info", (
+                                f"[{coin}] DCA filled — position size increased from "
+                                f"{pair_st['position_size']} to {close_sz} "
+                                f"(new avg entry: {avg_entry:.4f})"
+                            ))
+                            pair_st["position_size"] = close_sz
                         self.log("info", (
                             f"[{coin}] Trailing not activated yet "
                             f"— price={cur_price:.4f} target={activation_price:.4f}"
@@ -966,6 +978,7 @@ class TrendMagicBot:
                     pair_st["peak_price"]         = None
                     pair_st["entry_price"]         = None
                     pair_st["in_long"]             = None
+                    pair_st["position_size"]       = None
 
     # ── Scanner main loop ─────────────────────────────────────────────────────
 
@@ -1005,6 +1018,7 @@ class TrendMagicBot:
                 "peak_price":         None,
                 "sl_oid":             None,
                 "trailing_activated": False,
+                "position_size":      None,
             }
 
         # Parallel: fetch sz_decimals + set leverage for every pair
