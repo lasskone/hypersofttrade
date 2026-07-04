@@ -931,6 +931,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [tmEmaPeriod, setTmEmaPeriod] = useState('200')
   const [tmDca1Pct, setTmDca1Pct] = useState('7.0')
   const [tmDca2Pct, setTmDca2Pct] = useState('14.0')
+  const [tmEntryAmount, setTmEntryAmount] = useState('')
+  const [tmDca1Amount, setTmDca1Amount] = useState('')
+  const [tmDca2Amount, setTmDca2Amount] = useState('')
   const [tmTpPct, setTmTpPct] = useState('5.0')
   const [tmTrailingPct, setTmTrailingPct] = useState('1.0')
   const [tmStopLossPct, setTmStopLossPct] = useState('10')
@@ -1049,6 +1052,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             ema_period: parseInt(tmEmaPeriod),
             dca_level_1_pct: parseFloat(tmDca1Pct),
             dca_level_2_pct: parseFloat(tmDca2Pct),
+            ...(tmEntryAmount !== '' && { entry_amount_usdc: parseFloat(tmEntryAmount) }),
+            ...(tmDca1Amount !== '' && { dca1_amount_usdc: parseFloat(tmDca1Amount) }),
+            ...(tmDca2Amount !== '' && { dca2_amount_usdc: parseFloat(tmDca2Amount) }),
             tp_pct: parseFloat(tmTpPct),
             trailing_stop_pct: parseFloat(tmTrailingPct),
             stop_loss_pct: parseFloat(tmStopLossPct),
@@ -1695,6 +1701,23 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                   <label style={labelStyle}>DCA Level 2 %</label>
                   <input style={inputStyle} type="number" step="0.5" value={tmDca2Pct} onChange={e => setTmDca2Pct(e.target.value)} />
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Second DCA below/above entry. Default 14%</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label style={labelStyle}>Entry Amount USDC</label>
+                  <input style={inputStyle} type="number" step="1" value={tmEntryAmount} onChange={e => setTmEntryAmount(e.target.value)} placeholder="auto" />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Override entry size. Leave blank for auto (15% of alloc).</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>DCA1 Amount USDC</label>
+                  <input style={inputStyle} type="number" step="1" value={tmDca1Amount} onChange={e => setTmDca1Amount(e.target.value)} placeholder="auto" />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Override DCA1 size. Leave blank for auto (35% of alloc).</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>DCA2 Amount USDC</label>
+                  <input style={inputStyle} type="number" step="1" value={tmDca2Amount} onChange={e => setTmDca2Amount(e.target.value)} placeholder="auto" />
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Override DCA2 size. Leave blank for auto (50% of alloc).</p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
