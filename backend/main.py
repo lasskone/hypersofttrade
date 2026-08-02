@@ -102,7 +102,7 @@ async def admin_list_all_bots():
 # ---------------------------------------------------------------------------
 @app.post("/backtest", tags=["backtest"])
 async def run_backtest(body: dict):
-    from services.backtest_engine import run_grid_backtest, run_envelope_dca_backtest
+    from services.backtest_engine import run_trend_magic_backtest
     from services.hyperliquid_service import get_candles
 
     bot_type = body.get("bot_type", "grid")
@@ -116,9 +116,8 @@ async def run_backtest(body: dict):
 
     coin = f"{dex}:{symbol}" if dex else symbol
 
-    # Strategies that need 1m candles for OHLC-accurate simulation
-    _1m_strategies = ("envelope_dca", "bb_rsi", "ema_cross", "golden_trap", "trend_magic")
-    if bot_type in _1m_strategies:
+    # Trend Magic needs 1m candles for OHLC-accurate simulation
+    if bot_type == "trend_magic":
         date_range_days = int(body.get("date_range_days", 14))
         fetch_interval  = "1m"
         fetch_limit     = date_range_days * 24 * 60   # up to 20,160 candles
@@ -139,84 +138,7 @@ async def run_backtest(body: dict):
         raise HTTPException(status_code=400, detail="Not enough historical data")
 
     try:
-        if bot_type == "grid":
-            result = run_grid_backtest(
-                candles=candles,
-                allocation=allocation,
-                levels=int(body.get("levels", 10)),
-                range_pct=float(body.get("range_pct", 5.0)),
-                stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
-                take_profit_pct=float(body.get("take_profit_pct", 30.0)),
-            )
-        elif bot_type == "envelope_dca":
-            result = run_envelope_dca_backtest(
-                candles_1m=candles,
-                allocation=allocation,
-                ma_period=int(body.get("ma_period", 20)),
-                envelope_1_pct=float(body.get("envelope_1_pct", 7.0)),
-                envelope_2_pct=float(body.get("envelope_2_pct", 10.0)),
-                envelope_3_pct=float(body.get("envelope_3_pct", 15.0)),
-                stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
-                leverage=int(body.get("leverage", 1)),
-                sides=body.get("sides") or ["long"],
-            )
-        elif bot_type == "bb_rsi":
-            from services.backtest_engine import run_bbrsi_backtest
-            result = run_bbrsi_backtest(
-                candles_1m=candles,
-                allocation=allocation,
-                bb_period=int(body.get("bb_period", 20)),
-                bb_std=float(body.get("bb_std", 2.0)),
-                rsi_period=int(body.get("rsi_period", 14)),
-                rsi_oversold=float(body.get("rsi_oversold", 30)),
-                rsi_overbought=float(body.get("rsi_overbought", 70)),
-                stop_loss_pct=float(body.get("stop_loss_pct", 5)),
-                leverage=int(body.get("leverage", 1)),
-            )
-        elif bot_type == "ema_cross":
-            from services.backtest_engine import run_emacross_backtest
-            result = run_emacross_backtest(
-                candles_1m=candles,
-                allocation=allocation,
-                ema_fast=int(body.get("ema_fast", 9)),
-                ema_slow=int(body.get("ema_slow", 21)),
-                stop_loss_pct=float(body.get("stop_loss_pct", 5)),
-                leverage=int(body.get("leverage", 1)),
-            )
-        elif bot_type == "passivbot_dca":
-            from services.backtest_engine import run_passivbot_dca_backtest
-            result = run_passivbot_dca_backtest(
-                candles=candles,
-                allocation=allocation,
-                direction=str(body.get("direction", "long")),
-                wallet_exposure_limit=float(body.get("wallet_exposure_limit", 0.1)),
-                entry_initial_qty_pct=float(body.get("entry_initial_qty_pct", 0.01)),
-                double_down_factor=float(body.get("double_down_factor", 0.9)),
-                entry_grid_spacing_pct=float(body.get("entry_grid_spacing_pct", 0.003)),
-                entry_grid_spacing_we_weight=float(body.get("entry_grid_spacing_we_weight", 0.5)),
-                close_grid_markup_start=float(body.get("close_grid_markup_start", 0.001)),
-                close_grid_markup_end=float(body.get("close_grid_markup_end", 0.003)),
-                close_grid_qty_pct=float(body.get("close_grid_qty_pct", 0.05)),
-                leverage=int(body.get("leverage", 1)),
-            )
-        elif bot_type == "golden_trap":
-            from services.backtest_engine import run_golden_trap_backtest
-            result = run_golden_trap_backtest(
-                candles_1m=candles,
-                allocation=allocation,
-                ma_period=int(body.get("ma_period", 5)),
-                envelope_1_pct=float(body.get("envelope_1_pct", 7.0)),
-                envelope_2_pct=float(body.get("envelope_2_pct", 10.0)),
-                envelope_3_pct=float(body.get("envelope_3_pct", 15.0)),
-                stop_loss_pct=float(body.get("stop_loss_pct", 10.0)),
-                leverage=int(body.get("leverage", 1)),
-                sides=body.get("sides") or ["long"],
-                trailing_stop_type=str(body.get("trailing_stop_type", "fixed")),
-                trailing_stop_pct=float(body.get("trailing_stop_pct", 2.0)),
-                trailing_stop_atr_mult=float(body.get("trailing_stop_atr_mult", 1.5)),
-            )
-        elif bot_type == "trend_magic":
-            from services.backtest_engine import run_trend_magic_backtest
+        if bot_type == "trend_magic":
             result = run_trend_magic_backtest(
                 candles_1m=candles,
                 allocation=allocation,
