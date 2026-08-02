@@ -23,6 +23,7 @@ import httpx
 INFO_ENDPOINT = "https://api.hyperliquid.xyz/info"
 
 from bots.envelope.strategy import round_price, round_size
+from services.position_groups import create_position_group, close_position_group
 
 _FIB_WEIGHTS = [0.15, 0.35, 0.50]   # [initial entry, DCA1, DCA2]
 
@@ -103,6 +104,7 @@ class TrendMagicBot:
         scan_pairs:         bool              = False,
         scan_symbols:       list              = [],
         log_callback=None,
+        db_client=None,
     ):
         self.private_key       = private_key
         self.master_address    = master_address
@@ -127,6 +129,7 @@ class TrendMagicBot:
         self.scan_pairs        = scan_pairs
         self.scan_symbols      = list(scan_symbols) if scan_symbols else []
         self.log               = log_callback or (lambda level, msg: None)
+        self._db               = db_client
         self._running          = False
         self._exchange         = None
 
@@ -146,6 +149,7 @@ class TrendMagicBot:
         self._peak_price:         float | None = None
         self._entry_price:        float | None = None
         self._in_long:            bool  | None = None
+        self._position_group_id:  str   | None = None
         self._trailing_activated: bool         = False
 
     # ── Exchange init ─────────────────────────────────────────────────────────
@@ -762,6 +766,16 @@ class TrendMagicBot:
         pair_st["in_long"]     = is_long
         pair_st["entry_price"] = entry_px
         pair_st["peak_price"]  = entry_px
+        if self._db is not None:
+            try:
+                pair_st["position_group_id"] = await create_position_group(
+                    self._db, wallet_address=self.master_address, coin=coin,
+                    dex=self.dex, side="long" if is_long else "short",
+                    entry_price=entry_px, source_type="bot", bot_id=None,
+                )
+            except Exception as e:
+                self.log("warning", f"[{coin}] position_group creation failed: {e}")
+                pair_st["position_group_id"] = None
 
         close_buy  = not is_long
         current_sz = round_size(abs(real_pos["szi"]), sz_dec)
@@ -858,6 +872,12 @@ class TrendMagicBot:
                 pair_st["entry_price"]         = None
                 pair_st["in_long"]             = None
                 pair_st["position_size"]       = None
+                if pair_st.get("position_group_id") is not None and self._db is not None:
+                    try:
+                        await close_position_group(self._db, pair_st["position_group_id"])
+                    except Exception as e:
+                        self.log("warning", f"[{coin}] position_group close failed: {e}")
+                    pair_st["position_group_id"] = None
 
                 if "long" in self.sides and long_signal:
                     self.log("info", f"[{coin}] Long signal — entering")
@@ -979,6 +999,12 @@ class TrendMagicBot:
                     pair_st["entry_price"]         = None
                     pair_st["in_long"]             = None
                     pair_st["position_size"]       = None
+                    if pair_st.get("position_group_id") is not None and self._db is not None:
+                        try:
+                            await close_position_group(self._db, pair_st["position_group_id"])
+                        except Exception as e:
+                            self.log("warning", f"[{coin}] position_group close failed: {e}")
+                        pair_st["position_group_id"] = None
 
     # ── Scanner main loop ─────────────────────────────────────────────────────
 
@@ -1019,6 +1045,7 @@ class TrendMagicBot:
                 "sl_oid":             None,
                 "trailing_activated": False,
                 "position_size":      None,
+                "position_group_id":  None,
             }
 
         # Parallel: fetch sz_decimals + set leverage for every pair
@@ -1085,6 +1112,16 @@ class TrendMagicBot:
         self._entry_price = entry_px
         self._peak_price  = entry_px
         self._in_long     = is_long
+        if self._db is not None:
+            try:
+                self._position_group_id = await create_position_group(
+                    self._db, wallet_address=self.master_address, coin=self.coin,
+                    dex=self.dex, side="long" if is_long else "short",
+                    entry_price=entry_px, source_type="bot", bot_id=None,
+                )
+            except Exception as e:
+                self.log("warning", f"position_group creation failed: {e}")
+                self._position_group_id = None
 
         close_buy  = not is_long
         current_sz = round_size(abs(real_pos["szi"]), self.sz_decimals)
@@ -1203,6 +1240,12 @@ class TrendMagicBot:
                     self._peak_price         = None
                     self._entry_price        = None
                     self._in_long            = None
+                    if self._position_group_id is not None and self._db is not None:
+                        try:
+                            await close_position_group(self._db, self._position_group_id)
+                        except Exception as e:
+                            self.log("warning", f"position_group close failed: {e}")
+                        self._position_group_id = None
 
                     if "long" in self.sides and long_signal:
                         self.log("info", "Long signal — entering position")
@@ -1301,6 +1344,12 @@ class TrendMagicBot:
                         self._peak_price         = None
                         self._entry_price        = None
                         self._in_long            = None
+                        if self._position_group_id is not None and self._db is not None:
+                            try:
+                                await close_position_group(self._db, self._position_group_id)
+                            except Exception as e:
+                                self.log("warning", f"position_group close failed: {e}")
+                            self._position_group_id = None
 
             except asyncio.CancelledError:
                 self.log("info", "Bot cancelled — cleaning up...")
