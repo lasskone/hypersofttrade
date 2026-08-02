@@ -318,6 +318,22 @@ async def close_position(body: ClosePositionRequest):
         print(f"[close_position] ERROR body={body} exc={exc}\n{tb}")
         raise HTTPException(status_code=500, detail=f"{exc} | {tb}") from exc
     print(f"[close_position] FULL RESULT: {result_data}")
+    # Cancel any waiting/active trailing stops for this wallet+coin — the position
+    # they were tracking no longer exists (or has changed size after a partial close).
+    now_ts = datetime.now(timezone.utc).isoformat()
+    existing_ts = (
+        db.table("trailing_stops")
+        .select("id")
+        .ilike("wallet_address", body.wallet_address)
+        .eq("coin", body.coin)
+        .in_("status", ["waiting", "active"])
+        .execute()
+    )
+    for rec in (existing_ts.data or []):
+        db.table("trailing_stops").update({
+            "status": "cancelled",
+            "updated_at": now_ts,
+        }).eq("id", rec["id"]).execute()
     return {"success": True, "result": result_data}
 
 

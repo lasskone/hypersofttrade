@@ -295,6 +295,18 @@ async def _check_trailing_stops() -> None:
 
         try:
             if status == "waiting":
+                # Safety net: expire orphaned waiting rows even if activation is never reached
+                # (e.g. position was closed via SL hit, liquidation, or manual close).
+                positions = await _get_positions(wallet, dex)
+                sz = positions.get(coin) or positions.get(coin.split(":")[-1] if ":" in coin else coin)
+                if not sz:
+                    db.table("trailing_stops").update({
+                        "status": "cancelled",
+                        "updated_at": now,
+                    }).eq("id", ts_id).execute()
+                    print(f"[trailing_stops] ts_id={ts_id} WAITING row cancelled — no open position found for {coin}", flush=True)
+                    continue
+
                 activated = (is_long and cur_price >= activation_px) or (not is_long and cur_price <= activation_px)
                 if not activated:
                     continue
