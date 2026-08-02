@@ -418,6 +418,8 @@ class BotManager:
             scan_pairs=config.get("scan_pairs", False),
             scan_symbols=config.get("scan_symbols") or [],
             log_callback=lambda level, msg: self._add_log(bot_id, level, msg),
+            db_client=_supabase(),
+            bot_id=bot_id,
             **tm_optional_kwargs,
         )
         self._add_log(bot_id, "info", (

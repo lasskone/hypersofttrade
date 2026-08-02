@@ -105,6 +105,7 @@ class TrendMagicBot:
         scan_symbols:       list              = [],
         log_callback=None,
         db_client=None,
+        bot_id=None,
     ):
         self.private_key       = private_key
         self.master_address    = master_address
@@ -130,6 +131,7 @@ class TrendMagicBot:
         self.scan_symbols      = list(scan_symbols) if scan_symbols else []
         self.log               = log_callback or (lambda level, msg: None)
         self._db               = db_client
+        self.bot_id            = bot_id
         self._running          = False
         self._exchange         = None
 
@@ -771,7 +773,7 @@ class TrendMagicBot:
                 pair_st["position_group_id"] = await create_position_group(
                     self._db, wallet_address=self.master_address, coin=coin,
                     dex=self.dex, side="long" if is_long else "short",
-                    entry_price=entry_px, source_type="bot", bot_id=None,
+                    entry_price=entry_px, source_type="bot", bot_id=self.bot_id,
                 )
             except Exception as e:
                 self.log("warning", f"[{coin}] position_group creation failed: {e}")
@@ -1117,7 +1119,7 @@ class TrendMagicBot:
                 self._position_group_id = await create_position_group(
                     self._db, wallet_address=self.master_address, coin=self.coin,
                     dex=self.dex, side="long" if is_long else "short",
-                    entry_price=entry_px, source_type="bot", bot_id=None,
+                    entry_price=entry_px, source_type="bot", bot_id=self.bot_id,
                 )
             except Exception as e:
                 self.log("warning", f"position_group creation failed: {e}")
