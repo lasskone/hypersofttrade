@@ -102,10 +102,12 @@ async def admin_list_all_bots():
 # ---------------------------------------------------------------------------
 @app.post("/backtest", tags=["backtest"])
 async def run_backtest(body: dict):
-    from services.backtest_engine import run_trend_magic_backtest
     from services.hyperliquid_service import get_candles
 
-    bot_type = body.get("bot_type", "trend_magic")
+    bot_type = body.get("bot_type")
+    if not bot_type:
+        raise HTTPException(status_code=400, detail="bot_type is required")
+
     symbol = body.get("symbol", "BTC")
     dex = body.get("dex", "")
     interval = body.get("interval", "1h")
@@ -116,19 +118,10 @@ async def run_backtest(body: dict):
 
     coin = f"{dex}:{symbol}" if dex else symbol
 
-    # Trend Magic needs 1m candles for OHLC-accurate simulation
-    if bot_type == "trend_magic":
-        date_range_days = int(body.get("date_range_days", 14))
-        fetch_interval  = "1m"
-        fetch_limit     = date_range_days * 24 * 60   # up to 20,160 candles
-        fetch_timeout   = 30.0
-    else:
-        fetch_interval = interval
-        fetch_limit    = limit
-        fetch_timeout  = 10.0
-
     try:
-        candles = await asyncio.wait_for(get_candles(coin, fetch_interval, fetch_limit), timeout=fetch_timeout)
+        candles = await asyncio.wait_for(
+            get_candles(coin, interval, limit), timeout=10.0
+        )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=503, detail="Candle fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
@@ -137,28 +130,4 @@ async def run_backtest(body: dict):
     if len(candles) < 10:
         raise HTTPException(status_code=400, detail="Not enough historical data")
 
-    try:
-        if bot_type == "trend_magic":
-            result = run_trend_magic_backtest(
-                candles_1m=candles,
-                allocation=allocation,
-                rsi_period=int(body.get("rsi_period", 14)),
-                rsi_overbought=float(body.get("rsi_overbought", 70.0)),
-                rsi_oversold=float(body.get("rsi_oversold", 30.0)),
-                ema_period=int(body.get("ema_period", 200)),
-                dca_level_1_pct=float(body.get("dca_level_1_pct", 7.0)),
-                dca_level_2_pct=float(body.get("dca_level_2_pct", 14.0)),
-                tp_pct=float(body.get("tp_pct", 5.0)),
-                trailing_stop_pct=float(body.get("trailing_stop_pct", 1.0)),
-                leverage=int(body.get("leverage", 1)),
-                sides=body.get("sides") or ["long", "short"],
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    result["symbol"] = coin
-    result["interval"] = interval
-    result["bot_type"] = bot_type
-    return result
+    raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
