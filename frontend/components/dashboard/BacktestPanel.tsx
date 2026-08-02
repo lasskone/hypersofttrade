@@ -34,91 +34,6 @@ const PERIOD_PRESETS = [
 ]
 
 const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: string; color: string; fields: { key: string; label: string; default: number; hint: string }[] }> = {
-  grid: {
-    label: 'Grid Bot',
-    emoji: '⚡',
-    description: 'Fixed price levels, buys dips / sells rallies',
-    color: '#00d4aa',
-    fields: [
-      { key: 'levels', label: 'Grid Levels', default: 10, hint: 'Number of buy/sell order pairs. More levels = more trades, smaller profit per trade.' },
-      { key: 'range_pct', label: 'Price Range %', default: 5, hint: 'Total price range around entry. e.g. 5% on BTC at $60k = $57k–$63k grid.' },
-      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 10, hint: 'Exit all positions if portfolio drops by this %. Set 0 to disable.' },
-      { key: 'take_profit_pct', label: 'Take Profit %', default: 30, hint: 'Stop bot and lock profits if portfolio gains this %. Set 0 to disable.' },
-    ],
-  },
-  envelope_dca: {
-    label: 'Envelope DCA Bot',
-    emoji: '📈',
-    description: 'SMA envelope with multi-level DCA entries',
-    color: '#8b5cf6',
-    fields: [
-      { key: 'ma_period', label: 'MA Period', default: 20, hint: 'Moving average window. Higher = smoother signal, fewer trades.' },
-      { key: 'envelope_1_pct', label: 'Envelope 1 %', default: 7, hint: 'First buy level below MA. e.g. 7 = buy when price is 7% under MA.' },
-      { key: 'envelope_2_pct', label: 'Envelope 2 %', default: 10, hint: 'Second buy level. Set 0 to disable this level.' },
-      { key: 'envelope_3_pct', label: 'Envelope 3 %', default: 15, hint: 'Third buy level. Set 0 to disable this level.' },
-      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 10, hint: 'Exit all positions if portfolio drops by this %. Set 0 to disable.' },
-      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage. Amplifies both gains and losses.' },
-    ],
-  },
-  bb_rsi: {
-    label: 'BB + RSI Bot',
-    emoji: '🎯',
-    description: 'Mean reversion on Bollinger Band breakouts',
-    color: '#3b82f6',
-    fields: [
-      { key: 'bb_period', label: 'BB Period', default: 20, hint: 'Bollinger Band period' },
-      { key: 'bb_std', label: 'BB Std Dev', default: 2.0, hint: '2.0 = standard bands' },
-      { key: 'rsi_period', label: 'RSI Period', default: 14, hint: 'RSI calculation period' },
-      { key: 'rsi_oversold', label: 'RSI Oversold', default: 30, hint: 'Long entry below this' },
-      { key: 'rsi_overbought', label: 'RSI Overbought', default: 70, hint: 'Short entry above this' },
-      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 5, hint: '0 = disabled' },
-      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage' },
-    ],
-  },
-  ema_cross: {
-    label: 'EMA Cross Bot',
-    emoji: '✂️',
-    description: 'Golden/death cross trend following',
-    color: '#10b981',
-    fields: [
-      { key: 'ema_fast', label: 'Fast EMA', default: 9, hint: 'Fast EMA period' },
-      { key: 'ema_slow', label: 'Slow EMA', default: 21, hint: 'Slow EMA period (must be > fast)' },
-      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 5, hint: '0 = disabled' },
-      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage' },
-    ],
-  },
-  passivbot_dca: {
-    label: 'Passivbot DCA',
-    emoji: '🤖',
-    description: 'Martingale DCA grid, contrarian market maker',
-    color: '#ec4899',
-    fields: [
-      { key: 'wallet_exposure_limit', label: 'Wallet Exposure Limit', default: 0.1, hint: 'Max fraction of balance to expose. 0.1 = 10%' },
-      { key: 'entry_initial_qty_pct', label: 'Initial Entry Qty %', default: 0.01, hint: 'First entry size as fraction of allocation. 0.01 = 1%' },
-      { key: 'double_down_factor', label: 'Double Down Factor', default: 0.9, hint: 'DCA size multiplier. 0.9 = each DCA adds 90% of current position' },
-      { key: 'entry_grid_spacing_pct', label: 'Grid Spacing %', default: 0.003, hint: 'Base spacing between entries. 0.003 = 0.3%' },
-      { key: 'entry_grid_spacing_we_weight', label: 'Spacing Exposure Weight', default: 0.5, hint: 'How much wallet exposure widens spacing. 0 = fixed, 1 = fully dynamic' },
-      { key: 'close_grid_markup_start', label: 'Close Markup Start', default: 0.001, hint: 'First TP level above avg entry. 0.001 = 0.1%' },
-      { key: 'close_grid_markup_end', label: 'Close Markup End', default: 0.003, hint: 'Last TP level. 0.003 = 0.3%' },
-      { key: 'close_grid_qty_pct', label: 'Close Qty per TP %', default: 0.05, hint: 'Fraction of position to close per TP. 0.05 = 5% per level' },
-    ],
-  },
-  golden_trap: {
-    label: 'Golden Trap',
-    emoji: '🪤',
-    description: 'Fibonacci DCA + MA200 trend filter + trailing stop',
-    color: '#f97316',
-    fields: [
-      { key: 'ma_period', label: 'MA Period', default: 5, hint: 'Moving average window for envelope midline. Lower = more reactive.' },
-      { key: 'envelope_1_pct', label: 'Envelope 1 %', default: 7, hint: 'First DCA level below MA. Smallest position (Fibonacci weighted).' },
-      { key: 'envelope_2_pct', label: 'Envelope 2 %', default: 10, hint: 'Second DCA level. Medium position.' },
-      { key: 'envelope_3_pct', label: 'Envelope 3 %', default: 15, hint: 'Third DCA level. Largest position (deepest dip).' },
-      { key: 'stop_loss_pct', label: 'Stop Loss %', default: 10, hint: 'Hard stop loss below entry. 0 = disabled.' },
-      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage. Amplifies both gains and losses.' },
-      { key: 'trailing_stop_pct', label: 'Trailing Stop %', default: 2.0, hint: 'Trailing stop distance from peak price (Fixed mode).' },
-      { key: 'trailing_stop_atr_mult', label: 'ATR Multiplier', default: 1.5, hint: 'ATR14 multiplier for trailing stop distance (ATR mode).' },
-    ],
-  },
   trend_magic: {
     label: 'Trend Magic',
     emoji: '🔮',
@@ -250,11 +165,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const [marketSearch, setMarketSearch] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const [botType, setBotType] = useState('grid')
-  const [pbDirection, setPbDirection] = useState('long')
-  const [envelopeSides, setEnvelopeSides] = useState<string[]>(['long'])
-  const [gtSides, setGtSides] = useState<string[]>(['long'])
-  const [gtTrailingType, setGtTrailingType] = useState('fixed')
+  const [botType, setBotType] = useState('trend_magic')
   const [tmSides, setTmSides] = useState<string[]>(['long', 'short'])
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
@@ -396,9 +307,6 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     if (!selectedMarket) { setError('Please select a market'); return }
     const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
-    if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
-    if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
-    if (botType === 'golden_trap') { fieldParams['sides'] = gtSides; fieldParams['trailing_stop_type'] = gtTrailingType }
     if (botType === 'trend_magic') fieldParams['sides'] = tmSides
     await runBacktestWithConfig({
       market: selectedMarket,
@@ -415,9 +323,6 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const buildFullConfig = (): SavedBacktestConfig => {
     const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
-    if (botType === 'passivbot_dca') fieldParams['direction'] = pbDirection
-    if (botType === 'envelope_dca') fieldParams['sides'] = envelopeSides
-    if (botType === 'golden_trap') { fieldParams['sides'] = gtSides; fieldParams['trailing_stop_type'] = gtTrailingType }
     if (botType === 'trend_magic') fieldParams['sides'] = tmSides
     return {
       bot_type: botType,
@@ -506,16 +411,6 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     setActivePeriod(cfg.active_period ?? '')
     setUseCustomDates(!cfg.active_period)
     const savedParams = cfg.params ?? {}
-    if (cfg.bot_type === 'passivbot_dca' && savedParams['direction']) {
-      setPbDirection(String(savedParams['direction']))
-    }
-    if (cfg.bot_type === 'envelope_dca' && savedParams['sides']) {
-      setEnvelopeSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long'])
-    }
-    if (cfg.bot_type === 'golden_trap') {
-      setGtSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long'])
-      setGtTrailingType(String(savedParams['trailing_stop_type'] ?? 'fixed'))
-    }
     if (cfg.bot_type === 'trend_magic' && savedParams['sides']) {
       setTmSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long', 'short'])
     }
@@ -721,96 +616,6 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
             {/* Strategy params */}
             <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
               <label style={{ ...s.label, marginBottom: 10 }}>STRATEGY PARAMETERS</label>
-              {botType === 'passivbot_dca' && (
-                <div style={{ marginBottom: 12 }}>
-                  <label style={s.label}>DIRECTION</label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {['long', 'short'].map(dir => (
-                      <button key={dir} type="button" onClick={() => setPbDirection(dir)}
-                        style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid',
-                          borderColor: pbDirection === dir ? '#ec4899' : '#1a1a2e',
-                          backgroundColor: pbDirection === dir ? '#ec489918' : '#0a0a0f',
-                          color: pbDirection === dir ? '#ec4899' : '#6b7280',
-                        }}>
-                        {dir.charAt(0).toUpperCase() + dir.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys dips below price. Short: sells rallies above price.</p>
-                </div>
-              )}
-              {botType === 'envelope_dca' && (
-                <div style={{ marginBottom: 12 }}>
-                  <label style={s.label}>SIDES</label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {([
-                      { label: 'Long only', value: ['long'] },
-                      { label: 'Short only', value: ['short'] },
-                      { label: 'Both', value: ['long', 'short'] },
-                    ] as const).map(opt => {
-                      const active = JSON.stringify(envelopeSides.slice().sort()) === JSON.stringify(opt.value.slice().sort())
-                      return (
-                        <button key={opt.label} type="button" onClick={() => setEnvelopeSides([...opt.value])}
-                          style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
-                            borderColor: active ? '#8b5cf6' : '#1a1a2e',
-                            backgroundColor: active ? '#8b5cf618' : '#0a0a0f',
-                            color: active ? '#8b5cf6' : '#6b7280',
-                          }}>
-                          {opt.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: buys envelope dips. Short: sells envelope rallies.</p>
-                </div>
-              )}
-              {botType === 'golden_trap' && (
-                <>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={s.label}>SIDES</label>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {([
-                        { label: 'Long only', value: ['long'] },
-                        { label: 'Short only', value: ['short'] },
-                        { label: 'Both', value: ['long', 'short'] },
-                      ] as const).map(opt => {
-                        const active = JSON.stringify(gtSides.slice().sort()) === JSON.stringify(opt.value.slice().sort())
-                        return (
-                          <button key={opt.label} type="button" onClick={() => setGtSides([...opt.value])}
-                            style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
-                              borderColor: active ? '#f97316' : '#1a1a2e',
-                              backgroundColor: active ? '#f9731618' : '#0a0a0f',
-                              color: active ? '#f97316' : '#6b7280',
-                            }}>
-                            {opt.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>MA200 trend filter: long above MA200, short below, both always active.</p>
-                  </div>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={s.label}>TRAILING STOP TYPE</label>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {([
-                        { label: 'Fixed %', value: 'fixed' },
-                        { label: 'ATR', value: 'atr' },
-                        { label: 'None', value: 'none' },
-                      ] as const).map(opt => (
-                        <button key={opt.value} type="button" onClick={() => setGtTrailingType(opt.value)}
-                          style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
-                            borderColor: gtTrailingType === opt.value ? '#f97316' : '#1a1a2e',
-                            backgroundColor: gtTrailingType === opt.value ? '#f9731618' : '#0a0a0f',
-                            color: gtTrailingType === opt.value ? '#f97316' : '#6b7280',
-                          }}>
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                    <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Fixed: trails by % from peak. ATR: trails by ATR14 × multiplier. None: hard SL only.</p>
-                  </div>
-                </>
-              )}
               {botType === 'trend_magic' && (
                 <div style={{ marginBottom: 12 }}>
                   <label style={s.label}>SIDES</label>
@@ -855,7 +660,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
                 opacity: (loading || !selectedMarket) ? 0.5 : 1,
                 transition: 'opacity 0.2s',
                 background: (loading || !selectedMarket) ? '#1a1a2e' : config.color,
-                color: (loading || !selectedMarket) ? '#6b7280' : (botType === 'grid' ? '#000' : '#fff'),
+                color: (loading || !selectedMarket) ? '#6b7280' : ('#fff'),
               }}>
               {loading ? '⏳ Running simulation...' : (!selectedMarket ? 'Select a market first' : '▶  Run Backtest')}
             </button>
@@ -923,7 +728,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
                       </button>
                     )}
                     <button onClick={() => setShowDeploy(true)}
-                      style={{ padding: '10px 20px', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap', background: config.color, color: botType === 'grid' ? '#000' : '#fff' }}>
+                      style={{ padding: '10px 20px', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap', background: config.color, color: '#fff' }}>
                       Deploy Strategy →
                     </button>
                   </div>
@@ -1059,7 +864,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
               </button>
               <button onClick={handleSaveConfirm} disabled={saving || !saveName.trim()}
                 style={{ flex: 2, padding: '10px 0', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: saving ? 'wait' : 'pointer', border: 'none',
-                  background: config.color, color: botType === 'grid' ? '#000' : '#fff', opacity: (saving || !saveName.trim()) ? 0.6 : 1 }}>
+                  background: config.color, color: '#fff', opacity: (saving || !saveName.trim()) ? 0.6 : 1 }}>
                 {saving ? 'Saving...' : 'Save Configuration'}
               </button>
             </div>

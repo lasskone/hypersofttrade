@@ -6,21 +6,11 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 // ── constants ────────────────────────────────────────────────────────────────
 
 const BOT_TYPE_LABELS: Record<string, string> = {
-  grid:          'Grid Bot',
-  envelope_dca:  'Envelope DCA',
-  funding_rate:  'Funding Rate',
-  bb_rsi:        'BB + RSI',
-  ema_cross:     'EMA Cross',
-  passivbot_dca: 'Passivbot DCA',
+  trend_magic: 'Trend Magic',
 }
 
 const BOT_TYPE_COLORS: Record<string, string> = {
-  grid:          '#00d4aa',
-  envelope_dca:  '#8b5cf6',
-  funding_rate:  '#f59e0b',
-  bb_rsi:        '#3b82f6',
-  ema_cross:     '#10b981',
-  passivbot_dca: '#ec4899',
+  trend_magic: '#8b5cf6',
 }
 
 // Keys shown in the header already — skip in config grid
