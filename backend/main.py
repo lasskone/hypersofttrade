@@ -105,7 +105,7 @@ async def run_backtest(body: dict):
     from services.backtest_engine import run_trend_magic_backtest
     from services.hyperliquid_service import get_candles
 
-    bot_type = body.get("bot_type", "grid")
+    bot_type = body.get("bot_type", "trend_magic")
     symbol = body.get("symbol", "BTC")
     dex = body.get("dex", "")
     interval = body.get("interval", "1h")
