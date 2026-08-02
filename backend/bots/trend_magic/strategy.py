@@ -22,7 +22,7 @@ import httpx
 
 INFO_ENDPOINT = "https://api.hyperliquid.xyz/info"
 
-from bots.envelope.strategy import round_price, round_size
+from bots.shared_utils import round_price, round_size
 from services.position_groups import create_position_group, close_position_group
 
 _FIB_WEIGHTS = [0.15, 0.35, 0.50]   # [initial entry, DCA1, DCA2]
