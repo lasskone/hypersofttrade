@@ -34,23 +34,6 @@ const PERIOD_PRESETS = [
 ]
 
 const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: string; color: string; fields: { key: string; label: string; default: number; hint: string }[] }> = {
-  trend_magic: {
-    label: 'Trend Magic',
-    emoji: '🔮',
-    description: 'RSI + EMA200 trend filter with Fibonacci DCA and trailing stop',
-    color: '#8b5cf6',
-    fields: [
-      { key: 'rsi_period', label: 'RSI Period', default: 14, hint: 'RSI calculation period. Default 14.' },
-      { key: 'rsi_overbought', label: 'RSI Overbought', default: 70, hint: 'Long signal when RSI > this AND price > EMA.' },
-      { key: 'rsi_oversold', label: 'RSI Oversold', default: 30, hint: 'Short signal when RSI < this AND price < EMA.' },
-      { key: 'ema_period', label: 'EMA Period', default: 200, hint: 'EMA trend filter period. Default 200.' },
-      { key: 'dca_level_1_pct', label: 'DCA Level 1 %', default: 7, hint: 'First DCA % below/above entry (35% of allocation).' },
-      { key: 'dca_level_2_pct', label: 'DCA Level 2 %', default: 14, hint: 'Second DCA % below/above entry (50% of allocation).' },
-      { key: 'tp_pct', label: 'Take Profit %', default: 5, hint: 'TP % above/below average entry.' },
-      { key: 'trailing_stop_pct', label: 'Trailing Stop %', default: 1.0, hint: 'Trailing stop % below/above peak price.' },
-      { key: 'leverage', label: 'Leverage', default: 1, hint: '1 = no leverage. Amplifies both gains and losses.' },
-    ],
-  },
 }
 
 interface BacktestResult {
@@ -165,8 +148,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const [marketSearch, setMarketSearch] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const [botType, setBotType] = useState('trend_magic')
-  const [tmSides, setTmSides] = useState<string[]>(['long', 'short'])
+  const [botType, setBotType] = useState('')
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
   const [params, setParams] = useState<Record<string, number>>({})
@@ -304,10 +286,10 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   }
 
   const handleRun = async () => {
+    if (!config) { setError('Please select a strategy'); return }
     if (!selectedMarket) { setError('Please select a market'); return }
     const fieldParams: Record<string, any> = {}
     config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
-    if (botType === 'trend_magic') fieldParams['sides'] = tmSides
     await runBacktestWithConfig({
       market: selectedMarket,
       bot_type: botType,
@@ -322,8 +304,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   // ── Build the full config snapshot to save ──
   const buildFullConfig = (): SavedBacktestConfig => {
     const fieldParams: Record<string, any> = {}
-    config.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
-    if (botType === 'trend_magic') fieldParams['sides'] = tmSides
+    config?.fields.forEach(f => { fieldParams[f.key] = getParam(f.key, f.default) })
     return {
       bot_type: botType,
       symbol: selectedMarket?.name ?? '',
@@ -411,9 +392,6 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
     setActivePeriod(cfg.active_period ?? '')
     setUseCustomDates(!cfg.active_period)
     const savedParams = cfg.params ?? {}
-    if (cfg.bot_type === 'trend_magic' && savedParams['sides']) {
-      setTmSides(Array.isArray(savedParams['sides']) ? savedParams['sides'] : ['long', 'short'])
-    }
     setParams(savedParams)
 
     // Switch to run tab
@@ -479,25 +457,31 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
           {/* Strategy selector — full width card grid */}
           <div>
             <label style={s.label}>STRATEGY</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))', gap: 8 }}>
-              {Object.entries(BOT_CONFIGS).map(([k, v]) => (
-                <button key={k} onClick={() => { setBotType(k); setResult(null) }}
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '12px 14px', borderRadius: 8, cursor: 'pointer', border: '1px solid', textAlign: 'left', transition: 'all 0.15s',
-                    borderColor: botType === k ? v.color : '#1a1a2e',
-                    background: botType === k ? v.color + '14' : '#0d0d14',
-                  }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 18, lineHeight: 1 }}>{v.emoji}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: botType === k ? v.color : 'white' }}>{v.label}</span>
-                  </div>
-                  <p style={{ fontSize: 11, color: botType === k ? v.color + 'cc' : '#6b7280', margin: 0, lineHeight: 1.4 }}>{v.description}</p>
-                </button>
-              ))}
-            </div>
+            {Object.keys(BOT_CONFIGS).length === 0 ? (
+              <div style={{ padding: '20px 0', textAlign: 'center' as const }}>
+                <p style={{ fontSize: 13, color: '#6b7280' }}>No backtest strategies available yet — check back soon</p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))', gap: 8 }}>
+                {Object.entries(BOT_CONFIGS).map(([k, v]) => (
+                  <button key={k} onClick={() => { setBotType(k); setResult(null) }}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '12px 14px', borderRadius: 8, cursor: 'pointer', border: '1px solid', textAlign: 'left', transition: 'all 0.15s',
+                      borderColor: botType === k ? v.color : '#1a1a2e',
+                      background: botType === k ? v.color + '14' : '#0d0d14',
+                    }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>{v.emoji}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: botType === k ? v.color : 'white' }}>{v.label}</span>
+                    </div>
+                    <p style={{ fontSize: 11, color: botType === k ? v.color + 'cc' : '#6b7280', margin: 0, lineHeight: 1.4 }}>{v.description}</p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Config + Results two-column grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
+          {config && <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
 
           {/* LEFT — Config */}
           <div style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -616,31 +600,6 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
             {/* Strategy params */}
             <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
               <label style={{ ...s.label, marginBottom: 10 }}>STRATEGY PARAMETERS</label>
-              {botType === 'trend_magic' && (
-                <div style={{ marginBottom: 12 }}>
-                  <label style={s.label}>SIDES</label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {([
-                      { label: 'Long only', value: ['long'] },
-                      { label: 'Short only', value: ['short'] },
-                      { label: 'Both', value: ['long', 'short'] },
-                    ] as const).map(opt => {
-                      const active = JSON.stringify(tmSides.slice().sort()) === JSON.stringify(opt.value.slice().sort())
-                      return (
-                        <button key={opt.label} type="button" onClick={() => setTmSides([...opt.value])}
-                          style={{ flex: 1, padding: '7px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid',
-                            borderColor: active ? '#8b5cf6' : '#1a1a2e',
-                            backgroundColor: active ? '#8b5cf618' : '#0a0a0f',
-                            color: active ? '#8b5cf6' : '#6b7280',
-                          }}>
-                          {opt.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>Long: RSI &gt; overbought + price &gt; EMA. Short: RSI &lt; oversold + price &lt; EMA.</p>
-                </div>
-              )}
               {config.fields.map(f => (
                 <div key={f.key} style={{ marginBottom: 12 }}>
                   <label style={s.label}>{f.label.toUpperCase()}</label>
@@ -736,7 +695,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
               </div>
             )}
           </div>
-          </div>
+          </div>}
         </div>
       )}
 
@@ -864,7 +823,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
               </button>
               <button onClick={handleSaveConfirm} disabled={saving || !saveName.trim()}
                 style={{ flex: 2, padding: '10px 0', borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: saving ? 'wait' : 'pointer', border: 'none',
-                  background: config.color, color: '#fff', opacity: (saving || !saveName.trim()) ? 0.6 : 1 }}>
+                  background: config?.color ?? '#00d4aa', color: '#fff', opacity: (saving || !saveName.trim()) ? 0.6 : 1 }}>
                 {saving ? 'Saving...' : 'Save Configuration'}
               </button>
             </div>

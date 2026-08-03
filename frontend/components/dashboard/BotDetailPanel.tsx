@@ -6,11 +6,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 // ── constants ────────────────────────────────────────────────────────────────
 
 const BOT_TYPE_LABELS: Record<string, string> = {
-  trend_magic: 'Trend Magic',
 }
 
 const BOT_TYPE_COLORS: Record<string, string> = {
-  trend_magic: '#8b5cf6',
 }
 
 // Keys shown in the header already — skip in config grid
