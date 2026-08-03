@@ -209,10 +209,10 @@ def _trade_stats(fill_log: list[dict]) -> tuple[int, float, list[float]]:
 def _max_drawdown_pct(equity_curve: list[dict]) -> float:
     if not equity_curve:
         return 0.0
-    peak   = equity_curve[0]["equity"]
+    peak   = equity_curve[0]["value"]
     max_dd = 0.0
     for pt in equity_curve:
-        eq = pt["equity"]
+        eq = pt["value"]
         if eq > peak:
             peak = eq
         if peak > 0:
@@ -353,7 +353,7 @@ async def backtest_rsi_dca_grid(
         else:
             unrealized = 0.0
         equity = initial_equity + realized_pnl + unrealized
-        equity_curve.append({"time": candle["time"], "equity": equity})
+        equity_curve.append({"time": candle["time"], "value": equity})
 
         # 4. Set current_candle to close-price snapshot so IOC entries fill at
         #    signal-candle close (not the raw open, which would be look-ahead-free
@@ -402,13 +402,13 @@ async def backtest_rsi_dca_grid(
         bnh_pct = 0.0
 
     return {
-        "pnl_pct":         round(pnl_pct,       4),
-        "pnl_usd":         round(pnl_usd,        4),
-        "final_equity":    round(final_equity,   4),
-        "total_trades":    total_trades,
-        "win_rate":        round(win_rate,        4),
-        "max_drawdown_pct": round(max_dd_pct,    4),
-        "bnh_pct":         round(bnh_pct,         4),
-        "equity_curve":    equity_curve,
-        "candles_used":    len(candles_entry),
+        "pnl_pct":          round(pnl_pct,            4),
+        "pnl_usd":          round(pnl_usd,             4),
+        "final_equity":     round(final_equity,        4),
+        "total_trades":     total_trades,
+        "win_rate":         round(win_rate * 100.0,    2),   # returned as 0–100
+        "max_drawdown_pct": round(max_dd_pct,          4),
+        "bnh_pct":          round(bnh_pct,             4),
+        "equity_curve":     equity_curve,
+        "candles_used":     len(candles_entry),
     }

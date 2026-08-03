@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { CreateBotModal } from '@/components/dashboard/BotsPanel'
+import { RSI_DCA_FIELDS, RSI_DCA_META } from '@/lib/botFieldSchemas'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -34,6 +35,13 @@ const PERIOD_PRESETS = [
 ]
 
 const BOT_CONFIGS: Record<string, { label: string; emoji: string; description: string; color: string; fields: { key: string; label: string; default: number; hint: string }[] }> = {
+  rsi_dca: {
+    label:       RSI_DCA_META.name,
+    emoji:       RSI_DCA_META.emoji,
+    description: RSI_DCA_META.tagline,
+    color:       RSI_DCA_META.color,
+    fields:      RSI_DCA_FIELDS,
+  },
 }
 
 interface BacktestResult {

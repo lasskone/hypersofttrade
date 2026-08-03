@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { RSI_DCA_FIELDS, RSI_DCA_META, RSI_DCA_DEFAULTS, type BotField } from '@/lib/botFieldSchemas'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -8,9 +9,25 @@ const BOT_TYPES: Record<string, {
   howItWorks: string[]; bestFor: string; risk: string; riskColor: string;
   params: Record<string, { label: string; hint: string }>;
   minAllocation: number; color: string;
-}> = {}
+}> = {
+  rsi_dca: {
+    name:        RSI_DCA_META.name,
+    emoji:       RSI_DCA_META.emoji,
+    tagline:     RSI_DCA_META.tagline,
+    description: RSI_DCA_META.description,
+    howItWorks:  RSI_DCA_META.howItWorks,
+    bestFor:     RSI_DCA_META.bestFor,
+    risk:        RSI_DCA_META.risk,
+    riskColor:   RSI_DCA_META.riskColor,
+    minAllocation: RSI_DCA_META.minAllocation,
+    color:       RSI_DCA_META.color,
+    params:      Object.fromEntries(RSI_DCA_FIELDS.map(f => [f.key, { label: f.label, hint: f.hint }])),
+  },
+}
 
-const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {}
+const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
+  rsi_dca: RSI_DCA_DEFAULTS,
+}
 
 interface Bot {
   id: string
@@ -586,13 +603,40 @@ function MarketMultiSelect({
   )
 }
 
+// ── Shared helper: renders number inputs for every schema field ───────────────
+function renderSchemaFields(
+  fields: BotField[],
+  params: Record<string, number>,
+  setParams: React.Dispatch<React.SetStateAction<Record<string, number>>>,
+  inputStyle: React.CSSProperties,
+  labelStyle: React.CSSProperties,
+  skip: string[] = [],
+) {
+  return fields
+    .filter(f => !skip.includes(f.key))
+    .map(f => (
+      <div key={f.key}>
+        <label style={labelStyle}>{f.label.toUpperCase()}</label>
+        <input
+          style={inputStyle}
+          type="number"
+          value={params[f.key] ?? f.default}
+          onChange={e => setParams(p => ({ ...p, [f.key]: parseFloat(e.target.value) || 0 }))}
+        />
+        <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>{f.hint}</p>
+      </div>
+    ))
+}
+
 export function CreateBotModal({ walletAddress, botType, onClose, onCreated, initialSymbol, initialDex, initialParams, initialInterval }: { walletAddress: string, botType: string, onClose: () => void, onCreated: () => void, initialSymbol?: string, initialDex?: string, initialParams?: Record<string, number>, initialInterval?: string }) {
   const ip = initialParams ?? {}
+  const typeDefaults = BOT_TYPE_DEFAULTS[botType] ?? {}
   const [name, setName] = useState(`My ${BOT_TYPES[botType as keyof typeof BOT_TYPES]?.name ?? 'Bot'}`)
   const [symbol, setSymbol] = useState(initialSymbol ?? 'BTC')
   const [dex, setDex] = useState(initialDex ?? '')
   const [allocatedUsdc, setAllocatedUsdc] = useState('100')
-  const [leverage, setLeverage] = useState('1')
+  const [leverage, setLeverage] = useState(String(ip.leverage ?? typeDefaults.leverage ?? 1))
+  const [params, setParams] = useState<Record<string, number>>({ ...typeDefaults, ...ip })
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -639,6 +683,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             dex,
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
+            ...params,
           }
         })
       })
@@ -761,6 +806,21 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>1x = no leverage (spot-like). Higher leverage amplifies both gains and losses.</p>
           </div>
 
+          {/* Strategy-specific parameters from schema */}
+          {BOT_TYPES[botType] && (
+            <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
+              <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, letterSpacing: '0.05em', marginBottom: 12 }}>STRATEGY PARAMETERS</p>
+              {renderSchemaFields(
+                RSI_DCA_FIELDS,
+                params,
+                setParams,
+                inputStyle,
+                labelStyle,
+                ['leverage'],   // handled above by the dedicated button UI
+              )}
+            </div>
+          )}
+
           {error && <p className="text-xs text-red-400">{error}</p>}
 
           <button
@@ -783,7 +843,16 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [name, setName] = useState(bot.name ?? '')
   const [symbol, setSymbol] = useState<string>(String(cfg.symbol ?? bot.symbol ?? ''))
   const [dex, setDex] = useState<string>(String(cfg.dex ?? ''))
+  const [allocatedUsdc, setAllocatedUsdc] = useState(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? '100'))
   const [leverage, setLeverage] = useState(String(cfg.leverage ?? def.leverage ?? 1))
+  // Initialise strategy params from saved config, filling gaps with schema defaults
+  const [params, setParams] = useState<Record<string, number>>(() => {
+    const merged: Record<string, number> = { ...def }
+    for (const [k, v] of Object.entries(cfg)) {
+      if (typeof v === 'number') merged[k] = v
+    }
+    return merged
+  })
   const [markets, setMarkets] = useState<Market[]>([])
   const [marketsLoading, setMarketsLoading] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -821,8 +890,14 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
     setError('')
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
-      const config = {}
-      const finalConfig = { ...config, bot_type: bot.bot_type }
+      const finalConfig = {
+        bot_type:      bot.bot_type,
+        symbol,
+        dex,
+        allocated_usdc: parseFloat(allocatedUsdc),
+        leverage:       parseInt(leverage),
+        ...params,
+      }
       const res = await fetch(`${API_URL}/bots/${bot.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -929,7 +1004,41 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             </div>
           </div>
 
-          <p style={{ fontSize: 13, color: '#6b7280' }}>Unknown or unsupported bot type</p>
+          <div>
+            <label style={labelStyle}>Allocation (USDC)</label>
+            <input style={inputStyle} type="number" value={allocatedUsdc} onChange={e => setAllocatedUsdc(e.target.value)} />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Leverage</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, alignItems: 'center' }}>
+              {[1, 2, 3, 5, 10].map(lv => (
+                <button key={lv} type="button" onClick={() => setLeverage(String(lv))}
+                  style={{ padding: '6px 12px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                    background: leverage === String(lv) ? '#00d4aa22' : '#13131f',
+                    color: leverage === String(lv) ? '#00d4aa' : '#6b7280',
+                  }}>
+                  {lv}x
+                </button>
+              ))}
+              <input style={{ ...inputStyle, width: 70 }} type="number" min="1" max="50" value={leverage} onChange={e => setLeverage(e.target.value)} />
+            </div>
+          </div>
+
+          {/* Strategy-specific parameters from schema */}
+          {BOT_TYPES[bot.bot_type] && (
+            <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
+              <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, letterSpacing: '0.05em', marginBottom: 12 }}>STRATEGY PARAMETERS</p>
+              {renderSchemaFields(
+                RSI_DCA_FIELDS,
+                params,
+                setParams,
+                inputStyle,
+                labelStyle,
+                ['leverage'],
+              )}
+            </div>
+          )}
 
           {error && <p className="text-xs text-red-400">{error}</p>}
 

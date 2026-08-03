@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from core.config import settings
 from routers import account, bots
+from services.backtest_engine import backtest_rsi_dca_grid
 from routers.orders import router as market_router, orders_router
 from routers.saved_backtests import router as saved_backtests_router
 
@@ -129,5 +130,64 @@ async def run_backtest(body: dict):
 
     if len(candles) < 10:
         raise HTTPException(status_code=400, detail="Not enough historical data")
+
+    if bot_type == "rsi_dca":
+        from services.hyperliquid_meta import get_sz_decimals
+
+        date_range_days = int(body.get("date_range_days", 90))
+        ema_period      = int(body.get("ema_period", 200))
+
+        # Context candles are always 1h (EMA / ADX filter)
+        if interval == "1h":
+            candles_context = candles
+        else:
+            ctx_limit = min(date_range_days * 24 + ema_period + 50, 5000)
+            try:
+                candles_context = await asyncio.wait_for(
+                    get_candles(coin, "1h", ctx_limit), timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=503, detail="Context candle fetch timed out")
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"Failed to fetch context candles: {exc}")
+
+        sz_decimals = await get_sz_decimals(coin)
+
+        # sides / dca_pcts may come from the body or fall back to strategy defaults
+        sides    = body.get("sides", ["long", "short"])
+        dca_pcts = [float(p) for p in body.get("dca_pcts", [2.0, 4.0, 7.0, 12.0])]
+
+        result = await backtest_rsi_dca_grid(
+            candles_entry         = candles,
+            candles_context       = candles_context,
+            allocated_usdc        = allocation,
+            leverage              = int(body.get("leverage",              1)),
+            sz_decimals           = sz_decimals,
+            sides                 = sides,
+            ema_period            = ema_period,
+            use_adx_filter        = bool(int(body.get("use_adx_filter",  0))),
+            adx_period            = int(body.get("adx_period",           14)),
+            adx_threshold         = float(body.get("adx_threshold",      25)),
+            rsi_period            = int(body.get("rsi_period",           14)),
+            rsi_oversold          = float(body.get("rsi_oversold",       30)),
+            rsi_overbought        = float(body.get("rsi_overbought",     70)),
+            use_time_window       = bool(int(body.get("use_time_window", 0))),
+            window_start_utc_hour = int(body.get("window_start_utc_hour", 0)),
+            window_end_utc_hour   = int(body.get("window_end_utc_hour",  24)),
+            use_volume_filter     = bool(int(body.get("use_volume_filter", 0))),
+            volume_multiplier     = float(body.get("volume_multiplier",  1.3)),
+            volume_lookback       = int(body.get("volume_lookback",      20)),
+            dca_pcts              = dca_pcts,
+            max_exposure_pct      = float(body.get("max_exposure_pct",   100)),
+            sl_pct                = float(body.get("sl_pct",             3)),
+            tp_pct                = float(body.get("tp_pct",             1.5)),
+            cooldown_candles      = int(body.get("cooldown_candles",     3)),
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+
+        result.update(symbol=symbol, interval=interval, bot_type=bot_type)
+        return result
 
     raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
