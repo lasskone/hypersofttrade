@@ -173,6 +173,40 @@ async def get_portfolio(wallet_address: str):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/fills")
+async def get_fills(wallet_address: str):
+    """Return all Hyperliquid fills for *wallet_address*, sorted by time descending."""
+    logger.info(f"GET /account/fills wallet={wallet_address}")
+    try:
+        raw: list = await asyncio.wait_for(
+            hyperliquid_service.get_user_fills(wallet_address),
+            timeout=15.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"[fills] {wallet_address} timed out after 15s")
+        raise HTTPException(status_code=503, detail="Fills fetch timed out — upstream Hyperliquid API too slow")
+    except Exception as exc:
+        logger.error(f"[fills] {wallet_address} ERROR: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    fills = []
+    for f in raw if isinstance(raw, list) else []:
+        try:
+            fills.append({
+                **f,
+                "closedPnl": float(f.get("closedPnl") or 0),
+                "fee":       float(f.get("fee") or 0),
+                "px":        float(f.get("px") or 0),
+                "sz":        float(f.get("sz") or 0),
+                "time":      int(f.get("time") or 0),
+            })
+        except (TypeError, ValueError):
+            fills.append(f)
+
+    fills.sort(key=lambda f: f.get("time", 0), reverse=True)
+    return {"fills": fills}
+
+
 @router.post("/save-api-key")
 async def save_api_key(body: SaveApiKeyRequest):
     logger.info(f"POST /account/save-api-key wallet={body.wallet_address}")
