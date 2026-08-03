@@ -332,8 +332,8 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
                 border: `1px solid ${borderCol}`,
                 backgroundColor: bg,
                 cursor: hasTrades ? 'pointer' : 'default',
-                padding: '5px 4px 6px',
-                minHeight: 54,
+                padding: '6px 4px 8px',
+                minHeight: 72,
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -349,32 +349,32 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
                 e.currentTarget.style.borderColor = borderCol;
               }}
             >
-              {/* Day number — top-left */}
+              {/* Day number — top-left, clearly readable */}
               <span
                 style={{
                   position: 'absolute',
-                  top: 4,
-                  left: 5,
-                  fontSize: 9,
+                  top: 5,
+                  left: 7,
+                  fontSize: 13,
                   fontWeight: isToday ? 700 : 500,
-                  color: isToday ? '#00d4aa' : '#4b5563',
+                  color: isToday ? '#00d4aa' : '#9ca3af',
                   lineHeight: 1,
                 }}
               >
                 {day}
               </span>
 
-              {/* PnL — dominant, centered */}
+              {/* PnL — dominant, centered below day number */}
               {hasTrades && (
                 <span
                   style={{
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: 700,
                     color: pnlColor,
                     fontVariantNumeric: 'tabular-nums',
                     letterSpacing: '-0.01em',
                     lineHeight: 1,
-                    marginTop: 10,
+                    marginTop: 14,
                   }}
                 >
                   {fmtAmt(pnl ?? 0)}
@@ -542,41 +542,51 @@ function TradeTable({ fills, selectedDay, onClearDay }: TradeTableProps) {
             </table>
           </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div
-              className="flex items-center justify-between px-5 py-3 border-t"
-              style={{ borderColor: '#1a1a2e' }}
+          {/* Pagination — always visible when there are results */}
+          <div
+            className="flex items-center justify-between px-5 py-3 border-t"
+            style={{ borderColor: '#1a1a2e' }}
+          >
+            <button
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+              aria-label="Previous page"
+              style={{
+                background: 'none',
+                border: `1px solid ${page === 0 ? '#1a1a2e' : '#2a2a3e'}`,
+                borderRadius: 6,
+                color: page === 0 ? '#374151' : '#9ca3af',
+                cursor: page === 0 ? 'not-allowed' : 'pointer',
+                width: 28, height: 28,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16, lineHeight: 1, flexShrink: 0,
+                opacity: page === 0 ? 0.4 : 1,
+              }}
             >
-              <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-                style={{
-                  background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
-                  color: page === 0 ? '#374151' : '#9ca3af',
-                  cursor: page === 0 ? 'not-allowed' : 'pointer',
-                  padding: '4px 14px', fontSize: 12,
-                }}
-              >
-                ← Prev
-              </button>
-              <span style={{ color: '#6b7280', fontSize: 12 }}>
-                Page {page + 1} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page === totalPages - 1}
-                style={{
-                  background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
-                  color: page === totalPages - 1 ? '#374151' : '#9ca3af',
-                  cursor: page === totalPages - 1 ? 'not-allowed' : 'pointer',
-                  padding: '4px 14px', fontSize: 12,
-                }}
-              >
-                Next →
-              </button>
-            </div>
-          )}
+              ‹
+            </button>
+            <span style={{ color: '#6b7280', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+              Page {page + 1} of {totalPages}
+            </span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={page === totalPages - 1}
+              aria-label="Next page"
+              style={{
+                background: 'none',
+                border: `1px solid ${page === totalPages - 1 ? '#1a1a2e' : '#2a2a3e'}`,
+                borderRadius: 6,
+                color: page === totalPages - 1 ? '#374151' : '#9ca3af',
+                cursor: page === totalPages - 1 ? 'not-allowed' : 'pointer',
+                width: 28, height: 28,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16, lineHeight: 1, flexShrink: 0,
+                opacity: page === totalPages - 1 ? 0.4 : 1,
+              }}
+            >
+              ›
+            </button>
+          </div>
         </>
       )}
     </div>
@@ -645,7 +655,7 @@ export default function HistoryPanel({ walletAddress }: HistoryPanelProps) {
           </div>
           <div className="grid grid-cols-7 gap-1.5 pt-2">
             {Array.from({ length: 35 }).map((_, i) => (
-              <Skeleton key={i} h={54} />
+              <Skeleton key={i} h={72} />
             ))}
           </div>
         </div>
