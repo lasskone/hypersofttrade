@@ -10,7 +10,7 @@ const API_URL =
 
 interface Fill {
   coin: string;
-  side: string;   // "B" | "S"
+  side: string;   // "B" | "A"
   dir: string;    // "Open Long" | "Close Long" | "Open Short" | "Close Short"
   px: number;
   sz: number;
@@ -20,15 +20,26 @@ interface Fill {
   hash?: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Formatters ───────────────────────────────────────────────────────────────
 
-function fmt2(n: number) {
+/** Dollar amount with explicit sign: "+$1,284.50" / "-$342.10" / "$0.00" */
+function fmtAmt(n: number): string {
+  const abs = Math.abs(n).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  if (n > 0) return `+$${abs}`;
+  if (n < 0) return `-$${abs}`;
+  return `$${abs}`;
+}
+
+/** Plain unsigned number, 2 dp, thousands separator */
+function fmt2(n: number): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtPnl(n: number) {
-  const s = (n >= 0 ? '+' : '') + fmt2(n);
-  return { text: s, color: n > 0 ? '#10b981' : n < 0 ? '#ef4444' : '#9ca3af' };
+  return { text: fmtAmt(n), color: n > 0 ? '#10b981' : n < 0 ? '#ef4444' : '#9ca3af' };
 }
 
 function fmtTime(epochMs: number): string {
@@ -63,10 +74,10 @@ function localDay(epochMs: number): string {
 }
 
 const MONTHS = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ];
-const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const PAGE_SIZE = 50;
 
@@ -94,7 +105,7 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
 
-  // Aggregate pnl per local day
+  // Aggregate pnl per local day (data logic unchanged)
   const dayPnl = useMemo(() => {
     const map: Record<string, number> = {};
     for (const f of fills) {
@@ -107,7 +118,7 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
     return map;
   }, [fills, year, month]);
 
-  // Monthly summary
+  // Monthly summary (data logic unchanged)
   const monthlyTotals = useMemo(() => {
     let total = 0, profitable = 0, losing = 0;
     for (const v of Object.values(dayPnl)) {
@@ -118,7 +129,7 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
     return { total, profitable, losing };
   }, [dayPnl]);
 
-  const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+  const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   function prevMonth() {
@@ -138,114 +149,235 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
     ...Array(firstDay).fill(null),
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
-  // Pad to complete final row
   while (cells.length % 7 !== 0) cells.push(null);
 
   const todayStr = localDay(today.getTime());
 
   return (
     <div
-      className="rounded-xl border"
+      className="rounded-xl border overflow-hidden"
       style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
     >
-      {/* Header */}
+      {/* ── Toolbar ── */}
       <div
-        className="flex items-center justify-between px-5 py-4 border-b"
+        className="flex items-center justify-between px-5 py-3 border-b"
         style={{ borderColor: '#1a1a2e' }}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={prevMonth}
-            style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+            aria-label="Previous month"
+            style={{
+              background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
+              color: '#9ca3af', cursor: 'pointer', width: 28, height: 28,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 16, lineHeight: 1, flexShrink: 0,
+            }}
           >‹</button>
-          <span className="font-semibold text-white text-sm">
+
+          <span
+            style={{
+              fontWeight: 600, fontSize: 14, color: '#e5e7eb',
+              minWidth: 148, textAlign: 'center',
+            }}
+          >
             {MONTHS[month]} {year}
           </span>
+
           <button
             onClick={nextMonth}
-            style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+            aria-label="Next month"
+            style={{
+              background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
+              color: '#9ca3af', cursor: 'pointer', width: 28, height: 28,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 16, lineHeight: 1, flexShrink: 0,
+            }}
           >›</button>
+
           <button
             onClick={goToday}
             style={{
-              color: '#00d4aa', background: 'none', border: '1px solid #00d4aa',
-              borderRadius: 4, cursor: 'pointer', fontSize: 11, padding: '2px 8px',
+              background: 'none', border: '1px solid #00d4aa', borderRadius: 6,
+              color: '#00d4aa', cursor: 'pointer', fontSize: 11,
+              fontWeight: 600, padding: '3px 10px', lineHeight: '20px',
             }}
-          >Today</button>
-        </div>
-
-        {/* Monthly summary */}
-        <div className="flex items-center gap-4 text-xs">
-          <span style={{ color: '#9ca3af' }}>
-            Monthly PnL:{' '}
-            <span style={{ color: monthlyTotals.total >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>
-              {monthlyTotals.total >= 0 ? '+' : ''}{fmt2(monthlyTotals.total)} USDC
-            </span>
-          </span>
-          <span style={{ color: '#10b981' }}>{monthlyTotals.profitable} ▲</span>
-          <span style={{ color: '#ef4444' }}>{monthlyTotals.losing} ▼</span>
+          >
+            Today
+          </button>
         </div>
       </div>
 
-      {/* Day-of-week headers */}
-      <div className="grid grid-cols-7 px-4 pt-3 pb-1">
+      {/* ── Summary stats ── */}
+      <div
+        className="grid grid-cols-3 border-b"
+        style={{ borderColor: '#1a1a2e' }}
+      >
+        {/* Monthly PnL */}
+        <div className="px-5 py-4 border-r" style={{ borderColor: '#1a1a2e' }}>
+          <div
+            style={{
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#6b7280', marginBottom: 6,
+            }}
+          >
+            Monthly PnL
+          </div>
+          <div
+            style={{
+              fontSize: 18, fontWeight: 700,
+              color: monthlyTotals.total > 0 ? '#10b981' : monthlyTotals.total < 0 ? '#ef4444' : '#9ca3af',
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {fmtAmt(monthlyTotals.total)}
+          </div>
+        </div>
+
+        {/* Profitable days */}
+        <div className="px-5 py-4 border-r" style={{ borderColor: '#1a1a2e' }}>
+          <div
+            style={{
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#6b7280', marginBottom: 6,
+            }}
+          >
+            Profitable Days
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#10b981' }}>
+            {monthlyTotals.profitable}
+          </div>
+        </div>
+
+        {/* Losing days */}
+        <div className="px-5 py-4">
+          <div
+            style={{
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#6b7280', marginBottom: 6,
+            }}
+          >
+            Losing Days
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#ef4444' }}>
+            {monthlyTotals.losing}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Weekday header row ── */}
+      <div className="grid grid-cols-7 px-4 pt-4 pb-2">
         {DOW.map(d => (
-          <div key={d} style={{ textAlign: 'center', color: '#6b7280', fontSize: 11, fontWeight: 600 }}>
+          <div
+            key={d}
+            style={{
+              textAlign: 'center',
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: '#6b7280',
+            }}
+          >
             {d}
           </div>
         ))}
       </div>
 
-      {/* Calendar grid */}
-      <div className="grid grid-cols-7 gap-1 px-4 pb-4">
+      {/* ── Day grid ── */}
+      <div className="grid grid-cols-7 px-4 pb-4" style={{ gap: 6 }}>
         {cells.map((day, i) => {
           if (!day) return <div key={`empty-${i}`} />;
+
           const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
           const pnl = dayPnl[key];
           const hasTrades = pnl !== undefined;
           const isToday = key === todayStr;
           const isSelected = key === selectedDay;
 
+          // Color palette
           let bg = 'transparent';
-          let border = 'transparent';
-          if (isSelected) { bg = '#1e2d3d'; border = '#00d4aa'; }
-          else if (hasTrades && pnl > 0) { bg = 'rgba(16,185,129,0.08)'; border = 'rgba(16,185,129,0.25)'; }
-          else if (hasTrades && pnl < 0) { bg = 'rgba(239,68,68,0.08)'; border = 'rgba(239,68,68,0.25)'; }
-          else if (hasTrades) { bg = 'rgba(156,163,175,0.05)'; border = 'rgba(156,163,175,0.2)'; }
+          let borderCol = '#1a1a2e';
+          let hoverBorderCol = '#2a2a3e';
+          let pnlColor = '#9ca3af';
+
+          if (isSelected) {
+            bg = 'rgba(0,212,170,0.09)';
+            borderCol = '#00d4aa';
+            hoverBorderCol = '#00d4aa';
+          } else if (hasTrades && (pnl ?? 0) > 0) {
+            bg = 'rgba(16,185,129,0.08)';
+            borderCol = 'rgba(16,185,129,0.22)';
+            hoverBorderCol = 'rgba(16,185,129,0.55)';
+            pnlColor = '#10b981';
+          } else if (hasTrades && (pnl ?? 0) < 0) {
+            bg = 'rgba(239,68,68,0.08)';
+            borderCol = 'rgba(239,68,68,0.22)';
+            hoverBorderCol = 'rgba(239,68,68,0.55)';
+            pnlColor = '#ef4444';
+          } else if (hasTrades) {
+            bg = 'rgba(156,163,175,0.05)';
+            borderCol = 'rgba(156,163,175,0.18)';
+            hoverBorderCol = 'rgba(156,163,175,0.4)';
+          }
 
           return (
             <button
               key={key}
-              onClick={() => onSelectDay(isSelected ? null : key)}
+              onClick={() => hasTrades && onSelectDay(isSelected ? null : key)}
               style={{
-                borderRadius: 6,
-                border: `1px solid ${border}`,
+                position: 'relative',
+                borderRadius: 8,
+                border: `1px solid ${borderCol}`,
                 backgroundColor: bg,
                 cursor: hasTrades ? 'pointer' : 'default',
-                padding: '4px 2px',
-                minHeight: 44,
+                padding: '5px 4px 6px',
+                minHeight: 54,
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'flex-start',
-                gap: 2,
+                justifyContent: 'center',
+                transition: 'border-color 0.12s, background-color 0.12s',
+              }}
+              onMouseEnter={e => {
+                if (!hasTrades) return;
+                e.currentTarget.style.borderColor = hoverBorderCol;
+              }}
+              onMouseLeave={e => {
+                if (!hasTrades) return;
+                e.currentTarget.style.borderColor = borderCol;
               }}
             >
-              <span style={{
-                fontSize: 11,
-                fontWeight: isToday ? 700 : 400,
-                color: isToday ? '#00d4aa' : '#9ca3af',
-              }}>
+              {/* Day number — top-left */}
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  left: 5,
+                  fontSize: 9,
+                  fontWeight: isToday ? 700 : 500,
+                  color: isToday ? '#00d4aa' : '#4b5563',
+                  lineHeight: 1,
+                }}
+              >
                 {day}
               </span>
+
+              {/* PnL — dominant, centered */}
               {hasTrades && (
-                <span style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  color: pnl > 0 ? '#10b981' : pnl < 0 ? '#ef4444' : '#6b7280',
-                  lineHeight: 1,
-                }}>
-                  {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: pnlColor,
+                    fontVariantNumeric: 'tabular-nums',
+                    letterSpacing: '-0.01em',
+                    lineHeight: 1,
+                    marginTop: 10,
+                  }}
+                >
+                  {fmtAmt(pnl ?? 0)}
                 </span>
               )}
             </button>
@@ -261,9 +393,10 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
 interface TradeTableProps {
   fills: Fill[];
   selectedDay: string | null;
+  onClearDay: () => void;
 }
 
-function TradeTable({ fills, selectedDay }: TradeTableProps) {
+function TradeTable({ fills, selectedDay, onClearDay }: TradeTableProps) {
   const [page, setPage] = useState(0);
 
   const filtered = useMemo(() => {
@@ -271,61 +404,70 @@ function TradeTable({ fills, selectedDay }: TradeTableProps) {
     return fills.filter(f => f.time && localDay(f.time) === selectedDay);
   }, [fills, selectedDay]);
 
-  // Reset to page 0 when filter changes
   useEffect(() => setPage(0), [selectedDay]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const slice = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const TH = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
-    <th style={{
-      padding: '10px 12px',
-      textAlign: right ? 'right' : 'left',
-      fontSize: 11,
-      fontWeight: 600,
-      color: '#6b7280',
-      textTransform: 'uppercase',
-      letterSpacing: '0.05em',
-      whiteSpace: 'nowrap',
-    }}>
+    <th
+      style={{
+        padding: '10px 16px',
+        textAlign: right ? 'right' : 'left',
+        fontSize: 10,
+        fontWeight: 600,
+        color: '#6b7280',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        whiteSpace: 'nowrap',
+        borderBottom: '1px solid #1a1a2e',
+      }}
+    >
       {children}
     </th>
   );
 
-  const TD = ({ children, right, mono }: { children: React.ReactNode; right?: boolean; mono?: boolean }) => (
-    <td style={{
-      padding: '10px 12px',
-      fontSize: 12,
-      textAlign: right ? 'right' : 'left',
-      fontFamily: mono ? 'monospace' : undefined,
-      borderTop: '1px solid #1a1a2e',
-    }}>
+  const TD = ({
+    children, right, mono,
+  }: { children: React.ReactNode; right?: boolean; mono?: boolean }) => (
+    <td
+      style={{
+        padding: '10px 16px',
+        fontSize: 13,
+        textAlign: right ? 'right' : 'left',
+        fontFamily: mono ? "'Fira Mono', 'Roboto Mono', monospace" : undefined,
+        fontVariantNumeric: mono ? 'tabular-nums' : undefined,
+        borderTop: '1px solid #1a1a2e',
+        color: '#d1d5db',
+      }}
+    >
       {children}
     </td>
   );
 
   return (
     <div
-      className="rounded-xl border"
+      className="rounded-xl border overflow-hidden"
       style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
     >
       {/* Section header */}
       <div
-        className="flex items-center justify-between px-5 py-4 border-b"
+        className="flex items-center justify-between px-5 py-3 border-b"
         style={{ borderColor: '#1a1a2e' }}
       >
-        <span className="text-sm font-semibold text-white">
-          {selectedDay ? `Trades on ${selectedDay}` : 'All Trades'}
-          <span style={{ marginLeft: 8, color: '#6b7280', fontWeight: 400, fontSize: 12 }}>
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+          {selectedDay ? `Trades — ${selectedDay}` : 'All Trades'}
+          <span style={{ marginLeft: 8, color: '#4b5563', fontWeight: 400, textTransform: 'none', fontSize: 12, letterSpacing: 0 }}>
             ({filtered.length})
           </span>
-        </span>
+        </h2>
         {selectedDay && (
           <button
-            onClick={() => {}}
+            onClick={onClearDay}
             style={{
-              color: '#00d4aa', background: 'none', border: '1px solid #00d4aa',
-              borderRadius: 4, cursor: 'pointer', fontSize: 11, padding: '2px 8px',
+              background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
+              color: '#9ca3af', cursor: 'pointer', fontSize: 11,
+              fontWeight: 500, padding: '3px 10px',
             }}
           >
             Clear filter
@@ -335,7 +477,9 @@ function TradeTable({ fills, selectedDay }: TradeTableProps) {
 
       {filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 24px', color: '#6b7280', fontSize: 13 }}>
-          {selectedDay ? 'No trades on this day.' : 'No trades found. Execute your first trade to see history here.'}
+          {selectedDay
+            ? 'No trades on this day.'
+            : 'No trades yet. Execute your first trade to see history here.'}
         </div>
       ) : (
         <>
@@ -355,31 +499,39 @@ function TradeTable({ fills, selectedDay }: TradeTableProps) {
               <tbody>
                 {slice.map((f, idx) => {
                   const pnl = fmtPnl(f.closedPnl);
+                  const dc = dirColor(f);
                   return (
                     <tr
                       key={f.hash ?? `${f.time}-${idx}`}
                       style={{ transition: 'background 0.1s' }}
-                      onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#111119')}
+                      onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#0f0f1a')}
                       onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
                     >
-                      <TD><span style={{ color: '#9ca3af' }}>{fmtTime(f.time)}</span></TD>
-                      <TD><span style={{ color: '#ffffff', fontWeight: 600 }}>{f.coin}</span></TD>
+                      <TD>
+                        <span style={{ color: '#9ca3af', fontSize: 12 }}>{fmtTime(f.time)}</span>
+                      </TD>
+                      <TD>
+                        <span style={{ color: '#ffffff', fontWeight: 600 }}>{f.coin}</span>
+                      </TD>
                       <TD>
                         <span style={{
-                          fontSize: 11,
-                          fontWeight: 600,
-                          color: dirColor(f),
-                          backgroundColor: `${dirColor(f)}18`,
-                          border: `1px solid ${dirColor(f)}44`,
-                          borderRadius: 4,
-                          padding: '2px 6px',
+                          fontSize: 11, fontWeight: 600, color: dc,
+                          backgroundColor: `${dc}18`,
+                          border: `1px solid ${dc}44`,
+                          borderRadius: 4, padding: '2px 7px',
                         }}>
                           {dirLabel(f)}
                         </span>
                       </TD>
-                      <TD right mono><span style={{ color: '#e5e7eb' }}>{f.sz}</span></TD>
-                      <TD right mono><span style={{ color: '#e5e7eb' }}>${fmt2(f.px)}</span></TD>
-                      <TD right mono><span style={{ color: '#9ca3af' }}>-{fmt2(f.fee)}</span></TD>
+                      <TD right mono>
+                        <span style={{ color: '#e5e7eb' }}>{f.sz}</span>
+                      </TD>
+                      <TD right mono>
+                        <span style={{ color: '#e5e7eb' }}>${fmt2(f.px)}</span>
+                      </TD>
+                      <TD right mono>
+                        <span style={{ color: '#6b7280' }}>-${fmt2(f.fee)}</span>
+                      </TD>
                       <TD right mono>
                         <span style={{ color: pnl.color, fontWeight: 600 }}>{pnl.text}</span>
                       </TD>
@@ -400,10 +552,10 @@ function TradeTable({ fills, selectedDay }: TradeTableProps) {
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={page === 0}
                 style={{
-                  background: 'none', border: '1px solid #1a1a2e', borderRadius: 4,
+                  background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
                   color: page === 0 ? '#374151' : '#9ca3af',
                   cursor: page === 0 ? 'not-allowed' : 'pointer',
-                  padding: '4px 12px', fontSize: 12,
+                  padding: '4px 14px', fontSize: 12,
                 }}
               >
                 ← Prev
@@ -415,10 +567,10 @@ function TradeTable({ fills, selectedDay }: TradeTableProps) {
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page === totalPages - 1}
                 style={{
-                  background: 'none', border: '1px solid #1a1a2e', borderRadius: 4,
+                  background: 'none', border: '1px solid #1a1a2e', borderRadius: 6,
                   color: page === totalPages - 1 ? '#374151' : '#9ca3af',
                   cursor: page === totalPages - 1 ? 'not-allowed' : 'pointer',
-                  padding: '4px 12px', fontSize: 12,
+                  padding: '4px 14px', fontSize: 12,
                 }}
               >
                 Next →
@@ -483,9 +635,17 @@ export default function HistoryPanel({ walletAddress }: HistoryPanelProps) {
           style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
         >
           <Skeleton h={24} w={200} />
-          <div className="grid grid-cols-7 gap-1">
+          <div className="grid grid-cols-3 gap-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <Skeleton h={10} w={80} />
+                <Skeleton h={24} w={120} />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1.5 pt-2">
             {Array.from({ length: 35 }).map((_, i) => (
-              <Skeleton key={i} h={44} />
+              <Skeleton key={i} h={54} />
             ))}
           </div>
         </div>
@@ -526,6 +686,7 @@ export default function HistoryPanel({ walletAddress }: HistoryPanelProps) {
       <TradeTable
         fills={fills}
         selectedDay={selectedDay}
+        onClearDay={() => setSelectedDay(null)}
       />
     </div>
   );
