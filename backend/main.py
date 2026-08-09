@@ -105,6 +105,9 @@ async def admin_list_all_bots():
 async def run_backtest(body: dict):
     from services.hyperliquid_service import get_candles
 
+    # DIAGNOSTIC — log the full raw body so we can confirm what the frontend sends
+    logger.info(f"POST /backtest RAW BODY: {body}")
+
     bot_type = body.get("bot_type")
     if not bot_type:
         raise HTTPException(status_code=400, detail="bot_type is required")

@@ -159,7 +159,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
   const [botType, setBotType] = useState('')
   const [interval, setInterval] = useState('4h')
   const [allocation, setAllocation] = useState('1000')
-  const [params, setParams] = useState<Record<string, number>>({})
+  const [params, setParams] = useState<Record<string, number | undefined>>({})
 
   // Date range
   const [useCustomDates, setUseCustomDates] = useState(false)
@@ -612,7 +612,10 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
                 <div key={f.key} style={{ marginBottom: 12 }}>
                   <label style={s.label}>{f.label.toUpperCase()}</label>
                   <input style={s.input} type="number" value={getParam(f.key, f.default)}
-                    onChange={e => setParams(p => ({ ...p, [f.key]: parseFloat(e.target.value) || 0 }))} />
+                    onChange={e => {
+                      const raw = e.target.value
+                      setParams(p => ({ ...p, [f.key]: raw === '' ? undefined : parseFloat(raw) }))
+                    }} />
                   <p style={{ fontSize: 10, color: '#4b5563', marginTop: 3 }}>{f.hint}</p>
                 </div>
               ))}
@@ -800,7 +803,7 @@ export default function BacktestPanel({ walletAddress }: { walletAddress?: strin
           botType={botType}
           initialSymbol={selectedMarket?.name}
           initialDex={selectedMarket?.dex === 'main' ? '' : (selectedMarket?.dex ?? '')}
-          initialParams={params}
+          initialParams={Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined)) as Record<string, number>}
           initialInterval={interval}
           onClose={() => setShowDeploy(false)}
           onCreated={() => setShowDeploy(false)}
