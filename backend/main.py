@@ -181,7 +181,6 @@ async def run_backtest(body: dict):
             volume_multiplier     = float(body.get("volume_multiplier",  1.3)),
             volume_lookback       = int(body.get("volume_lookback",      20)),
             dca_pcts              = dca_pcts,
-            max_exposure_pct      = float(body.get("max_exposure_pct",   100)),
             sl_pct                = float(body.get("sl_pct",             3)),
             tp_pct                = float(body.get("tp_pct",             1.5)),
             cooldown_candles      = int(body.get("cooldown_candles",     3)),

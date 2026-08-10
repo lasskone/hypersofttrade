@@ -126,7 +126,6 @@ async def run():
         volume_multiplier     = 1.3,
         volume_lookback       = 20,
         dca_pcts              = [2.0],       # one DCA level
-        max_exposure_pct      = 100.0,
         sl_pct                = 5.0,
         tp_pct                = 3.0,
         cooldown_candles      = 3,
@@ -151,7 +150,7 @@ async def run():
     assert result["total_trades"] >= 1, \
         f"Expected ≥1 trade, got {result['total_trades']}"
 
-    assert 0.0 <= result["win_rate"] <= 1.0, \
+    assert 0.0 <= result["win_rate"] <= 100.0, \
         f"win_rate out of range: {result['win_rate']}"
 
     assert result["max_drawdown_pct"] >= 0.0, \

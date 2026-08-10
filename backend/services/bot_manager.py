@@ -115,7 +115,7 @@ class BotManager:
         optional: dict = {}
 
         _float_keys = [
-            "allocated_usdc", "max_exposure_pct",
+            "allocated_usdc",
             "sl_pct", "tp_pct",
             "adx_threshold", "rsi_oversold", "rsi_overbought",
             "volume_multiplier",

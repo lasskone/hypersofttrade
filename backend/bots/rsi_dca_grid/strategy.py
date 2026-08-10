@@ -46,8 +46,7 @@ split at 5 levels is the default with dca_pcts=[2,4,7,12] and keeps each level
 uniform — this is the simplest defensible choice and ensures the DCA cascade
 can be fully deployed within the allocated budget.
 
-    total_usdc     = allocated_usdc × max_exposure_pct / 100   (hard cap)
-    per_level_usdc = total_usdc / (1 + len(dca_pcts))
+    per_level_usdc = allocated_usdc / (1 + len(dca_pcts))
     per_level_size = (per_level_usdc × leverage) / mark_price
 
 Sizes are floor-rounded (round_size) and bumped up to the $10 minimum notional
@@ -287,7 +286,6 @@ class RSIDCAGridBot:
         volume_lookback: int = 20,
         # DCA grid
         dca_pcts: list[float] | None = None,
-        max_exposure_pct: float = 100.0,
         # SL / TP
         sl_pct: float = 3.0,
         tp_pct: float = 1.5,
@@ -312,7 +310,6 @@ class RSIDCAGridBot:
         self._allocated_usdc   = float(allocated_usdc)
         self._leverage         = int(leverage)
         self._sides            = sides if sides is not None else ["long", "short"]
-        self._max_exposure_pct = float(max_exposure_pct)
 
         # ── Timeframes ─────────────────────────────────────────────────────────
         self._entry_tf   = entry_timeframe    # RSI + volume + tick cadence
@@ -524,13 +521,11 @@ class RSIDCAGridBot:
     def _per_level_size(self, mark_price: float) -> float:
         """Base-asset size for one grid level (equal across 1 entry + N DCA levels).
 
-        total_usdc     = allocated_usdc × max_exposure_pct / 100
-        per_level_usdc = total_usdc / (1 + len(dca_pcts))
+        per_level_usdc = allocated_usdc / (1 + len(dca_pcts))
         per_level_size = (per_level_usdc × leverage) / mark_price
         """
         n_levels       = 1 + len(self._dca_pcts)
-        total_usdc     = self._allocated_usdc * self._max_exposure_pct / 100.0
-        per_level_usdc = total_usdc / n_levels
+        per_level_usdc = self._allocated_usdc / n_levels
         raw_size       = (per_level_usdc * self._leverage) / mark_price
         return round_size(raw_size, self._sz_decimals)
 
@@ -637,7 +632,7 @@ class RSIDCAGridBot:
             f"Placing ENTRY market {direction} "
             f"size={size} @ ~{mark_price:.4f} | "
             f"allocated={self._allocated_usdc} USDC leverage={self._leverage}x | "
-            f"per-level USDC≈{(self._allocated_usdc * self._max_exposure_pct / 100.0) / (1 + len(self._dca_pcts)):.2f}"
+            f"per-level USDC≈{self._allocated_usdc / (1 + len(self._dca_pcts)):.2f}"
         )
 
         try:

@@ -22,7 +22,6 @@ export const RSI_DCA_FIELDS: BotField[] = [
   { key: 'use_volume_filter',     label: 'Volume Filter (1=on, 0=off)', default: 0,    hint: '1 = require above-average volume on the entry candle.' },
   { key: 'volume_multiplier',     label: 'Volume Multiplier',           default: 1.3,  hint: 'Volume must exceed rolling average × this multiplier.' },
   { key: 'volume_lookback',       label: 'Volume Lookback',             default: 20,   hint: 'Bars used to compute the average volume baseline.' },
-  { key: 'max_exposure_pct',      label: 'Max Exposure %',              default: 100,  hint: 'Max % of allocation deployed across entry + all DCA levels.' },
   { key: 'sl_pct',                label: 'Stop Loss %',                 default: 3,    hint: 'Stop loss % from the deepest filled DCA level.' },
   { key: 'tp_pct',                label: 'Take Profit %',               default: 1.5,  hint: 'Take profit % from the VWAP of all filled entries.' },
   { key: 'cooldown_candles',      label: 'Cooldown (candles)',          default: 3,    hint: 'Candles to wait after a trade closes before re-entering.' },
