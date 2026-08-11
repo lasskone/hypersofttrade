@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 from supabase import create_client
 
@@ -121,6 +122,69 @@ async def close_position_group(db, position_group_id: str) -> None:
             "status": "cancelled",
             "updated_at": now,
         }).eq("id", rec["id"]).execute()
+
+
+async def record_position_order(
+    db,
+    position_group_id: str,
+    bot_id: Optional[str],
+    oid: int,
+    order_role: str,
+    coin: str,
+) -> None:
+    """Insert a row into position_orders for a freshly-placed bot order.
+
+    Parameters
+    ----------
+    db:
+        An active Supabase client.
+    position_group_id:
+        UUID of the parent position_group (must already exist).
+    bot_id:
+        UUID of the bots row, or None if not available.
+    oid:
+        Hyperliquid integer order ID (BIGINT).
+    order_role:
+        One of 'entry', 'dca_0', 'dca_1', 'dca_2', 'dca_3', 'sl', 'tp'.
+    coin:
+        Coin identifier (e.g. "BTC", "xyz:XYZ100").
+
+    Notes
+    -----
+    This function is intentionally fire-and-forget: callers MUST wrap it in
+    try/except so that a tracking failure never crashes a real-money strategy.
+    """
+    db.table("position_orders").insert({
+        "position_group_id": position_group_id,
+        "bot_id":            bot_id,
+        "oid":               oid,
+        "order_role":        order_role,
+        "coin":              coin,
+        "status":            "resting",
+        "placed_at":         datetime.now(timezone.utc).isoformat(),
+    }).execute()
+
+
+async def mark_position_order_filled(db, oid: int) -> None:
+    """Update a position_orders row's status to 'filled' when Hyperliquid confirms the fill.
+
+    Parameters
+    ----------
+    db:
+        An active Supabase client.
+    oid:
+        Hyperliquid integer order ID to mark as filled.
+
+    Notes
+    -----
+    Matches on oid only — oids are exchange-unique per instrument per session.
+    Safe to call on an already-filled row (the update simply becomes a no-op
+    if the row status is already 'filled').
+    """
+    db.table("position_orders").update({
+        "status":    "filled",
+        "filled_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("oid", oid).execute()
 
 
 async def get_open_position_group(

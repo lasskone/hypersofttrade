@@ -75,6 +75,8 @@ from services.position_groups import (
     close_position_group,
     create_position_group,
     get_open_position_group,
+    mark_position_order_filled,
+    record_position_order,
 )
 
 logger = logging.getLogger(__name__)
@@ -367,6 +369,9 @@ class RSIDCAGridBot:
         # position_group MagicID (Supabase)
         self._position_group_id: str | None = None
 
+        # Entry order oid — captured in _place_entry(), recorded after position_group is created
+        self._entry_oid: int | None = None
+
         # DCA order tracking — one slot per configured level
         n = len(self._dca_pcts)
         self._dca_oids:   list[int | None] = [None] * n   # resting GTC limit oids
@@ -647,7 +652,8 @@ class RSIDCAGridBot:
                 leverage       = self._leverage,
                 sz_decimals    = self._sz_decimals,
             )
-            self._log("info", f"Entry order sent: {result}")
+            self._entry_oid = _extract_oid(result)
+            self._log("info", f"Entry order sent: {result} (oid={self._entry_oid})")
         except Exception as exc:
             self._log("error", f"Entry order failed: {exc}")
             return 0.0
@@ -720,6 +726,18 @@ class RSIDCAGridBot:
                     f"DCA[{i}] @ {dca_px:.4f} ({'-' if is_long else '+'}{pct}% from entry) "
                     f"→ oid={oid}"
                 )
+                if oid is not None and self._db is not None and self._position_group_id is not None:
+                    try:
+                        await record_position_order(
+                            db                = self._db,
+                            position_group_id = self._position_group_id,
+                            bot_id            = self._bot_id,
+                            oid               = oid,
+                            order_role        = f"dca_{i}",
+                            coin              = self._coin,
+                        )
+                    except Exception as rec_exc:
+                        self._log("warning", f"record_position_order(dca_{i}) failed: {rec_exc}")
             except Exception as exc:
                 self._log("error", f"DCA[{i}] order failed: {exc}")
                 self._dca_oids[i] = None
@@ -775,6 +793,31 @@ class RSIDCAGridBot:
                 "info",
                 f"SL oid={self._sl_oid} @ {sl_px:.4f} | TP oid={self._tp_oid} @ {tp_px:.4f}"
             )
+            if self._db is not None and self._position_group_id is not None:
+                if self._sl_oid is not None:
+                    try:
+                        await record_position_order(
+                            db                = self._db,
+                            position_group_id = self._position_group_id,
+                            bot_id            = self._bot_id,
+                            oid               = self._sl_oid,
+                            order_role        = "sl",
+                            coin              = self._coin,
+                        )
+                    except Exception as rec_exc:
+                        self._log("warning", f"record_position_order(sl) failed: {rec_exc}")
+                if self._tp_oid is not None:
+                    try:
+                        await record_position_order(
+                            db                = self._db,
+                            position_group_id = self._position_group_id,
+                            bot_id            = self._bot_id,
+                            oid               = self._tp_oid,
+                            order_role        = "tp",
+                            coin              = self._coin,
+                        )
+                    except Exception as rec_exc:
+                        self._log("warning", f"record_position_order(tp) failed: {rec_exc}")
         except Exception as exc:
             self._log("error", f"place_tp_sl failed: {exc}")
 
@@ -801,6 +844,12 @@ class RSIDCAGridBot:
 
             # OID vanished from open orders → treat as filled.
             self._dca_filled[i] = True
+
+            if self._db is not None and self._position_group_id is not None:
+                try:
+                    await mark_position_order_filled(self._db, oid)
+                except Exception as rec_exc:
+                    self._log("warning", f"mark_position_order_filled(oid={oid}) failed: {rec_exc}")
 
             # Compute the explicit DCA level price from the original entry.
             pct = self._dca_pcts[i]
@@ -972,6 +1021,18 @@ class RSIDCAGridBot:
                 )
                 self._position_group_id = pg_id
                 self._log("info", f"position_group created: {pg_id}")
+                if self._entry_oid is not None:
+                    try:
+                        await record_position_order(
+                            db                = self._db,
+                            position_group_id = pg_id,
+                            bot_id            = self._bot_id,
+                            oid               = self._entry_oid,
+                            order_role        = "entry",
+                            coin              = self._coin,
+                        )
+                    except Exception as rec_exc:
+                        self._log("warning", f"record_position_order(entry) failed: {rec_exc}")
             except Exception as exc:
                 self._log("error", f"create_position_group() failed: {exc}")
 
