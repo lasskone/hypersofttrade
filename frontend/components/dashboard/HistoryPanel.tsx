@@ -18,7 +18,10 @@ interface Fill {
   closedPnl: number;
   time: number;   // epoch ms
   hash?: string;
+  oid?: number;   // Hyperliquid order ID — present on fills returned by /account/fills
 }
+
+type SourceMap = Record<string, { type: string; bot_name?: string }>;
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -394,9 +397,10 @@ interface TradeTableProps {
   fills: Fill[];
   selectedDay: string | null;
   onClearDay: () => void;
+  sources?: SourceMap;
 }
 
-function TradeTable({ fills, selectedDay, onClearDay }: TradeTableProps) {
+function TradeTable({ fills, selectedDay, onClearDay, sources = {} }: TradeTableProps) {
   const [page, setPage] = useState(0);
 
   const filtered = useMemo(() => {
@@ -494,6 +498,7 @@ function TradeTable({ fills, selectedDay, onClearDay }: TradeTableProps) {
                   <TH right>Price</TH>
                   <TH right>Fee</TH>
                   <TH right>Closed PnL</TH>
+                  <TH>Source</TH>
                 </tr>
               </thead>
               <tbody>
@@ -534,6 +539,34 @@ function TradeTable({ fills, selectedDay, onClearDay }: TradeTableProps) {
                       </TD>
                       <TD right mono>
                         <span style={{ color: pnl.color, fontWeight: 600 }}>{pnl.text}</span>
+                      </TD>
+                      <TD>
+                        {(() => {
+                          const src = f.oid != null ? sources[String(f.oid)] : undefined;
+                          if (src?.type === 'bot') {
+                            return (
+                              <span style={{
+                                fontSize: 11, fontWeight: 600,
+                                color: '#8b5cf6',
+                                backgroundColor: '#8b5cf618',
+                                border: '1px solid #8b5cf644',
+                                borderRadius: 4, padding: '2px 7px',
+                              }}>
+                                {src.bot_name ?? 'Bot'}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span style={{
+                              fontSize: 11, fontWeight: 500,
+                              color: '#6b7280',
+                              backgroundColor: '#1a1a2e',
+                              borderRadius: 4, padding: '2px 7px',
+                            }}>
+                              Manual
+                            </span>
+                          );
+                        })()}
                       </TD>
                     </tr>
                   );
@@ -604,6 +637,7 @@ export default function HistoryPanel({ walletAddress }: HistoryPanelProps) {
   const [fills, setFills] = useState<Fill[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [fillSources, setFillSources] = useState<SourceMap>({});
 
   useEffect(() => {
     if (!walletAddress) return;
@@ -620,9 +654,23 @@ export default function HistoryPanel({ walletAddress }: HistoryPanelProps) {
           throw new Error(json.detail ?? `HTTP ${res.status}`);
         }
         const data = await res.json();
+        const loadedFills: Fill[] = Array.isArray(data.fills) ? data.fills : [];
         if (!cancelled) {
-          setFills(Array.isArray(data.fills) ? data.fills : []);
+          setFills(loadedFills);
           setStatus('loaded');
+        }
+
+        // Non-blocking source lookup — failures fall back to "Manual" silently
+        const oids = loadedFills
+          .map(f => f.oid)
+          .filter((id): id is number => id != null);
+        if (oids.length > 0 && !cancelled) {
+          fetch(
+            `${API_URL}/orders/source-lookup?wallet_address=${encodeURIComponent(walletAddress)}&oids=${oids.join(',')}`
+          )
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(d => { if (!cancelled) setFillSources(d?.sources ?? {}); })
+            .catch(() => {});
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -697,6 +745,7 @@ export default function HistoryPanel({ walletAddress }: HistoryPanelProps) {
         fills={fills}
         selectedDay={selectedDay}
         onClearDay={() => setSelectedDay(null)}
+        sources={fillSources}
       />
     </div>
   );

@@ -743,6 +743,8 @@ export function OverviewPanel({
   const [tradesPage, setTradesPage] = useState(1)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [bots, setBots] = useState<any[]>([]);
+  // oid (as string) → {type: 'bot'|'manual', bot_name?: string}
+  const [orderSources, setOrderSources] = useState<Record<string, { type: string; bot_name?: string }>>({});
 
   // ── Fetch portfolio (extracted so it can be called from onAction) ─────────────
   const fetchPortfolio = async () => {
@@ -805,6 +807,22 @@ export function OverviewPanel({
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
+
+  // ── Source lookup: resolve bot vs manual for all open order oids ─────────────
+  useEffect(() => {
+    const orders = data?.open_orders ?? [];
+    if (!walletAddress || orders.length === 0) return;
+    const oids = orders
+      .map((o: any) => o?.order_id)
+      .filter((id: any) => id != null)
+      .join(',');
+    if (!oids) return;
+    fetch(`${API_URL}/orders/source-lookup?wallet_address=${encodeURIComponent(walletAddress)}&oids=${oids}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => setOrderSources(d?.sources ?? {}))
+      .catch(() => {}); // graceful degradation — fall back to "Manual" on failure
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, data?.open_orders]);
 
   // ── Reset bulk cancel confirmation when selection changes ─────────────────────
   useEffect(() => {
@@ -1292,10 +1310,23 @@ export function OverviewPanel({
                         <p className="text-xs text-gray-600">{orderDate}</p>
                       </td>
                       <td className="px-5 py-3">
-                        <span className="text-xs px-2 py-0.5 rounded font-medium"
-                          style={{ backgroundColor: '#1a1a2e', color: '#6b7280' }}>
-                          Manual
-                        </span>
+                        {(() => {
+                          const src = orderSources[String(o?.order_id)];
+                          if (src?.type === 'bot') {
+                            return (
+                              <span className="text-xs px-2 py-0.5 rounded font-medium"
+                                style={{ backgroundColor: '#8b5cf618', color: '#8b5cf6', border: '1px solid #8b5cf644' }}>
+                                {src.bot_name ?? 'Bot'}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="text-xs px-2 py-0.5 rounded font-medium"
+                              style={{ backgroundColor: '#1a1a2e', color: '#6b7280' }}>
+                              Manual
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
                         {confirmingOrderIdx === i ? (

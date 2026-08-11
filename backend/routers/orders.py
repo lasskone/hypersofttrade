@@ -557,6 +557,82 @@ async def cancel_trailing_stop(ts_id: str, wallet_address: str = Query(...)):
     return {"success": True}
 
 
+@orders_router.get("/source-lookup")
+async def source_lookup(
+    wallet_address: str = Query(...),
+    oids: str = Query(...),
+):
+    """Return source attribution (bot vs manual) for a list of Hyperliquid order IDs.
+
+    Query params
+    ------------
+    wallet_address : str  — master wallet address (currently unused but kept for future
+                            row-level filtering once RLS is configured)
+    oids           : str  — comma-separated list of integer oids, e.g. "123,456,789"
+
+    Response
+    --------
+    {"sources": {
+        "123": {"type": "bot", "bot_name": "RSI DCA Grid"},
+        "456": {"type": "manual"}
+    }}
+
+    Any oid NOT found in position_orders is returned as {"type": "manual"}.
+    """
+    logger.info(f"GET /orders/source-lookup wallet={wallet_address} oids={oids}")
+
+    if not oids or not oids.strip():
+        return {"sources": {}}
+
+    # Parse and validate oid list
+    parsed: list[int] = []
+    for part in oids.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            parsed.append(int(part))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid oid value: {part!r}")
+
+    if not parsed:
+        return {"sources": {}}
+
+    db = _supabase()
+    try:
+        res = (
+            db.table("position_orders")
+            .select("oid, bot_id, bots(name)")
+            .in_("oid", parsed)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(f"[source-lookup] DB query failed: {exc}")
+        raise HTTPException(status_code=500, detail="DB query failed") from exc
+
+    # Build oid → source map from DB rows
+    sources: dict[str, dict] = {}
+    for row in (res.data or []):
+        oid_str = str(row["oid"])
+        bot_record = row.get("bots") or {}
+        bot_name = bot_record.get("name") if isinstance(bot_record, dict) else None
+        if bot_name:
+            sources[oid_str] = {"type": "bot", "bot_name": bot_name}
+        elif row.get("bot_id"):
+            # bot_id present but name join failed — still flag as bot
+            sources[oid_str] = {"type": "bot", "bot_name": "Bot"}
+        else:
+            sources[oid_str] = {"type": "manual"}
+
+    # Any requested oid not in position_orders defaults to manual
+    for oid_int in parsed:
+        oid_str = str(oid_int)
+        if oid_str not in sources:
+            sources[oid_str] = {"type": "manual"}
+
+    return {"sources": sources}
+
+
 @orders_router.get("/trailing-stops")
 async def list_trailing_stops(wallet_address: str = Query(...)):
     logger.info(f"GET /orders/trailing-stops wallet={wallet_address}")
