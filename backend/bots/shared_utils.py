@@ -131,3 +131,36 @@ def adx(candles: list[dict], period: int) -> float | None:
     for dx in dx_vals[period:]:
         adx_val = (adx_val * (period - 1) + dx) / period
     return adx_val
+
+
+def atr(candles: list[dict], period: int) -> float | None:
+    """Average True Range via Wilder's smoothing.
+
+    Returns the most recent ATR value as a float, or ``None`` when there
+    are fewer than ``period + 1`` candles (need at least *period* TR values
+    to seed the Wilder average).
+
+    Candle dicts must contain keys: ``high``, ``low``, ``close``.
+    """
+    n = len(candles)
+    if n < period + 1:
+        return None
+
+    tr_vals: list[float] = []
+    for i in range(1, n):
+        h  = candles[i]["high"]
+        l  = candles[i]["low"]
+        pc = candles[i - 1]["close"]
+        tr_vals.append(max(h - l, abs(h - pc), abs(l - pc)))
+
+    if len(tr_vals) < period:
+        return None
+
+    # Seed: simple average of the first *period* TR values (Wilder's convention).
+    atr_val = sum(tr_vals[:period]) / period
+
+    # Wilder smoothing: ATR = (ATR_prev × (period − 1) + TR) / period
+    for tr in tr_vals[period:]:
+        atr_val = (atr_val * (period - 1) + tr) / period
+
+    return atr_val
