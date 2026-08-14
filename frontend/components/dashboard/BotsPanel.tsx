@@ -54,8 +54,6 @@ function getSchemaFields(botType: string): BotField[] {
   return []
 }
 
-// Fixed symbol list for the Momentum Scalper multi-select.
-const SCALPER_SYMBOLS = ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
 
 interface Bot {
   id: string
@@ -663,7 +661,8 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [name, setName] = useState(`My ${BOT_TYPES[botType as keyof typeof BOT_TYPES]?.name ?? 'Bot'}`)
   const [symbol, setSymbol] = useState(initialSymbol ?? 'BTC')
   const [dex, setDex] = useState(initialDex ?? '')
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(SCALPER_SYMBOLS)
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC', 'ETH', 'SOL', 'XRP', 'HYPE'])
+  const [symbolInput, setSymbolInput] = useState('')
   const [allocatedUsdc, setAllocatedUsdc] = useState(isMomentumScalper ? '200' : '100')
   const [leverage, setLeverage] = useState(String(ip.leverage ?? typeDefaults.leverage ?? 1))
   const [params, setParams] = useState<Record<string, number>>({ ...typeDefaults, ...ip })
@@ -750,30 +749,53 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
-          {/* Market picker — single symbol for RSI DCA; chip multi-select for Momentum Scalper */}
+          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for Momentum Scalper */}
           {isMomentumScalper ? (
             <div>
               <label style={labelStyle}>SYMBOLS TO SCAN</label>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
-                {SCALPER_SYMBOLS.map(sym => {
-                  const active = selectedSymbols.includes(sym)
-                  return (
-                    <button key={sym} type="button"
-                      onClick={() => setSelectedSymbols(prev =>
-                        active ? prev.filter(s => s !== sym) : [...prev, sym]
-                      )}
-                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                        background: active ? '#f9731618' : '#13131f',
-                        color: active ? '#f97316' : '#6b7280',
-                        border: `1px solid ${active ? '#f9731644' : 'transparent'}`,
-                      }}>
-                      {sym}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const, marginBottom: 8 }}>
+                {selectedSymbols.map(sym => (
+                  <span key={sym} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '4px 10px', borderRadius: 5, fontSize: 12, fontWeight: 700,
+                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644',
+                  }}>
+                    {sym}
+                    <button type="button" onClick={() => setSelectedSymbols(prev => prev.filter(s => s !== sym))}
+                      style={{ background: 'none', border: 'none', color: '#f97316', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.7 }}>
+                      ×
                     </button>
-                  )
-                })}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  type="text" value={symbolInput}
+                  onChange={e => setSymbolInput(e.target.value.toUpperCase().replace(/[^A-Z0-9:]/g, ''))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const s = symbolInput.trim()
+                      if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                      setSymbolInput('')
+                    }
+                  }}
+                  placeholder="e.g. DOGE"
+                  style={{ ...inputStyle, flex: 1, textTransform: 'uppercase' as const }}
+                />
+                <button type="button"
+                  onClick={() => {
+                    const s = symbolInput.trim()
+                    if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                    setSymbolInput('')
+                  }}
+                  style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644' }}>
+                  Add
+                </button>
               </div>
               <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
-                Markets the scanner will watch. All 5 selected by default — deselect to focus on fewer pairs. At least one must remain selected.
+                Type any Hyperliquid perp symbol and press Enter or Add. Click × to remove. At least one required.
               </p>
             </div>
           ) : (
@@ -903,8 +925,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [symbol, setSymbol] = useState<string>(String(cfg.symbol ?? bot.symbol ?? ''))
   const [dex, setDex] = useState<string>(String(cfg.dex ?? ''))
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
-    cfg.symbols && Array.isArray(cfg.symbols) ? cfg.symbols : SCALPER_SYMBOLS
+    cfg.symbols && Array.isArray(cfg.symbols) ? cfg.symbols : ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
   )
+  const [symbolInput, setSymbolInput] = useState('')
   const [allocatedUsdc, setAllocatedUsdc] = useState(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? '100'))
   const [leverage, setLeverage] = useState(String(cfg.leverage ?? def.leverage ?? 1))
   // Initialise strategy params from saved config, filling gaps with schema defaults
@@ -999,30 +1022,53 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
 
-          {/* Market picker — single symbol for RSI DCA; chip multi-select for Momentum Scalper */}
+          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for Momentum Scalper */}
           {isMomentumScalper ? (
             <div>
               <label style={labelStyle}>SYMBOLS TO SCAN</label>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
-                {SCALPER_SYMBOLS.map(sym => {
-                  const active = selectedSymbols.includes(sym)
-                  return (
-                    <button key={sym} type="button"
-                      onClick={() => setSelectedSymbols(prev =>
-                        active ? prev.filter(s => s !== sym) : [...prev, sym]
-                      )}
-                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                        background: active ? '#f9731618' : '#13131f',
-                        color: active ? '#f97316' : '#6b7280',
-                        border: `1px solid ${active ? '#f9731644' : 'transparent'}`,
-                      }}>
-                      {sym}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const, marginBottom: 8 }}>
+                {selectedSymbols.map(sym => (
+                  <span key={sym} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '4px 10px', borderRadius: 5, fontSize: 12, fontWeight: 700,
+                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644',
+                  }}>
+                    {sym}
+                    <button type="button" onClick={() => setSelectedSymbols(prev => prev.filter(s => s !== sym))}
+                      style={{ background: 'none', border: 'none', color: '#f97316', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.7 }}>
+                      ×
                     </button>
-                  )
-                })}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  type="text" value={symbolInput}
+                  onChange={e => setSymbolInput(e.target.value.toUpperCase().replace(/[^A-Z0-9:]/g, ''))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const s = symbolInput.trim()
+                      if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                      setSymbolInput('')
+                    }
+                  }}
+                  placeholder="e.g. DOGE"
+                  style={{ ...inputStyle, flex: 1, textTransform: 'uppercase' as const }}
+                />
+                <button type="button"
+                  onClick={() => {
+                    const s = symbolInput.trim()
+                    if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                    setSymbolInput('')
+                  }}
+                  style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644' }}>
+                  Add
+                </button>
               </div>
               <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
-                Markets the scanner will watch. Deselect to focus on fewer pairs. At least one must remain selected.
+                Type any Hyperliquid perp symbol and press Enter or Add. Click × to remove. At least one required.
               </p>
             </div>
           ) : (
