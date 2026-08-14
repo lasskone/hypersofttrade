@@ -46,6 +46,11 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Fraction of equity that may be posted as margin for a single order.
+# Keeps 10 % in reserve for Hyperliquid's maintenance margin requirement
+# and taker fees, preventing "Insufficient margin" rejections at full equity.
+_MARGIN_SAFETY_BUFFER: float = 0.90
+
 
 class RiskManager:
     """Per-bot risk manager with equity tracking, drawdown tiers, daily loss
@@ -285,8 +290,10 @@ class RiskManager:
         where effective_leverage = min(requested_leverage, max_leverage).
 
         Safety cap: if the required margin (raw_size × entry_price / leverage)
-        exceeds current equity, raw_size is clamped to (equity × leverage) /
-        entry_price so we never attempt to post more margin than we have.
+        exceeds ``equity × _MARGIN_SAFETY_BUFFER``, raw_size is clamped so that
+        margin stays within the buffer.  The 10 % reserve covers Hyperliquid's
+        maintenance margin requirement and taker fees, preventing "Insufficient
+        margin" rejections when equity is nearly fully allocated.
 
         Returns 0.0 if stop_distance ≤ 0 or entry_price ≤ 0 (degenerate inputs
         — caller should treat 0.0 as "do not enter").
@@ -307,14 +314,16 @@ class RiskManager:
         risk_capital       = self.equity * effective_risk_pct
         raw_size           = (risk_capital / stop_distance) * eff_leverage
 
-        # Safety cap: never post more margin than current equity.
+        # Safety cap: never use more than _MARGIN_SAFETY_BUFFER of equity as
+        # margin.  The 10 % reserve covers maintenance margin and taker fees.
+        max_margin      = self.equity * _MARGIN_SAFETY_BUFFER
         margin_required = (raw_size * entry_price) / eff_leverage
-        if margin_required > self.equity:
-            raw_size = (self.equity * eff_leverage) / entry_price
+        if margin_required > max_margin:
+            raw_size = (max_margin * eff_leverage) / entry_price
             logger.warning(
-                "[RiskManager] Size capped by equity: "
-                "original_margin=%.2f > equity=%.2f — capped raw_size=%.6f",
-                margin_required, self.equity, raw_size,
+                "[RiskManager] Size capped by margin safety buffer (%.0f%% of equity): "
+                "original_margin=%.2f > max_margin=%.2f (equity=%.2f) — capped raw_size=%.6f",
+                _MARGIN_SAFETY_BUFFER * 100, margin_required, max_margin, self.equity, raw_size,
             )
 
         logger.info(

@@ -663,7 +663,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const [dex, setDex] = useState(initialDex ?? '')
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC', 'ETH', 'SOL', 'XRP', 'HYPE'])
   const [symbolInput, setSymbolInput] = useState('')
-  const [allocatedUsdc, setAllocatedUsdc] = useState(isMomentumScalper ? '200' : '100')
+  const [allocatedUsdc, setAllocatedUsdc] = useState('100')
   const [leverage, setLeverage] = useState(String(ip.leverage ?? typeDefaults.leverage ?? 1))
   const [params, setParams] = useState<Record<string, number>>({ ...typeDefaults, ...ip })
   const [markets, setMarkets] = useState<Market[]>([])
@@ -934,7 +934,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [params, setParams] = useState<Record<string, number>>(() => {
     const merged: Record<string, number> = { ...def }
     for (const [k, v] of Object.entries(cfg)) {
-      if (typeof v === 'number') merged[k] = v
+      // allocated_usdc and leverage have dedicated state variables — exclude
+      // them here so ...params never overwrites those inputs in handleUpdate.
+      if (typeof v === 'number' && k !== 'allocated_usdc' && k !== 'leverage') merged[k] = v
     }
     return merged
   })
