@@ -448,7 +448,16 @@ class MomentumScalperBot:
                 leverage       = self._leverage,
                 sz_decimals    = sz_decimals,
             )
+            # DIAGNOSTIC: log full raw SDK result so rejections surface in bot UI
+            self._log("info", f"[diag] place_order raw result: {result}")
             self._entry_oid = _extract_oid(result)
+            # Surface any per-order error strings from the statuses list
+            try:
+                for s in (result or {}).get("response", {}).get("data", {}).get("statuses", []):
+                    if "error" in s:
+                        self._log("error", f"[place_order] REJECTED by exchange: {s['error']}")
+            except Exception:
+                pass
             self._log("info", f"Entry order sent: oid={self._entry_oid}")
         except Exception as exc:
             self._log("error", f"Entry order failed: {exc}")
