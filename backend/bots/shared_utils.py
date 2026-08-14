@@ -4,13 +4,24 @@ import math
 
 
 def round_price(price: float) -> float:
-    """Round price to Hyperliquid tick size based on magnitude."""
-    if price >= 1000:
+    """Round price to Hyperliquid's 5-significant-figures tick rule.
+    Mirrors services.hyperliquid_service._round_price() exactly — do not
+    let these two diverge again.
+    """
+    if price >= 10000:
         return round(price)
-    elif price >= 10:
+    elif price >= 1000:
         return round(price, 1)
-    else:
+    elif price >= 100:
         return round(price, 2)
+    elif price >= 10:
+        return round(price, 3)
+    elif price >= 1:
+        return round(price, 4)
+    elif price >= 0.1:
+        return round(price, 5)
+    else:
+        return round(price, 6)
 
 
 def round_size(size: float, sz_decimals: int) -> float:
