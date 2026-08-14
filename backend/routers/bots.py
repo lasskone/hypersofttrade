@@ -131,13 +131,28 @@ async def stop_bot(bot_id: str):
 async def delete_bot(bot_id: str):
     logger.info(f"DELETE /bots/{bot_id}")
     db = _supabase()
-    # Signal the Worker to stop before deleting the record.  The Worker will
-    # cancel the task on its next cycle; we proceed with deletion immediately.
-    # (The Worker's heartbeat update for a deleted bot is a safe no-op.)
-    db.table("bots").update({
-        "desired_status": "stopped",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", bot_id).execute()
+    # CRITICAL: confirm desired_status='stopped' is written and acknowledged by
+    # Supabase BEFORE deleting the row.  If we delete first (or if the update
+    # silently fails), the worker's cold_start_restore will query
+    # desired_status='running' and resurrect the bot on next boot — because
+    # Supabase replication may still serve the old row value for a brief window.
+    try:
+        update_res = db.table("bots").update({
+            "desired_status": "stopped",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", bot_id).execute()
+    except Exception as exc:
+        logger.error(f"DELETE /bots/{bot_id}: failed to set desired_status=stopped before delete: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not safely stop bot before deletion (DB write failed): {exc}",
+        )
+
+    if not update_res.data:
+        # Row not found — either already deleted or wrong id; treat as success
+        # (idempotent delete is safe) but log so we can detect phantom deletes.
+        logger.warning(f"DELETE /bots/{bot_id}: update returned no rows — bot may not exist, proceeding")
+
     db.table("bot_logs").delete().eq("bot_id", bot_id).execute()
     db.table("bots").delete().eq("id", bot_id).execute()
     return {"success": True}
