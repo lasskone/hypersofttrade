@@ -96,6 +96,8 @@ class BotManager:
 
         if bot_type == "rsi_dca":
             await self._run_rsi_dca_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "momentum_scalper":
+            await self._run_momentum_scalper_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             self._add_log(bot_id, "error", f"Unknown bot_type '{bot_type}' — no strategy registered for this type")
             db = _supabase()
@@ -164,6 +166,60 @@ class BotManager:
             f"sides={config.get('sides', ['long', 'short'])} "
             f"allocation=${config.get('allocated_usdc', 100)} "
             f"dca_pcts={config.get('dca_pcts', [2.0, 4.0, 7.0, 12.0])}"
+        ))
+        await bot.run()
+
+
+    async def _run_momentum_scalper_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.momentum_scalper.strategy import MomentumScalperBot
+        from services.hyperliquid_meta import get_sz_decimals
+
+        symbols = list(config.get("symbols", ["BTC", "ETH", "SOL", "XRP", "HYPE"]))
+
+        # Build sz_decimals_map concurrently for all symbols.
+        decimals_list = await asyncio.gather(*[get_sz_decimals(sym) for sym in symbols])
+        sz_decimals_map = dict(zip(symbols, decimals_list))
+
+        # Only pass optional keys that are present in config — lets strategy defaults
+        # apply without duplicating hardcoded values here.
+        optional: dict = {}
+
+        _float_keys = [
+            "allocated_usdc",
+            "min_score",
+            "tp_atr_multiplier", "sl_atr_multiplier", "breakeven_atr_trigger",
+            "risk_per_trade", "max_daily_loss_pct",
+        ]
+        _int_keys = [
+            "leverage",
+            "max_open_positions",
+            "cooldown_after_trade_seconds", "cooldown_after_loss_seconds",
+            "scan_interval_seconds",
+            "max_consecutive_losses", "consecutive_loss_cooldown_minutes",
+        ]
+
+        for k in _float_keys:
+            if config.get(k) is not None:
+                optional[k] = float(config[k])
+        for k in _int_keys:
+            if config.get(k) is not None:
+                optional[k] = int(config[k])
+
+        bot = MomentumScalperBot(
+            private_key     = private_key,
+            master_address  = master_address,
+            symbols         = symbols,
+            sz_decimals_map = sz_decimals_map,
+            db_client       = _supabase(),
+            bot_id          = bot_id,
+            log_callback    = lambda level, msg: self._add_log(bot_id, level, msg),
+            **optional,
+        )
+        self._add_log(bot_id, "info", (
+            f"Momentum Scalper initializing — symbols={symbols} "
+            f"sz_decimals_map={sz_decimals_map} "
+            f"allocation=${config.get('allocated_usdc', 200)} "
+            f"min_score={config.get('min_score', 75)}"
         ))
         await bot.run()
 

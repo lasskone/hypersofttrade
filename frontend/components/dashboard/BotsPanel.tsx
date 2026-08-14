@@ -1,6 +1,10 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { RSI_DCA_FIELDS, RSI_DCA_META, RSI_DCA_DEFAULTS, type BotField } from '@/lib/botFieldSchemas'
+import {
+  RSI_DCA_FIELDS, RSI_DCA_META, RSI_DCA_DEFAULTS,
+  MOMENTUM_SCALPER_FIELDS, MOMENTUM_SCALPER_META, MOMENTUM_SCALPER_DEFAULTS,
+  type BotField,
+} from '@/lib/botFieldSchemas'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -23,11 +27,35 @@ const BOT_TYPES: Record<string, {
     color:       RSI_DCA_META.color,
     params:      Object.fromEntries(RSI_DCA_FIELDS.map(f => [f.key, { label: f.label, hint: f.hint }])),
   },
+  momentum_scalper: {
+    name:        MOMENTUM_SCALPER_META.name,
+    emoji:       MOMENTUM_SCALPER_META.emoji,
+    tagline:     MOMENTUM_SCALPER_META.tagline,
+    description: MOMENTUM_SCALPER_META.description,
+    howItWorks:  MOMENTUM_SCALPER_META.howItWorks,
+    bestFor:     MOMENTUM_SCALPER_META.bestFor,
+    risk:        MOMENTUM_SCALPER_META.risk,
+    riskColor:   MOMENTUM_SCALPER_META.riskColor,
+    minAllocation: MOMENTUM_SCALPER_META.minAllocation,
+    color:       MOMENTUM_SCALPER_META.color,
+    params:      Object.fromEntries(MOMENTUM_SCALPER_FIELDS.map(f => [f.key, { label: f.label, hint: f.hint }])),
+  },
 }
 
 const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
-  rsi_dca: RSI_DCA_DEFAULTS,
+  rsi_dca:          RSI_DCA_DEFAULTS,
+  momentum_scalper: MOMENTUM_SCALPER_DEFAULTS,
 }
+
+// Returns the right field list for a given bot type.
+function getSchemaFields(botType: string): BotField[] {
+  if (botType === 'rsi_dca') return RSI_DCA_FIELDS
+  if (botType === 'momentum_scalper') return MOMENTUM_SCALPER_FIELDS
+  return []
+}
+
+// Fixed symbol list for the Momentum Scalper multi-select.
+const SCALPER_SYMBOLS = ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
 
 interface Bot {
   id: string
@@ -631,10 +659,12 @@ function renderSchemaFields(
 export function CreateBotModal({ walletAddress, botType, onClose, onCreated, initialSymbol, initialDex, initialParams, initialInterval }: { walletAddress: string, botType: string, onClose: () => void, onCreated: () => void, initialSymbol?: string, initialDex?: string, initialParams?: Record<string, number>, initialInterval?: string }) {
   const ip = initialParams ?? {}
   const typeDefaults = BOT_TYPE_DEFAULTS[botType] ?? {}
+  const isMomentumScalper = botType === 'momentum_scalper'
   const [name, setName] = useState(`My ${BOT_TYPES[botType as keyof typeof BOT_TYPES]?.name ?? 'Bot'}`)
   const [symbol, setSymbol] = useState(initialSymbol ?? 'BTC')
   const [dex, setDex] = useState(initialDex ?? '')
-  const [allocatedUsdc, setAllocatedUsdc] = useState('100')
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(SCALPER_SYMBOLS)
+  const [allocatedUsdc, setAllocatedUsdc] = useState(isMomentumScalper ? '200' : '100')
   const [leverage, setLeverage] = useState(String(ip.leverage ?? typeDefaults.leverage ?? 1))
   const [params, setParams] = useState<Record<string, number>>({ ...typeDefaults, ...ip })
   const [markets, setMarkets] = useState<Market[]>([])
@@ -677,10 +707,10 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
           wallet_address: walletAddress,
           name,
           bot_type: botType,
-          symbol,
+          symbol: isMomentumScalper ? selectedSymbols.join(',') : symbol,
           allocated_usdc: parseFloat(allocatedUsdc),
           config: {
-            dex,
+            ...(isMomentumScalper ? { symbols: selectedSymbols } : { dex }),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
             ...params,
@@ -720,71 +750,99 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <label style={labelStyle}>MARKET</label>
-              {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
+          {/* Market picker — single symbol for RSI DCA; chip multi-select for Momentum Scalper */}
+          {isMomentumScalper ? (
+            <div>
+              <label style={labelStyle}>SYMBOLS TO SCAN</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                {SCALPER_SYMBOLS.map(sym => {
+                  const active = selectedSymbols.includes(sym)
+                  return (
+                    <button key={sym} type="button"
+                      onClick={() => setSelectedSymbols(prev =>
+                        active ? prev.filter(s => s !== sym) : [...prev, sym]
+                      )}
+                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        background: active ? '#f9731618' : '#13131f',
+                        color: active ? '#f97316' : '#6b7280',
+                        border: `1px solid ${active ? '#f9731644' : 'transparent'}`,
+                      }}>
+                      {sym}
+                    </button>
+                  )
+                })}
+              </div>
+              <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
+                Markets the scanner will watch. All 5 selected by default — deselect to focus on fewer pairs. At least one must remain selected.
+              </p>
             </div>
-            <div ref={dropdownRef} style={{ position: 'relative' }}>
-              {showSearch ? (
-                <input autoFocus type="text" value={marketSearch}
-                  onChange={e => setMarketSearch(e.target.value)}
-                  placeholder="Search markets…"
-                  style={{ ...inputStyle, border: '1px solid #00d4aa' }}
-                />
-              ) : (
-                <div onClick={() => setShowSearch(true)}
-                  style={{ ...inputStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
-                      {marketsLoading ? 'Loading…' : (symbol || 'Select Market')}
-                    </span>
-                    {symbol && dex && (
-                      <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
-                        {dex.toUpperCase()}
+          ) : (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={labelStyle}>MARKET</label>
+                {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
+              </div>
+              <div ref={dropdownRef} style={{ position: 'relative' }}>
+                {showSearch ? (
+                  <input autoFocus type="text" value={marketSearch}
+                    onChange={e => setMarketSearch(e.target.value)}
+                    placeholder="Search markets…"
+                    style={{ ...inputStyle, border: '1px solid #00d4aa' }}
+                  />
+                ) : (
+                  <div onClick={() => setShowSearch(true)}
+                    style={{ ...inputStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
+                        {marketsLoading ? 'Loading…' : (symbol || 'Select Market')}
                       </span>
+                      {symbol && dex && (
+                        <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
+                          {dex.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
+                  </div>
+                )}
+                {showSearch && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
+                    {[...new Set(markets.map(m => m.dex))].map(dexName => {
+                      const dexMarkets = markets.filter(m => m.dex === dexName && (
+                        m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
+                        m.display_name?.toLowerCase().includes(marketSearch.toLowerCase())
+                      ))
+                      if (!dexMarkets.length) return null
+                      return (
+                        <div key={dexName}>
+                          <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1 }}>
+                            {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
+                          </div>
+                          {dexMarkets.map(m => (
+                            <div key={m.name} onClick={() => {
+                                setSymbol(m.name)
+                                setDex(m.dex === 'main' ? '' : m.dex)
+                                setShowSearch(false)
+                                setMarketSearch('')
+                              }}
+                              style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: symbol === m.name ? '#1a1a2e' : 'transparent' }}
+                              onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                              onMouseLeave={e => (e.currentTarget.style.background = symbol === m.name ? '#1a1a2e' : 'transparent')}>
+                              <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                              <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : '—'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
+                    {!markets.filter(m => m.name.toLowerCase().includes(marketSearch.toLowerCase())).length && (
+                      <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>
                     )}
                   </div>
-                  <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
-                </div>
-              )}
-              {showSearch && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
-                  {[...new Set(markets.map(m => m.dex))].map(dexName => {
-                    const dexMarkets = markets.filter(m => m.dex === dexName && (
-                      m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
-                      m.display_name?.toLowerCase().includes(marketSearch.toLowerCase())
-                    ))
-                    if (!dexMarkets.length) return null
-                    return (
-                      <div key={dexName}>
-                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1 }}>
-                          {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
-                        </div>
-                        {dexMarkets.map(m => (
-                          <div key={m.name} onClick={() => {
-                              setSymbol(m.name)
-                              setDex(m.dex === 'main' ? '' : m.dex)
-                              setShowSearch(false)
-                              setMarketSearch('')
-                            }}
-                            style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: symbol === m.name ? '#1a1a2e' : 'transparent' }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
-                            onMouseLeave={e => (e.currentTarget.style.background = symbol === m.name ? '#1a1a2e' : 'transparent')}>
-                            <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
-                            <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : '—'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })}
-                  {!markets.filter(m => m.name.toLowerCase().includes(marketSearch.toLowerCase())).length && (
-                    <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
+          )}
           <div>
             <label style={labelStyle}>Allocation (USDC)</label>
             <input style={inputStyle} type="number" value={allocatedUsdc} onChange={e => setAllocatedUsdc(e.target.value)} />
@@ -811,7 +869,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
               <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, letterSpacing: '0.05em', marginBottom: 12 }}>STRATEGY PARAMETERS</p>
               {renderSchemaFields(
-                RSI_DCA_FIELDS,
+                getSchemaFields(botType),
                 params,
                 setParams,
                 inputStyle,
@@ -840,9 +898,13 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   // Read bot config fresh each open — bot.config takes priority; fall back to type defaults
   const def = BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}
   const cfg: any = bot.config ?? {}
+  const isMomentumScalper = bot.bot_type === 'momentum_scalper'
   const [name, setName] = useState(bot.name ?? '')
   const [symbol, setSymbol] = useState<string>(String(cfg.symbol ?? bot.symbol ?? ''))
   const [dex, setDex] = useState<string>(String(cfg.dex ?? ''))
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
+    cfg.symbols && Array.isArray(cfg.symbols) ? cfg.symbols : SCALPER_SYMBOLS
+  )
   const [allocatedUsdc, setAllocatedUsdc] = useState(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? '100'))
   const [leverage, setLeverage] = useState(String(cfg.leverage ?? def.leverage ?? 1))
   // Initialise strategy params from saved config, filling gaps with schema defaults
@@ -892,8 +954,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
       const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
       const finalConfig = {
         bot_type:      bot.bot_type,
-        symbol,
-        dex,
+        ...(isMomentumScalper ? { symbols: selectedSymbols } : { symbol, dex }),
         allocated_usdc: parseFloat(allocatedUsdc),
         leverage:       parseInt(leverage),
         ...params,
@@ -938,71 +999,99 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
 
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <label style={labelStyle}>MARKET</label>
-              {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
+          {/* Market picker — single symbol for RSI DCA; chip multi-select for Momentum Scalper */}
+          {isMomentumScalper ? (
+            <div>
+              <label style={labelStyle}>SYMBOLS TO SCAN</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                {SCALPER_SYMBOLS.map(sym => {
+                  const active = selectedSymbols.includes(sym)
+                  return (
+                    <button key={sym} type="button"
+                      onClick={() => setSelectedSymbols(prev =>
+                        active ? prev.filter(s => s !== sym) : [...prev, sym]
+                      )}
+                      style={{ padding: '6px 14px', borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        background: active ? '#f9731618' : '#13131f',
+                        color: active ? '#f97316' : '#6b7280',
+                        border: `1px solid ${active ? '#f9731644' : 'transparent'}`,
+                      }}>
+                      {sym}
+                    </button>
+                  )
+                })}
+              </div>
+              <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
+                Markets the scanner will watch. Deselect to focus on fewer pairs. At least one must remain selected.
+              </p>
             </div>
-            <div ref={dropdownRef} style={{ position: 'relative' }}>
-              {showSearch ? (
-                <input autoFocus type="text" value={marketSearch}
-                  onChange={e => setMarketSearch(e.target.value)}
-                  placeholder="Search markets…"
-                  style={{ ...inputStyle, border: '1px solid #00d4aa' }}
-                />
-              ) : (
-                <div onClick={() => setShowSearch(true)}
-                  style={{ ...inputStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
-                      {marketsLoading ? 'Loading…' : (symbol || 'Select Market')}
-                    </span>
-                    {symbol && dex && (
-                      <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
-                        {dex.toUpperCase()}
+          ) : (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={labelStyle}>MARKET</label>
+                {!marketsLoading && <span style={{ fontSize: 10, color: '#4b5563' }}>{markets.length} markets</span>}
+              </div>
+              <div ref={dropdownRef} style={{ position: 'relative' }}>
+                {showSearch ? (
+                  <input autoFocus type="text" value={marketSearch}
+                    onChange={e => setMarketSearch(e.target.value)}
+                    placeholder="Search markets…"
+                    style={{ ...inputStyle, border: '1px solid #00d4aa' }}
+                  />
+                ) : (
+                  <div onClick={() => setShowSearch(true)}
+                    style={{ ...inputStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ color: marketsLoading ? '#6b7280' : 'white', fontWeight: 700, fontSize: 14 }}>
+                        {marketsLoading ? 'Loading…' : (symbol || 'Select Market')}
                       </span>
+                      {symbol && dex && (
+                        <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '2px 6px', borderRadius: 4 }}>
+                          {dex.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
+                  </div>
+                )}
+                {showSearch && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
+                    {[...new Set(markets.map(m => m.dex))].map(dexName => {
+                      const dexMarkets = markets.filter(m => m.dex === dexName && (
+                        m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
+                        m.display_name?.toLowerCase().includes(marketSearch.toLowerCase())
+                      ))
+                      if (!dexMarkets.length) return null
+                      return (
+                        <div key={dexName}>
+                          <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1 }}>
+                            {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
+                          </div>
+                          {dexMarkets.map(m => (
+                            <div key={m.name} onClick={() => {
+                                setSymbol(m.name)
+                                setDex(m.dex === 'main' ? '' : m.dex)
+                                setShowSearch(false)
+                                setMarketSearch('')
+                              }}
+                              style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: symbol === m.name ? '#1a1a2e' : 'transparent' }}
+                              onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                              onMouseLeave={e => (e.currentTarget.style.background = symbol === m.name ? '#1a1a2e' : 'transparent')}>
+                              <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                              <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : '—'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
+                    {!markets.filter(m => m.name.toLowerCase().includes(marketSearch.toLowerCase())).length && (
+                      <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>
                     )}
                   </div>
-                  <span style={{ color: '#6b7280', fontSize: 10 }}>▼</span>
-                </div>
-              )}
-              {showSearch && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 280, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
-                  {[...new Set(markets.map(m => m.dex))].map(dexName => {
-                    const dexMarkets = markets.filter(m => m.dex === dexName && (
-                      m.name.toLowerCase().includes(marketSearch.toLowerCase()) ||
-                      m.display_name?.toLowerCase().includes(marketSearch.toLowerCase())
-                    ))
-                    if (!dexMarkets.length) return null
-                    return (
-                      <div key={dexName}>
-                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#6b7280', background: '#0a0a0f', textTransform: 'uppercase', letterSpacing: 1 }}>
-                          {dexName === 'main' ? 'Hyperliquid' : dexName.toUpperCase() + ' DEX'} ({dexMarkets.length})
-                        </div>
-                        {dexMarkets.map(m => (
-                          <div key={m.name} onClick={() => {
-                              setSymbol(m.name)
-                              setDex(m.dex === 'main' ? '' : m.dex)
-                              setShowSearch(false)
-                              setMarketSearch('')
-                            }}
-                            style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: symbol === m.name ? '#1a1a2e' : 'transparent' }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
-                            onMouseLeave={e => (e.currentTarget.style.background = symbol === m.name ? '#1a1a2e' : 'transparent')}>
-                            <span style={{ color: 'white', fontSize: 13, fontWeight: 500 }}>{m.name}</span>
-                            <span style={{ color: '#6b7280', fontSize: 12 }}>{m.mark_price > 0 ? `$${m.mark_price.toLocaleString()}` : '—'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })}
-                  {!markets.filter(m => m.name.toLowerCase().includes(marketSearch.toLowerCase())).length && (
-                    <div style={{ padding: 16, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No markets found</div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           <div>
             <label style={labelStyle}>Allocation (USDC)</label>
@@ -1030,7 +1119,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             <div style={{ borderTop: '1px solid #1a1a2e', paddingTop: 14 }}>
               <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, letterSpacing: '0.05em', marginBottom: 12 }}>STRATEGY PARAMETERS</p>
               {renderSchemaFields(
-                RSI_DCA_FIELDS,
+                getSchemaFields(bot.bot_type),
                 params,
                 setParams,
                 inputStyle,

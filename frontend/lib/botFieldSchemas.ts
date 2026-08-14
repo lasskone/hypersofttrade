@@ -48,3 +48,42 @@ export const RSI_DCA_META = {
 export const RSI_DCA_DEFAULTS: Record<string, number> = Object.fromEntries(
   RSI_DCA_FIELDS.map(f => [f.key, f.default])
 )
+
+// ── Momentum Scalper ──────────────────────────────────────────────────────────
+
+export const MOMENTUM_SCALPER_FIELDS: BotField[] = [
+  { key: 'min_score',                         label: 'Minimum Score',                   default: 75,   hint: 'Composite scanner score (0–100) required to enter a trade. Higher = fewer but higher-confidence setups. 60–70 is aggressive; 80+ is very selective.' },
+  { key: 'tp_atr_multiplier',                 label: 'Take Profit ATR Multiplier',      default: 0.30, hint: 'Take profit distance = ATR × this value. Smaller = quicker profits, higher win rate. Larger = bigger wins but fewer closes.' },
+  { key: 'sl_atr_multiplier',                 label: 'Stop Loss ATR Multiplier',        default: 0.50, hint: 'Stop loss distance = ATR × this value. Should typically exceed the TP multiplier so risk/reward stays sound (e.g. 0.50 SL vs 0.30 TP at 1.67R).' },
+  { key: 'breakeven_atr_trigger',             label: 'Breakeven Trigger (ATR)',         default: 0.25, hint: 'When price moves this many ATRs in your favour, the stop loss is moved to breakeven to eliminate downside. Set to 0 to disable.' },
+  { key: 'cooldown_after_trade_seconds',      label: 'Cooldown After Trade (s)',        default: 10,   hint: 'Seconds to wait after any trade closes before the scanner looks for the next entry. Prevents immediately re-entering a whipsaw.' },
+  { key: 'cooldown_after_loss_seconds',       label: 'Cooldown After Loss (s)',         default: 60,   hint: 'Extended cooldown applied specifically after a losing trade. Helps avoid revenge-trading in choppy or trending-against-you conditions.' },
+  { key: 'scan_interval_seconds',             label: 'Scan Interval (s)',               default: 5,    hint: 'How often the market scanner runs when idle or in a position. Lower = more responsive to fast-moving markets; higher = lower API load.' },
+  { key: 'risk_per_trade',                    label: 'Risk Per Trade (fraction)',       default: 0.02, hint: 'Fraction of current equity to risk per trade (e.g. 0.02 = 2%). Position size is calculated from this, scaled down automatically during drawdowns.' },
+  { key: 'max_daily_loss_pct',                label: 'Max Daily Loss (fraction)',       default: 0.10, hint: 'Trading halts for the rest of the UTC day if cumulative losses exceed this fraction of equity (e.g. 0.10 = 10%). Resets automatically at midnight UTC.' },
+  { key: 'max_consecutive_losses',            label: 'Max Consecutive Losses',          default: 3,    hint: 'After this many back-to-back losing trades, the bot pauses for the cooldown period below. A single win resets the counter.' },
+  { key: 'consecutive_loss_cooldown_minutes', label: 'Consecutive-Loss Cooldown (min)', default: 30,   hint: 'Minutes to pause after hitting the consecutive-loss limit. Gives markets time to settle before the bot resumes scanning.' },
+]
+
+export const MOMENTUM_SCALPER_META = {
+  name:        'Momentum Scalper',
+  emoji:       '⚡',
+  tagline:     'Multi-pair momentum with ATR-based exits',
+  description: 'Continuously scans multiple markets for high-scoring momentum setups using trend, RSI, volume, ATR volatility, pullback quality, and order-book structure. Enters on the best opportunity, manages exits with ATR-scaled TP/SL and a breakeven move, then cools down before the next scan.',
+  howItWorks:  [
+    'Scanner scores BTC, ETH, SOL, XRP, HYPE (and more) on 7 market factors every few seconds',
+    'Enters long or short on the highest-scoring pair above the minimum score threshold',
+    'Sets ATR-scaled take profit and stop loss immediately on entry',
+    'Moves SL to breakeven once price advances by the trigger ATR distance',
+    'Risk Manager tracks equity, drawdown tiers, and daily loss — sizes down or halts automatically',
+  ],
+  bestFor:     'Trending & high-momentum markets',
+  risk:        'High',
+  riskColor:   '#ef4444',
+  minAllocation: 200,
+  color:       '#f97316',
+}
+
+export const MOMENTUM_SCALPER_DEFAULTS: Record<string, number> = Object.fromEntries(
+  MOMENTUM_SCALPER_FIELDS.map(f => [f.key, f.default])
+)
