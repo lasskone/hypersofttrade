@@ -196,11 +196,28 @@ async def scan_symbol(symbol: str, config: dict) -> MarketScore:
     reasons: list[str] = []
 
     # ── Fetch data ─────────────────────────────────────────────────────────────
+    # return_exceptions=True ensures a single-symbol fetch failure (e.g. a
+    # transient 429, an upstream None response, or any unexpected error type)
+    # produces a safe default for that coroutine rather than propagating and
+    # killing the entire scan_all() gather.  _safe_scan() is already a safety
+    # net above us, but belt-and-suspenders here means one bad symbol can never
+    # prevent scores being returned for the other symbols in the same cycle.
     m5_raw, m1_raw, ob = await asyncio.gather(
         get_candles(symbol, "5m", _M5_LIMIT),
         get_candles(symbol, "1m", _M1_LIMIT),
         hyperliquid_service.get_orderbook(symbol),
+        return_exceptions=True,
     )
+    # Normalise any exception result to the corresponding safe empty default.
+    if isinstance(m5_raw, BaseException):
+        logger.warning("[scanner] %s: M5 candle fetch failed — %s", symbol, m5_raw)
+        m5_raw = []
+    if isinstance(m1_raw, BaseException):
+        logger.warning("[scanner] %s: M1 candle fetch failed — %s", symbol, m1_raw)
+        m1_raw = []
+    if isinstance(ob, BaseException):
+        logger.warning("[scanner] %s: orderbook fetch failed — %s", symbol, ob)
+        ob = {"bids": [], "asks": []}
 
     # Drop the current (still-open) candle so every indicator uses closed bars only.
     m5 = m5_raw[:-1] if len(m5_raw) > 1 else m5_raw

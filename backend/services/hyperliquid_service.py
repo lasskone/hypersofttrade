@@ -1138,6 +1138,18 @@ async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
             )
             candles = response.json()
 
+        # Explicit type guard: Hyperliquid occasionally returns JSON null (None)
+        # instead of an empty list for unknown/delisted coins or during transient
+        # outages.  Without this check the for-loop below would raise
+        # TypeError: 'NoneType' object is not iterable, which the outer except
+        # would catch and log — but the explicit check gives a cleaner warning.
+        if not isinstance(candles, list):
+            logger.warning(
+                "[get_candles] %s/%s: API returned non-list (%s: %r) — returning empty",
+                coin, interval, type(candles).__name__, candles,
+            )
+            return []
+
         result = []
         for c in candles:
             result.append({

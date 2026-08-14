@@ -52,8 +52,14 @@ class BotManager:
         exc = task.exception()
         if exc:
             db = _supabase()
+            # IMPORTANT: also set desired_status='stopped' so the worker's
+            # reconcile_loop does NOT restart this bot automatically.
+            # Without this, the worker sees desired_status='running' + no local
+            # task → Case 1 → restarts → crashes again → infinite crash loop.
+            # The user must click Start explicitly to retry after a crash.
             db.table("bots").update({
                 "status": "error",
+                "desired_status": "stopped",
                 "error_message": str(exc),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", bot_id).execute()
