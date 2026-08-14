@@ -149,6 +149,8 @@ class MomentumScalperBot:
         max_daily_loss_pct: float = 0.10,
         max_consecutive_losses: int = 3,
         consecutive_loss_cooldown_minutes: int = 30,
+        min_profit_to_fee_ratio: float = 3.0,
+        estimated_fee_pct: float = 0.07,
         # Infrastructure
         db_client=None,
         bot_id: str | None = None,
@@ -199,6 +201,8 @@ class MomentumScalperBot:
             max_consecutive_losses          = max_consecutive_losses,
             consecutive_loss_cooldown_minutes = consecutive_loss_cooldown_minutes,
             max_leverage                    = leverage,
+            min_profit_to_fee_ratio         = min_profit_to_fee_ratio,
+            estimated_fee_pct               = estimated_fee_pct,
         )
 
         # ── State ──────────────────────────────────────────────────────────────
@@ -271,17 +275,18 @@ class MomentumScalperBot:
         """Return the base-asset size for this trade.
 
         Delegates entirely to RiskManager.compute_position_size(), which
-        applies equity-based sizing with drawdown-tier scaling and a margin
-        safety cap.  See risk_manager.py for the full formula.
-
-        Returns 0.0 when stop_distance is zero (degenerate ATR) — caller
-        should treat 0.0 as "do not enter".
+        applies equity-based sizing with drawdown-tier scaling, a margin safety
+        cap, and a profitability filter (expected TP profit vs estimated fees).
+        Returns 0.0 when the setup cannot be made profitable — caller should
+        treat 0.0 as "do not enter".
         """
         stop_distance = atr_value * self._sl_atr_multiplier
         raw_size = self._risk_manager.compute_position_size(
-            entry_price   = entry_price,
-            stop_distance = stop_distance,
-            leverage      = self._leverage,
+            entry_price       = entry_price,
+            stop_distance     = stop_distance,
+            leverage          = self._leverage,
+            tp_atr_multiplier = self._tp_atr_multiplier,
+            atr_value         = atr_value,
         )
         return round_size(raw_size, sz_decimals)
 
@@ -860,6 +865,10 @@ class MomentumScalperBot:
         if self._state == "cooldown":
             self._state = "idle"
             self._log("info", "Cooldown expired — returning to IDLE")
+
+        # Keep risk-manager equity in sync with the current allocated_usdc config.
+        # No-op if already in sync; only persists when a rebaseline actually fires.
+        await self._risk_manager.sync_allocation(self._allocated_usdc)
 
         # Risk-manager gate: check drawdown, daily loss, consecutive-loss
         # cooldown, and trading_halted flag before scanning.

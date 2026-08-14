@@ -81,6 +81,8 @@ class RiskManager:
         max_consecutive_losses: int = 3,
         consecutive_loss_cooldown_minutes: int = 30,
         max_leverage: int = 5,
+        min_profit_to_fee_ratio: float = 3.0,
+        estimated_fee_pct: float = 0.07,
     ) -> None:
         self._bot_id    = bot_id
         self._db        = db_client
@@ -92,6 +94,8 @@ class RiskManager:
         self._max_consecutive_losses       = int(max_consecutive_losses)
         self._consecutive_loss_cooldown_m  = int(consecutive_loss_cooldown_minutes)
         self._max_leverage                 = int(max_leverage)
+        self._min_profit_to_fee_ratio      = float(min_profit_to_fee_ratio)
+        self._estimated_fee_pct            = float(estimated_fee_pct)
 
         # In-memory state — loaded from DB by load_or_init(), or initialised
         # to defaults if this is the first run for this bot_id.
@@ -212,6 +216,39 @@ class RiskManager:
                 exc,
             )
 
+    async def sync_allocation(self, allocated_usdc: float) -> None:
+        """Re-sync in-memory equity to the current allocated_usdc config value.
+
+        Safe to call on every scan tick — it is a no-op unless equity differs
+        from allocated_usdc by more than $0.01.  Only rebaselines when no net
+        P&L has been recorded yet (equity == high_water_mark), because that is
+        the only state where the persisted equity is purely a config value
+        rather than a record of real trading history.
+
+        If real trades have occurred (equity ≠ high_water_mark), the mismatch
+        is logged as info but equity is NOT touched — the user must manually
+        update bot_risk_state to fully reset the risk history.
+        """
+        if abs(self.equity - allocated_usdc) <= 0.01:
+            return  # already in sync — fast path
+
+        if self.equity == self.high_water_mark:
+            logger.info(
+                "[RiskManager] sync_allocation: no net P&L recorded — "
+                "re-baselining equity %.2f → %.2f (allocated_usdc changed)",
+                self.equity, allocated_usdc,
+            )
+            self.equity          = allocated_usdc
+            self.high_water_mark = allocated_usdc
+            await self._persist()
+        else:
+            logger.info(
+                "[RiskManager] sync_allocation: trade history present "
+                "(equity=%.2f hwm=%.2f) — ignoring allocated_usdc change to %.2f; "
+                "manually update bot_risk_state to fully reset risk history.",
+                self.equity, self.high_water_mark, allocated_usdc,
+            )
+
     # ── Trading gate ──────────────────────────────────────────────────────────
 
     async def can_trade(self) -> tuple[bool, str]:
@@ -306,6 +343,9 @@ class RiskManager:
         entry_price: float,
         stop_distance: float,
         leverage: int,
+        *,
+        tp_atr_multiplier: Optional[float] = None,
+        atr_value: Optional[float] = None,
     ) -> float:
         """Return the raw base-asset size for this trade (caller applies
         round_size and min-notional bumping).
@@ -321,9 +361,15 @@ class RiskManager:
 
         Safety cap: if the required margin (raw_size × entry_price / leverage)
         exceeds ``equity × _MARGIN_SAFETY_BUFFER``, raw_size is clamped so that
-        margin stays within the buffer.  The 10 % reserve covers Hyperliquid's
-        maintenance margin requirement and taker fees, preventing "Insufficient
-        margin" rejections when equity is nearly fully allocated.
+        margin stays within the buffer.
+
+        Profitability filter (when tp_atr_multiplier and atr_value are supplied):
+        Checks that the expected gross TP profit per unit exceeds
+        min_profit_to_fee_ratio × estimated round-trip fee per unit.  Because
+        both profit and fees scale linearly with size, this ratio is
+        size-independent — no position size can rescue a setup that fails here.
+        Returns 0.0 and logs the reason when the check fails so the caller can
+        skip the trade cleanly.
 
         Returns 0.0 if stop_distance ≤ 0 or entry_price ≤ 0 (degenerate inputs
         — caller should treat 0.0 as "do not enter").
@@ -355,6 +401,27 @@ class RiskManager:
                 "original_margin=%.2f > max_margin=%.2f (equity=%.2f) — capped raw_size=%.6f",
                 _MARGIN_SAFETY_BUFFER * 100, margin_required, max_margin, self.equity, raw_size,
             )
+
+        # Profitability filter: expected TP gross profit per unit vs estimated
+        # round-trip fee per unit.  Both scale linearly with size so this ratio
+        # is CONSTANT regardless of position size — bumping size cannot rescue a
+        # setup that fails here.  Return 0.0 to skip the trade cleanly.
+        if tp_atr_multiplier is not None and atr_value is not None:
+            tp_profit_per_unit = tp_atr_multiplier * atr_value
+            fee_per_unit       = entry_price * (self._estimated_fee_pct / 100.0)
+            min_profit_needed  = self._min_profit_to_fee_ratio * fee_per_unit
+            if tp_profit_per_unit < min_profit_needed:
+                logger.info(
+                    "[RiskManager] Trade skipped — TP profit/unit (%.5f) < %.1f× "
+                    "estimated fee/unit (%.5f=%.5f×%.4f): "
+                    "tp_mult=%.2f atr=%.4f entry=%.4f fee_pct=%.4f%% "
+                    "— no size can fix this; wait for higher-volatility setup or "
+                    "wider TP multiplier.",
+                    tp_profit_per_unit, self._min_profit_to_fee_ratio,
+                    min_profit_needed, self._min_profit_to_fee_ratio, fee_per_unit,
+                    tp_atr_multiplier, atr_value, entry_price, self._estimated_fee_pct,
+                )
+                return 0.0
 
         logger.info(
             "[RiskManager] Sizing: equity=%.2f drawdown=%.1f%% "

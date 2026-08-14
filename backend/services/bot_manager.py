@@ -189,6 +189,7 @@ class BotManager:
             "min_score",
             "tp_atr_multiplier", "sl_atr_multiplier", "breakeven_atr_trigger",
             "risk_per_trade", "max_daily_loss_pct",
+            "min_profit_to_fee_ratio", "estimated_fee_pct",
         ]
         _int_keys = [
             "leverage",
