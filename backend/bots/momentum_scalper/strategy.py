@@ -56,6 +56,7 @@ import logging
 import time
 from typing import Callable
 
+from bots.momentum_scalper.risk_manager import RiskManager
 from bots.momentum_scalper.scanner import (
     DEFAULT_SCANNER_CONFIG,
     MarketScore,
@@ -143,6 +144,11 @@ class MomentumScalperBot:
         cooldown_after_loss_seconds: int = 60,
         # How often to run the scanner when idle or in_position
         scan_interval_seconds: int = 5,
+        # Risk manager parameters (passed through to RiskManager)
+        risk_per_trade: float = 0.02,
+        max_daily_loss_pct: float = 0.10,
+        max_consecutive_losses: int = 3,
+        consecutive_loss_cooldown_minutes: int = 30,
         # Infrastructure
         db_client=None,
         bot_id: str | None = None,
@@ -182,6 +188,18 @@ class MomentumScalperBot:
         self._db           = db_client
         self._bot_id       = bot_id
         self._log_callback = log_callback
+
+        # ── Risk manager ────────────────────────────────────────────────────────
+        self._risk_manager = RiskManager(
+            bot_id                          = bot_id,
+            db_client                       = db_client,
+            allocated_usdc                  = allocated_usdc,
+            risk_per_trade                  = risk_per_trade,
+            max_daily_loss_pct              = max_daily_loss_pct,
+            max_consecutive_losses          = max_consecutive_losses,
+            consecutive_loss_cooldown_minutes = consecutive_loss_cooldown_minutes,
+            max_leverage                    = leverage,
+        )
 
         # ── State ──────────────────────────────────────────────────────────────
         self._reset_state()
@@ -246,44 +264,21 @@ class MomentumScalperBot:
         atr_value: float,
         sz_decimals: int,
     ) -> float:
-        """Return the base-asset size for this trade using ATR-risk-based sizing.
+        """Return the base-asset size for this trade.
 
-        Formula (see module docstring for full explanation):
-            risk_capital  = allocated_usdc × 0.02
-            stop_distance = atr_value × sl_atr_multiplier
-            raw_size      = (risk_capital / stop_distance) × leverage
+        Delegates entirely to RiskManager.compute_position_size(), which
+        applies equity-based sizing with drawdown-tier scaling and a margin
+        safety cap.  See risk_manager.py for the full formula.
 
-        Safety cap:
-            if (raw_size × entry_price) / leverage > allocated_usdc:
-                raw_size = (allocated_usdc × leverage) / entry_price
-
-        NOTE: actual dollar loss at SL = risk_capital × leverage,
-        NOT risk_capital alone.  At 5× leverage this is 10 % of allocated_usdc.
-        Review leverage setting before live deployment.
+        Returns 0.0 when stop_distance is zero (degenerate ATR) — caller
+        should treat 0.0 as "do not enter".
         """
-        risk_capital  = self._allocated_usdc * 0.02
         stop_distance = atr_value * self._sl_atr_multiplier
-
-        if stop_distance <= 0:
-            # Degenerate case (ATR = 0): fall back to max-margin sizing.
-            return round_size(
-                (self._allocated_usdc * self._leverage) / entry_price,
-                sz_decimals,
-            )
-
-        raw_size = (risk_capital / stop_distance) * self._leverage
-
-        # Safety cap: do not require more margin than what is allocated.
-        margin_required = (raw_size * entry_price) / self._leverage
-        if margin_required > self._allocated_usdc:
-            raw_size = (self._allocated_usdc * self._leverage) / entry_price
-            self._log(
-                "warning",
-                f"Sizing capped by margin limit: "
-                f"original_margin={margin_required:.2f} > allocated={self._allocated_usdc:.2f} — "
-                f"capped size={raw_size:.6f}",
-            )
-
+        raw_size = self._risk_manager.compute_position_size(
+            entry_price   = entry_price,
+            stop_distance = stop_distance,
+            leverage      = self._leverage,
+        )
         return round_size(raw_size, sz_decimals)
 
     def _ensure_min_notional(
@@ -693,14 +688,29 @@ class MomentumScalperBot:
             self._log("error", f"Breakeven SL placement failed: {exc}")
 
     async def _on_close(self, live_oids: set[int]) -> None:
-        """Handle position close: cancel resting orders, close position_group,
-        determine outcome, enter cooldown.
+        """Handle position close: compute PnL, record risk result, cancel orders,
+        close position_group, enter cooldown.
 
         Outcome detection (conservative on ambiguity):
-          • TP oid still live AND SL oid gone → SL hit → longer cooldown
           • SL oid still live AND TP oid gone → TP hit → shorter cooldown
+          • TP oid still live AND SL oid gone → SL hit → longer cooldown
           • Both gone / unknown → treat as loss → longer cooldown
+
+        PnL approximation
+        -----------------
+        Exit price is the current mark price fetched via get_all_mids() at the
+        moment the position close is detected.  This is NOT the exact exchange
+        trigger-fill price and does NOT include fees or funding.  It is accurate
+        enough for risk-sizing and drawdown-protection purposes.  Do not use
+        this value for accounting or tax reporting.
         """
+        # Snapshot position state before any mutations (cancel / reset_state
+        # will clear these fields).
+        snap_entry_price    = self._entry_price
+        snap_position_size  = self._position_size
+        snap_is_long        = self._is_long
+        snap_current_coin   = self._current_coin
+
         tp_alive = self._tp_oid is not None and self._tp_oid in live_oids
         sl_alive = self._sl_oid is not None and self._sl_oid in live_oids
 
@@ -721,8 +731,46 @@ class MomentumScalperBot:
             "info",
             f"Position closed — outcome={outcome} "
             f"(tp_alive={tp_alive} sl_alive={sl_alive}) | "
-            f"entry={self._entry_price:.4f} size={self._position_size:.4f} | "
+            f"entry={snap_entry_price:.4f} size={snap_position_size:.4f} | "
             f"cooldown={cooldown}s",
+        )
+
+        # ── Approximate PnL and update risk manager ────────────────────────────
+        # Fetch current mark price as the exit-price estimate.
+        exit_price = snap_entry_price   # fallback if mid fetch fails
+        short_coin = (
+            snap_current_coin.split(":")[-1]
+            if snap_current_coin and ":" in snap_current_coin
+            else snap_current_coin or ""
+        )
+        if short_coin:
+            try:
+                mids = await hyperliquid_service.get_all_mids()
+                fetched = float(mids.get(short_coin, 0))
+                if fetched > 0:
+                    exit_price = fetched
+            except Exception as exc:
+                self._log("warning", f"get_all_mids() for PnL estimate failed: {exc}")
+
+        direction_sign = 1.0 if snap_is_long else -1.0
+        pnl_usd = (exit_price - snap_entry_price) * snap_position_size * direction_sign
+
+        self._log(
+            "info",
+            f"PnL estimate: entry={snap_entry_price:.4f} exit≈{exit_price:.4f} "
+            f"size={snap_position_size:.4f} direction={'long' if snap_is_long else 'short'} "
+            f"→ pnl≈${pnl_usd:.2f} (mark-price approximation, excludes fees/funding)",
+        )
+
+        await self._risk_manager.record_trade_result(pnl_usd)
+
+        self._log(
+            "info",
+            f"Risk state after trade: equity={self._risk_manager.equity:.2f} "
+            f"hwm={self._risk_manager.high_water_mark:.2f} "
+            f"drawdown={self._risk_manager._drawdown_pct()*100:.1f}% "
+            f"consecutive_losses={self._risk_manager.consecutive_losses} "
+            f"halted={self._risk_manager.trading_halted}",
         )
 
         # Cancel all resting orders.
@@ -746,7 +794,7 @@ class MomentumScalperBot:
 
     async def _tick_idle(self) -> None:
         """Run the scanner and enter a position if a qualifying opportunity exists."""
-        # Skip if in cooldown.
+        # Skip if in trade-level cooldown (distinct from risk-manager cooldown).
         if time.monotonic() < self._cooldown_until:
             remaining = self._cooldown_until - time.monotonic()
             self._log("info", f"Cooldown active — {remaining:.0f}s remaining")
@@ -756,6 +804,14 @@ class MomentumScalperBot:
         if self._state == "cooldown":
             self._state = "idle"
             self._log("info", "Cooldown expired — returning to IDLE")
+
+        # Risk-manager gate: check drawdown, daily loss, consecutive-loss
+        # cooldown, and trading_halted flag before scanning.
+        # This is a hard stop — not the same as the trade-level cooldown above.
+        can_trade, rm_reason = await self._risk_manager.can_trade()
+        if not can_trade:
+            self._log("warning", f"Risk manager blocked entry: {rm_reason}")
+            return
 
         # Run scanner.
         try:
@@ -807,6 +863,11 @@ class MomentumScalperBot:
         - IDLE / COOLDOWN: run scanner, enter if qualifying opportunity found.
         - IN_POSITION: poll position, detect close, manage breakeven SL.
         """
+        # Load (or initialise) persisted risk state from DB.
+        # Must run before any trading decisions — this is what makes drawdown
+        # protection survive Railway restarts.
+        await self._risk_manager.load_or_init()
+
         # Set leverage on startup (isolated margin) for all symbols.
         for symbol in self._symbols:
             try:
