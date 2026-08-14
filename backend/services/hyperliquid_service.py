@@ -711,6 +711,7 @@ class HyperliquidService:
                 constants.MAINNET_API_URL,
                 account_address=master_address,
                 perp_dexs=dex_list if dex_list else None,
+                timeout=_EXCHANGE_CALL_TIMEOUT_S,
             )
 
             if order_type == "market":
@@ -788,7 +789,7 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
             try:
                 result = await asyncio.wait_for(
                     asyncio.to_thread(exchange.cancel, coin, order_id),
@@ -849,7 +850,7 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
 
             try:
                 result = await asyncio.wait_for(
@@ -905,6 +906,7 @@ class HyperliquidService:
             account, constants.MAINNET_API_URL,
             account_address=master_address,
             perp_dexs=dex_list if dex_list else None,
+            timeout=_EXCHANGE_CALL_TIMEOUT_S,
         )
 
         # Price rounding — consistent with existing modify_order logic
@@ -971,7 +973,7 @@ class HyperliquidService:
         # coin has already been stripped to short name at this point
         # We need the original coin passed to the method — use the dex extracted before stripping
         dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
 
         # Close = opposite side, IOC market order with 5% slippage
         is_close_buy = not is_long
@@ -1034,7 +1036,7 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
 
             try:
                 result = await asyncio.wait_for(
@@ -1100,7 +1102,7 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None)
+            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
 
             if tp_price is not None and tp_price > 0:
                 tp_px = round(tp_price) if tp_price >= 1000 else round(tp_price, 1) if tp_price >= 10 else round(tp_price, 2)
