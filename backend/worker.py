@@ -437,16 +437,37 @@ async def reconcile_loop():
                 if desired == "running" and not is_running_locally:
                     # ── Case 1: should be running, task is absent → start it ───
                     if not wallet_address:
-                        print(f"[worker] Cannot start bot {bot_id} — wallet_address missing (user row: {user_row})", flush=True)
+                        reason = f"wallet_address missing from user row (user_row={user_row})"
+                        print(f"[worker] Cannot start bot {bot_id} — {reason}", flush=True)
+                        db.table("bots").update({
+                            "status": "error",
+                            "desired_status": "stopped",
+                            "error_message": reason,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", bot_id).execute()
+                        bot_manager._add_log(bot_id, "error", f"[reconcile] {reason}")
                         continue
                     print(f"[worker] Starting bot {bot_id} ({bot.get('name')}) for wallet {wallet_address[:8]}...", flush=True)
                     try:
                         cfg = bot.get("config", {})
                         await bot_manager.start(bot_id, cfg, wallet_address)
-                        db.table("bots").update({
-                            "status": "running",
-                            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", bot_id).execute()
+                        # FIX 1: Re-verify the row still exists after start() returns.
+                        # The user may have clicked Delete while the start() coroutine was
+                        # awaited — if the row is gone, cancel the task immediately rather
+                        # than leaving it orphaned until the next reconcile cycle.
+                        still_exists = db.table("bots").select("id").eq("id", bot_id).limit(1).execute()
+                        if not still_exists.data:
+                            print(
+                                f"[worker] Bot {bot_id} was deleted mid-start — "
+                                f"cancelling orphaned task immediately",
+                                flush=True,
+                            )
+                            await bot_manager.stop(bot_id)
+                        else:
+                            db.table("bots").update({
+                                "status": "running",
+                                "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+                            }).eq("id", bot_id).execute()
                     except Exception as e:
                         print(f"[worker] Failed to start bot {bot_id}: {e}", flush=True)
                         db.table("bots").update({

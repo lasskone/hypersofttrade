@@ -177,8 +177,13 @@ export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
 
   const handleAction = async (bot: Bot, action: 'start' | 'stop' | 'delete') => {
     if (action === 'delete') {
+      // FIX 3: Clearer warning when the bot is actively running.
+      const isActive = bot.status === 'running'
+      const message = isActive
+        ? `"${bot.name}" is currently running. Deleting it will stop and permanently remove it. Continue?`
+        : `Delete bot "${bot.name}"? This cannot be undone.`
       setConfirmAction({
-        message: `Delete bot "${bot.name}"? This cannot be undone.`,
+        message,
         onConfirm: async () => {
           try {
             const res = await fetch(`${API_URL}/bots/${bot.id}`, { method: 'DELETE' })
@@ -228,18 +233,43 @@ export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
     setConfirmAction({
       message: `Delete ${selectedBots.size} bot${selectedBots.size > 1 ? 's' : ''}? This cannot be undone.`,
       onConfirm: async () => {
-        try {
-          await Promise.all(
-            Array.from(selectedBots).map(botId =>
-              fetch(`${API_URL}/bots/${botId}`, { method: 'DELETE' })
-            )
+        // FIX 2: Use Promise.allSettled so partial failures are visible by bot name.
+        const botIds = Array.from(selectedBots)
+        const results = await Promise.allSettled(
+          botIds.map(botId =>
+            fetch(`${API_URL}/bots/${botId}`, { method: 'DELETE' }).then(async res => {
+              if (!res.ok) {
+                const text = await res.text().catch(() => '')
+                let detail = text
+                try { detail = (JSON.parse(text) as any)?.detail ?? text } catch { /* not JSON */ }
+                throw new Error(`HTTP ${res.status}: ${detail}`)
+              }
+            })
           )
-          showToast(`${selectedBots.size} bot(s) deleted`)
-          setSelectedBots(new Set())
-          fetchBots()
-        } catch {
-          showToast('Failed to delete some bots')
+        )
+        const succeededIds = new Set(botIds.filter((_, i) => results[i].status === 'fulfilled'))
+        const failedEntries = botIds
+          .map((id, i) => ({ id, result: results[i] }))
+          .filter(({ result }) => result.status === 'rejected')
+          .map(({ id, result }) => {
+            const botName = bots.find(b => b.id === id)?.name ?? id
+            const reason = (result as PromiseRejectedResult).reason?.message ?? 'unknown error'
+            return `${botName} (${reason})`
+          })
+
+        if (failedEntries.length === 0) {
+          showToast(`${succeededIds.size} bot${succeededIds.size !== 1 ? 's' : ''} deleted`)
+        } else {
+          showToast(
+            `Deleted ${succeededIds.size} of ${botIds.length} bots. Failed: ${failedEntries.join(', ')}`
+          )
         }
+        setSelectedBots(prev => {
+          const next = new Set(prev)
+          succeededIds.forEach(id => next.delete(id))
+          return next
+        })
+        fetchBots()
         setConfirmAction(null)
       },
     })
