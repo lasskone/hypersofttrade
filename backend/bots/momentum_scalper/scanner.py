@@ -48,8 +48,13 @@ DEFAULT_SCANNER_CONFIG: dict = {
     "min_adx":     20.0,     # ADX below this = market too flat for trend signals
     # ── ATR / volatility ──────────────────────────────────────────────────────
     "atr_period":  14,       # ATR period (M1)
-    "min_atr_pct": 0.08,     # min ATR% — quieter markets score 0 volatility
-    "max_atr_pct": 0.80,     # max ATR% — too-wild markets score 0 volatility
+    # Recalibrated 2026-08-13 from live calibrate.py / bot-log observation
+    # during Asian session (BTC/ETH/SOL/XRP/HYPE M1 ATR% range: 0.020–0.060%).
+    # Original values (0.08 / 0.80) were 3-4× too high, scoring every Asian-
+    # session bar as "too quiet → 0/15".  London/NY overlap data not yet
+    # collected — re-check these bounds once overlap logs are available.
+    "min_atr_pct": 0.015,    # was 0.08 — floor: quieter than this scores 0
+    "max_atr_pct": 0.25,     # was 0.80 — ceiling: wilder than this scores 0
     # ── Entry quality ─────────────────────────────────────────────────────────
     "max_entry_distance_atr": 0.50,  # max distance from EMA20(M1) in ATR units
     # ── Execution ─────────────────────────────────────────────────────────────
@@ -383,29 +388,45 @@ async def scan_symbol(symbol: str, config: dict) -> MarketScore:
     reasons.append(f"Volume: ratio={vol_ratio:.2f} → {volume_score:.0f}/15")
 
     # ── VOLATILITY SCORE (15 pts) ─────────────────────────────────────────────
-    # Sweet-spot band: 0.12–0.50% ATR gives the optimal balance between enough
-    # price movement for scalping profit and not so much that stops get run on noise.
+    # Fully config-driven: all tier boundaries derive proportionally from
+    # cfg["min_atr_pct"] and cfg["max_atr_pct"], so recalibration is a config
+    # change not a code change.
+    #
+    # Tier structure (fractions of the [lo, hi] span):
+    #   < lo                         → 0   too quiet
+    #   lo … lo+0.15×span            → 7   low
+    #   lo+0.15×span … lo+0.35×span  → 12  moderate
+    #   lo+0.35×span … lo+0.85×span  → 15  optimal  (widest band)
+    #   lo+0.85×span … hi            → 8   elevated
+    #   > hi                         → 0   too wild
+    lo   = cfg["min_atr_pct"]
+    hi   = cfg["max_atr_pct"]
+    span = hi - lo
+
     if atr14_m1 is None:
         volatility_score = 0.0
         reasons.append("Volatility: ATR unavailable → 0/15")
-    elif atr_pct < 0.08 or atr_pct > 0.80:
+    elif atr_pct < lo or atr_pct > hi:
         volatility_score = 0.0
         reasons.append(
-            f"Volatility: ATR%={atr_pct:.3f}% "
-            f"({'too quiet' if atr_pct < 0.08 else 'too wild'}) → 0/15"
+            f"Volatility: ATR%={atr_pct:.4f}% "
+            f"({'too quiet' if atr_pct < lo else 'too wild'}, "
+            f"band=[{lo:.3f}–{hi:.3f}]%) → 0/15"
         )
-    elif atr_pct < 0.12:
-        volatility_score = 7.0
-        reasons.append(f"Volatility: ATR%={atr_pct:.3f}% (low) → 7/15")
-    elif atr_pct < 0.20:
-        volatility_score = 12.0
-        reasons.append(f"Volatility: ATR%={atr_pct:.3f}% (moderate) → 12/15")
-    elif atr_pct < 0.50:
-        volatility_score = 15.0
-        reasons.append(f"Volatility: ATR%={atr_pct:.3f}% (optimal) → 15/15")
-    else:   # 0.50 – 0.80
-        volatility_score = 8.0
-        reasons.append(f"Volatility: ATR%={atr_pct:.3f}% (elevated) → 8/15")
+    else:
+        frac = (atr_pct - lo) / span if span > 0 else 0.0
+        if frac < 0.15:
+            volatility_score = 7.0
+        elif frac < 0.35:
+            volatility_score = 12.0
+        elif frac < 0.85:
+            volatility_score = 15.0
+        else:
+            volatility_score = 8.0
+        reasons.append(
+            f"Volatility: ATR%={atr_pct:.4f}% "
+            f"(band=[{lo:.3f}–{hi:.3f}]%, frac={frac:.2f}) → {volatility_score:.0f}/15"
+        )
 
     # ── PULLBACK QUALITY (10 pts) ─────────────────────────────────────────────
     # Distance component (7 pts): how close is price to EMA20(M1) in ATR units?

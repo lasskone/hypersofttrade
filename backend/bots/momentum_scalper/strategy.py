@@ -227,6 +227,10 @@ class MomentumScalperBot:
         self._tp_oid:    int | None = None
         self._sl_oid:    int | None = None
 
+        # Unix timestamp (ms) when the entry order was placed — used to filter
+        # post-entry fills from get_user_fills() in _on_close().
+        self._entry_time: int = 0
+
         # Supabase position_group UUID
         self._position_group_id: str | None = None
 
@@ -429,6 +433,9 @@ class MomentumScalperBot:
         )
 
         # ── 1. Market IOC entry ────────────────────────────────────────────────
+        # Record placement time before the call so fills with time > this
+        # value can be identified as exit fills in _on_close().
+        self._entry_time = int(time.time() * 1000)
         try:
             result = await hyperliquid_service.place_order(
                 private_key    = self._private_key,
@@ -691,76 +698,116 @@ class MomentumScalperBot:
         """Handle position close: compute PnL, record risk result, cancel orders,
         close position_group, enter cooldown.
 
-        Outcome detection (conservative on ambiguity):
-          • SL oid still live AND TP oid gone → TP hit → shorter cooldown
-          • TP oid still live AND SL oid gone → SL hit → longer cooldown
-          • Both gone / unknown → treat as loss → longer cooldown
+        PnL and outcome resolution — two-tier approach
+        -----------------------------------------------
+        Primary (authoritative): fetch recent fills via get_user_fills() and
+        filter to this coin + time > entry order placement time.  Sum closedPnl
+        across all matching fills.  Outcome = sign of the sum: positive → TP_HIT,
+        negative → SL_HIT.  This is exact (exchange-side, fee-adjusted) and
+        immune to the oid-liveness race condition where Hyperliquid auto-cancels
+        the sibling reduce-only order faster than our poll interval.
 
-        PnL approximation
-        -----------------
-        Exit price is the current mark price fetched via get_all_mids() at the
-        moment the position close is detected.  This is NOT the exact exchange
-        trigger-fill price and does NOT include fees or funding.  It is accurate
-        enough for risk-sizing and drawdown-protection purposes.  Do not use
-        this value for accounting or tax reporting.
+        Fallback (low confidence): if fills are unavailable (API error or no
+        matches), fall back to the oid-liveness heuristic for outcome and
+        mark-price for PnL.  Both are approximations; logged as warnings.
         """
-        # Snapshot position state before any mutations (cancel / reset_state
+        # Snapshot all position state before any mutations (cancel / reset_state
         # will clear these fields).
-        snap_entry_price    = self._entry_price
-        snap_position_size  = self._position_size
-        snap_is_long        = self._is_long
-        snap_current_coin   = self._current_coin
+        snap_entry_price   = self._entry_price
+        snap_position_size = self._position_size
+        snap_is_long       = self._is_long
+        snap_current_coin  = self._current_coin
+        snap_entry_time    = self._entry_time   # ms, set at entry order placement
 
-        tp_alive = self._tp_oid is not None and self._tp_oid in live_oids
-        sl_alive = self._sl_oid is not None and self._sl_oid in live_oids
-
-        if sl_alive and not tp_alive:
-            outcome  = "TP_HIT"
-            cooldown = self._cooldown_after_trade_s
-        elif tp_alive and not sl_alive:
-            outcome  = "SL_HIT"
-            cooldown = self._cooldown_after_loss_s
-        else:
-            # Both gone (flat by manual close / liquidation / unknown) or
-            # both still live (should not happen if position is flat — treat
-            # conservatively).
-            outcome  = "CLOSED_UNKNOWN"
-            cooldown = self._cooldown_after_loss_s
-
-        self._log(
-            "info",
-            f"Position closed — outcome={outcome} "
-            f"(tp_alive={tp_alive} sl_alive={sl_alive}) | "
-            f"entry={snap_entry_price:.4f} size={snap_position_size:.4f} | "
-            f"cooldown={cooldown}s",
-        )
-
-        # ── Approximate PnL and update risk manager ────────────────────────────
-        # Fetch current mark price as the exit-price estimate.
-        exit_price = snap_entry_price   # fallback if mid fetch fails
         short_coin = (
             snap_current_coin.split(":")[-1]
             if snap_current_coin and ":" in snap_current_coin
             else snap_current_coin or ""
         )
-        if short_coin:
-            try:
-                mids = await hyperliquid_service.get_all_mids()
-                fetched = float(mids.get(short_coin, 0))
-                if fetched > 0:
-                    exit_price = fetched
-            except Exception as exc:
-                self._log("warning", f"get_all_mids() for PnL estimate failed: {exc}")
 
-        direction_sign = 1.0 if snap_is_long else -1.0
-        pnl_usd = (exit_price - snap_entry_price) * snap_position_size * direction_sign
+        tp_alive = self._tp_oid is not None and self._tp_oid in live_oids
+        sl_alive = self._sl_oid is not None and self._sl_oid in live_oids
+
+        # oid-liveness heuristic — used as fallback when fills are unavailable.
+        if sl_alive and not tp_alive:
+            oid_outcome  = "TP_HIT"
+            oid_cooldown = self._cooldown_after_trade_s
+        elif tp_alive and not sl_alive:
+            oid_outcome  = "SL_HIT"
+            oid_cooldown = self._cooldown_after_loss_s
+        else:
+            # Both gone (auto-cancel race, manual close, liquidation) or both
+            # still live — treat conservatively.
+            oid_outcome  = "CLOSED_UNKNOWN"
+            oid_cooldown = self._cooldown_after_loss_s
 
         self._log(
             "info",
-            f"PnL estimate: entry={snap_entry_price:.4f} exit≈{exit_price:.4f} "
-            f"size={snap_position_size:.4f} direction={'long' if snap_is_long else 'short'} "
-            f"→ pnl≈${pnl_usd:.2f} (mark-price approximation, excludes fees/funding)",
+            f"Position closed — oid_heuristic={oid_outcome} "
+            f"(tp_alive={tp_alive} sl_alive={sl_alive}) | "
+            f"entry={snap_entry_price:.4f} size={snap_position_size:.4f}",
         )
+
+        # ── Primary: authoritative PnL from fills ─────────────────────────────
+        try:
+            raw_fills = await hyperliquid_service.get_user_fills(self._master_address)
+        except Exception as exc:
+            raw_fills = []
+            self._log("warning", f"get_user_fills() failed, falling back to mark-price PnL estimate: {exc}")
+
+        # Filter: same coin, placed AFTER entry order (exit fills only).
+        matching_fills = [
+            f for f in (raw_fills or [])
+            if (
+                f.get("coin", "") in (short_coin, snap_current_coin)
+                and f.get("time", 0) > snap_entry_time
+            )
+        ]
+        fills_pnl = sum(float(f.get("closedPnl", "0") or "0") for f in matching_fills)
+
+        if matching_fills:
+            pnl_usd = fills_pnl
+            # Outcome from fills sign — overrides oid heuristic.
+            if fills_pnl > 0:
+                outcome  = "TP_HIT"
+                cooldown = self._cooldown_after_trade_s
+            elif fills_pnl < 0:
+                outcome  = "SL_HIT"
+                cooldown = self._cooldown_after_loss_s
+            else:
+                # Exactly zero closed PnL (breakeven close) — rare; keep oid outcome.
+                outcome  = oid_outcome
+                cooldown = oid_cooldown
+            self._log(
+                "info",
+                f"PnL from fills (authoritative): {len(matching_fills)} fill(s) "
+                f"matched coin={short_coin} after t={snap_entry_time}ms "
+                f"→ pnl=${pnl_usd:.4f} | outcome={outcome} cooldown={cooldown}s",
+            )
+        else:
+            # ── Fallback: mark-price estimate ──────────────────────────────────
+            outcome  = oid_outcome
+            cooldown = oid_cooldown
+            exit_price = snap_entry_price   # last resort if mids also fail
+            if short_coin:
+                try:
+                    mids = await hyperliquid_service.get_all_mids()
+                    fetched = float(mids.get(short_coin, 0))
+                    if fetched > 0:
+                        exit_price = fetched
+                except Exception as exc:
+                    self._log("warning", f"get_all_mids() for PnL fallback failed: {exc}")
+            direction_sign = 1.0 if snap_is_long else -1.0
+            pnl_usd = (exit_price - snap_entry_price) * snap_position_size * direction_sign
+            self._log(
+                "warning",
+                f"PnL from mark-price (fallback, low confidence): no fills matched "
+                f"coin={short_coin} after t={snap_entry_time}ms | "
+                f"entry={snap_entry_price:.4f} exit≈{exit_price:.4f} "
+                f"size={snap_position_size:.4f} direction={'long' if snap_is_long else 'short'} "
+                f"→ pnl≈${pnl_usd:.2f} (excludes fees/funding) | "
+                f"outcome={outcome} cooldown={cooldown}s",
+            )
 
         await self._risk_manager.record_trade_result(pnl_usd)
 
