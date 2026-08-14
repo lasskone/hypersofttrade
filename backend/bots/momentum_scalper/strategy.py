@@ -831,6 +831,8 @@ class MomentumScalperBot:
             f"dir={best.direction} "
             f"(threshold={self._min_score})",
         )
+        for r in results:
+            self._log("info", f"  [{r.symbol} {r.total_score:.1f} {r.direction}] " + " | ".join(r.reasons))
 
         if best.total_score < self._min_score:
             self._log("info", f"No qualifying opportunity (best={best.total_score:.1f} < {self._min_score})")
