@@ -225,10 +225,26 @@ async def get_bot_details(bot_id: str, wallet_address: str):
     logs_res = db.table("bot_logs").select("*").eq("bot_id", bot_id).order("created_at", desc=True).limit(500).execute()
     logs: list[dict] = logs_res.data or []
 
-    # Hyperliquid fills filtered by coin + bot creation timestamp
-    coin       = bot.get("symbol", "")
-    coin_short = coin.split(":")[-1] if ":" in coin else coin
-    created_at = bot.get("created_at", "")
+    # ── Stats via position_orders / position_groups ────────────────────────────
+    # We do NOT filter userFills by bot.symbol because momentum_scalper stores
+    # symbol as a comma-joined string ("BTC,ETH,SOL,XRP,HYPE") which never
+    # matches a single fill's coin field.  Instead we use the position_orders
+    # table (oid → bot_id) as the authoritative fill attribution source, and
+    # position_groups (bot_id, status='closed') for the trade count.
+
+    # All oids ever placed by this bot (entry, tp, sl, dca_*).
+    po_res = db.table("position_orders").select("oid").eq("bot_id", bot_id).execute()
+    bot_oids: set[int] = {int(row["oid"]) for row in (po_res.data or [])}
+
+    # Completed round-trips = closed position_groups for this bot.
+    pg_res = (
+        db.table("position_groups")
+        .select("id, entry_price, coin")
+        .eq("bot_id", bot_id)
+        .eq("status", "closed")
+        .execute()
+    )
+    closed_trades = pg_res.data or []
 
     fills: list[dict] = []
     stats: dict = {
@@ -238,9 +254,6 @@ async def get_bot_details(bot_id: str, wallet_address: str):
     }
 
     try:
-        created_ts_ms = int(
-            datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp() * 1000
-        )
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 "https://api.hyperliquid.xyz/info",
@@ -249,23 +262,25 @@ async def get_bot_details(bot_id: str, wallet_address: str):
             )
             all_fills = resp.json()
 
-        if isinstance(all_fills, list):
+        if isinstance(all_fills, list) and bot_oids:
             fills = [
                 f for f in all_fills
-                if isinstance(f, dict)
-                and f.get("coin") in (coin, coin_short)
-                and int(f.get("time", 0)) >= created_ts_ms
+                if isinstance(f, dict) and int(f.get("oid", -1)) in bot_oids
             ]
             fills.sort(key=lambda f: int(f.get("time", 0)), reverse=True)
 
-        total_trades = len(fills)
+        # total_trades = completed position_groups (one round-trip per trade),
+        # not raw fill count (which double-counts entry+exit fills per trade).
+        total_trades = len(closed_trades)
         total_pnl    = sum(float(f.get("closedPnl", 0) or 0) for f in fills)
         total_fees   = sum(float(f.get("fee",       0) or 0) for f in fills)
         net_pnl      = total_pnl - total_fees
-        winning      = [f for f in fills if float(f.get("closedPnl", 0) or 0) > 0]
-        win_rate     = len(winning) / total_trades * 100 if total_trades > 0 else 0.0
+        # win_rate: % of exit fills (closedPnl != 0) that are profitable.
+        exit_fills   = [f for f in fills if float(f.get("closedPnl", 0) or 0) != 0]
+        winning      = [f for f in exit_fills if float(f.get("closedPnl", 0) or 0) > 0]
+        win_rate     = len(winning) / len(exit_fills) * 100 if exit_fills else 0.0
         avg_pnl      = net_pnl / total_trades if total_trades > 0 else 0.0
-        pnls         = [float(f.get("closedPnl", 0) or 0) for f in fills]
+        exit_pnls    = [float(f.get("closedPnl", 0) or 0) for f in exit_fills]
         total_volume = sum(
             float(f.get("px", 0) or 0) * float(f.get("sz", 0) or 0) for f in fills
         )
@@ -276,8 +291,8 @@ async def get_bot_details(bot_id: str, wallet_address: str):
             "net_pnl":       round(net_pnl,      4),
             "win_rate":      round(win_rate,      1),
             "avg_trade_pnl": round(avg_pnl,       4),
-            "best_trade":    round(max(pnls), 4) if pnls else 0.0,
-            "worst_trade":   round(min(pnls), 4) if pnls else 0.0,
+            "best_trade":    round(max(exit_pnls), 4) if exit_pnls else 0.0,
+            "worst_trade":   round(min(exit_pnls), 4) if exit_pnls else 0.0,
             "total_volume":  round(total_volume,  2),
         }
     except Exception as e:
