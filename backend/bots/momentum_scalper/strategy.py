@@ -131,8 +131,8 @@ class MomentumScalperBot:
         scanner_config: dict | None = None,
         min_score: float = 75.0,
         # ATR-based TP / SL
-        tp_atr_multiplier: float = 0.30,
-        sl_atr_multiplier: float = 0.50,
+        tp_atr_multiplier: float = 1.0,
+        sl_atr_multiplier: float = 1.67,
         # Breakeven SL: move SL to entry + fee_buffer after price moves
         # breakeven_atr_trigger × ATR in the trade's favour.
         # Set to None to disable.

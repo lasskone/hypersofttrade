@@ -53,8 +53,8 @@ export const RSI_DCA_DEFAULTS: Record<string, number> = Object.fromEntries(
 
 export const MOMENTUM_SCALPER_FIELDS: BotField[] = [
   { key: 'min_score',                         label: 'Minimum Score',                   default: 75,   hint: 'Composite scanner score (0–100) required to enter a trade. Higher = fewer but higher-confidence setups. 60–70 is aggressive; 80+ is very selective.' },
-  { key: 'tp_atr_multiplier',                 label: 'Take Profit ATR Multiplier',      default: 0.30, hint: 'Take profit distance = ATR × this value. Smaller = quicker profits, higher win rate. Larger = bigger wins but fewer closes.' },
-  { key: 'sl_atr_multiplier',                 label: 'Stop Loss ATR Multiplier',        default: 0.50, hint: 'Stop loss distance = ATR × this value. Should typically exceed the TP multiplier so risk/reward stays sound (e.g. 0.50 SL vs 0.30 TP at 1.67R).' },
+  { key: 'tp_atr_multiplier',                 label: 'Take Profit ATR Multiplier',      default: 1.0,  hint: 'Take profit distance = ATR × this value. Smaller = quicker profits, higher win rate. Larger = bigger wins but fewer closes.' },
+  { key: 'sl_atr_multiplier',                 label: 'Stop Loss ATR Multiplier',        default: 1.67, hint: 'Stop loss distance = ATR × this value. Should typically exceed the TP multiplier so risk/reward stays sound (e.g. 1.67 SL vs 1.0 TP at 1.67R).' },
   { key: 'breakeven_atr_trigger',             label: 'Breakeven Trigger (ATR)',         default: 0.25, hint: 'When price moves this many ATRs in your favour, the stop loss is moved to breakeven to eliminate downside. Set to 0 to disable.' },
   { key: 'cooldown_after_trade_seconds',      label: 'Cooldown After Trade (s)',        default: 10,   hint: 'Seconds to wait after any trade closes before the scanner looks for the next entry. Prevents immediately re-entering a whipsaw.' },
   { key: 'cooldown_after_loss_seconds',       label: 'Cooldown After Loss (s)',         default: 60,   hint: 'Extended cooldown applied specifically after a losing trade. Helps avoid revenge-trading in choppy or trending-against-you conditions.' },
