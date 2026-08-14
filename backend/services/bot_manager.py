@@ -197,7 +197,9 @@ class BotManager:
             "cooldown_after_trade_seconds", "cooldown_after_loss_seconds",
             "scan_interval_seconds",
             "max_consecutive_losses", "consecutive_loss_cooldown_minutes",
+            "window_start_utc_hour", "window_end_utc_hour",
         ]
+        _bool_keys = ["use_time_window"]
 
         for k in _float_keys:
             if config.get(k) is not None:
@@ -205,6 +207,9 @@ class BotManager:
         for k in _int_keys:
             if config.get(k) is not None:
                 optional[k] = int(config[k])
+        for k in _bool_keys:
+            if config.get(k) is not None:
+                optional[k] = bool(config[k])
 
         bot = MomentumScalperBot(
             private_key     = private_key,

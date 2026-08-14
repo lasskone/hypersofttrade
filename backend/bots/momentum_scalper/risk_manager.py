@@ -81,7 +81,7 @@ class RiskManager:
         max_consecutive_losses: int = 3,
         consecutive_loss_cooldown_minutes: int = 30,
         max_leverage: int = 5,
-        min_profit_to_fee_ratio: float = 3.0,
+        min_profit_to_fee_ratio: float = 1.5,
         estimated_fee_pct: float = 0.07,
     ) -> None:
         self._bot_id    = bot_id

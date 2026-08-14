@@ -54,6 +54,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Callable
 
 from bots.momentum_scalper.risk_manager import RiskManager
@@ -149,8 +150,14 @@ class MomentumScalperBot:
         max_daily_loss_pct: float = 0.10,
         max_consecutive_losses: int = 3,
         consecutive_loss_cooldown_minutes: int = 30,
-        min_profit_to_fee_ratio: float = 3.0,
+        min_profit_to_fee_ratio: float = 1.5,
         estimated_fee_pct: float = 0.07,
+        # Time window — restrict entries to a UTC hour range (London/NY overlap
+        # default: 12–16 UTC, the highest-volatility window for momentum setups).
+        # Set use_time_window=False to trade around the clock.
+        use_time_window: bool = True,
+        window_start_utc_hour: int = 12,
+        window_end_utc_hour: int = 16,
         # Infrastructure
         db_client=None,
         bot_id: str | None = None,
@@ -185,6 +192,11 @@ class MomentumScalperBot:
         self._cooldown_after_trade_s = int(cooldown_after_trade_seconds)
         self._cooldown_after_loss_s  = int(cooldown_after_loss_seconds)
         self._scan_interval_s        = int(scan_interval_seconds)
+
+        # ── Time window ────────────────────────────────────────────────────────
+        self._use_time_window = bool(use_time_window)
+        self._window_start    = int(window_start_utc_hour)
+        self._window_end      = int(window_end_utc_hour)
 
         # ── Infrastructure ─────────────────────────────────────────────────────
         self._db           = db_client
@@ -263,6 +275,25 @@ class MomentumScalperBot:
                 self._log_callback(level, msg)
             except Exception:
                 pass   # never let logging crash the strategy
+
+    # ── Filter helpers ────────────────────────────────────────────────────────
+
+    def _in_time_window(self) -> bool:
+        """Return True if the current UTC hour falls within the configured window.
+
+        Handles wrap-around windows (e.g. window_start=22, window_end=6).
+        If start == end, the filter is disabled (always return True).
+        """
+        if not self._use_time_window:
+            return True
+        hour = datetime.now(timezone.utc).hour
+        s, e = self._window_start, self._window_end
+        if s == e:
+            return True          # degenerate case: unrestricted
+        if s < e:
+            return s <= hour < e
+        # Midnight-crossing window (e.g. 22:00 – 06:00 UTC)
+        return hour >= s or hour < e
 
     # ── Sizing ────────────────────────────────────────────────────────────────
 
@@ -876,6 +907,16 @@ class MomentumScalperBot:
         can_trade, rm_reason = await self._risk_manager.can_trade()
         if not can_trade:
             self._log("warning", f"Risk manager blocked entry: {rm_reason}")
+            return
+
+        # Time-window gate: block new entries outside the configured UTC window.
+        if not self._in_time_window():
+            hour = datetime.now(timezone.utc).hour
+            self._log(
+                "info",
+                f"Outside time window [{self._window_start}–{self._window_end} UTC] "
+                f"(now={hour:02d}:xx UTC) — skipping scan",
+            )
             return
 
         # Run scanner.
