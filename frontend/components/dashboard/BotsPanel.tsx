@@ -709,10 +709,10 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
           symbol: isMomentumScalper ? selectedSymbols.join(',') : symbol,
           allocated_usdc: parseFloat(allocatedUsdc),
           config: {
+            ...params,
             ...(isMomentumScalper ? { symbols: selectedSymbols } : { dex }),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
-            ...params,
           }
         })
       })
@@ -979,10 +979,10 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
       const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
       const finalConfig = {
         bot_type:      bot.bot_type,
+        ...params,
         ...(isMomentumScalper ? { symbols: selectedSymbols } : { symbol, dex }),
         allocated_usdc: parseFloat(allocatedUsdc),
         leverage:       parseInt(leverage),
-        ...params,
       }
       const res = await fetch(`${API_URL}/bots/${bot.id}`, {
         method: 'PUT',
