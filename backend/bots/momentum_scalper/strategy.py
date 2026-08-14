@@ -155,7 +155,7 @@ class MomentumScalperBot:
         # Time window — restrict entries to a UTC hour range (London/NY overlap
         # default: 12–16 UTC, the highest-volatility window for momentum setups).
         # Set use_time_window=False to trade around the clock.
-        use_time_window: bool = True,
+        use_time_window: bool = False,
         window_start_utc_hour: int = 12,
         window_end_utc_hour: int = 16,
         # Infrastructure
