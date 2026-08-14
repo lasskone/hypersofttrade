@@ -155,6 +155,36 @@ class RiskManager:
                     self.daily_loss_usd, self.consecutive_losses,
                     self.trading_halted,
                 )
+
+                # Re-baseline check: if no trades have been recorded yet (equity
+                # equals HWM, zero daily loss, zero consecutive losses) AND the
+                # stored equity differs from the current allocated_usdc, the user
+                # likely changed the allocation config before any live trades —
+                # safe to adopt the new baseline.  Once real trades exist, do NOT
+                # touch equity; the risk state reflects actual realised P&L.
+                no_trades = (
+                    self.equity == self.high_water_mark
+                    and self.daily_loss_usd == 0.0
+                    and self.consecutive_losses == 0
+                )
+                if no_trades and abs(self.equity - self._allocated_usdc) > 0.01:
+                    logger.info(
+                        "[RiskManager] No trades recorded yet — re-baselining equity "
+                        "from %.2f to current allocated_usdc=%.2f (config was likely "
+                        "changed since last run)",
+                        self.equity, self._allocated_usdc,
+                    )
+                    self.equity          = self._allocated_usdc
+                    self.high_water_mark = self._allocated_usdc
+                    await self._persist()
+                elif not no_trades and abs(self.equity - self._allocated_usdc) > 0.01:
+                    logger.info(
+                        "[RiskManager] Existing trade history found "
+                        "(equity=%.2f consecutive_losses=%d) — allocated_usdc "
+                        "change (%.2f) will not retroactively rebaseline equity. "
+                        "To fully reset risk state, manually update bot_risk_state.",
+                        self.equity, self.consecutive_losses, self._allocated_usdc,
+                    )
             else:
                 # First ever run for this bot — insert initial row.
                 now = datetime.now(timezone.utc).isoformat()
