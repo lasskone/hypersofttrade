@@ -175,3 +175,24 @@ def atr(candles: list[dict], period: int) -> float | None:
         atr_val = (atr_val * (period - 1) + tr) / period
 
     return atr_val
+
+
+def kaufman_efficiency_ratio(closes: list[float], period: int) -> float | None:
+    """Kaufman's Efficiency Ratio: net directional move / sum of absolute bar-to-bar moves.
+
+    Returns a value in [0, 1] — near 1 means price travelled in a straight line
+    (strong, clean trend); near 0 means price covered the same ground repeatedly
+    (choppy, no net progress). Distinguishes real directional movement from
+    volatile-but-directionless chop, which ADX alone cannot reliably do (ADX can
+    rise even during choppy volatility with no net progress).
+
+    Returns None if there is insufficient data (< period + 1 closes).
+    """
+    if len(closes) < period + 1:
+        return None
+    window = closes[-(period + 1):]
+    net_move = abs(window[-1] - window[0])
+    total_move = sum(abs(window[i] - window[i - 1]) for i in range(1, len(window)))
+    if total_move == 0:
+        return 0.0
+    return net_move / total_move
