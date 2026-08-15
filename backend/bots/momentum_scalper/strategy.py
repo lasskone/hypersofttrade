@@ -69,6 +69,8 @@ from services.position_groups import (
     close_position_group,
     create_position_group,
     record_position_order,
+    record_trade_signal,
+    update_trade_signal_outcome,
 )
 
 logger = logging.getLogger(__name__)
@@ -560,6 +562,20 @@ class MomentumScalperBot:
                 self._position_group_id = pg_id
                 self._log("info", f"position_group created: {pg_id}")
 
+                # Record full indicator snapshot for this trade — fire-and-forget.
+                try:
+                    await record_trade_signal(
+                        db                = self._db,
+                        position_group_id = pg_id,
+                        bot_id            = self._bot_id,
+                        coin              = coin,
+                        side              = "long" if is_long else "short",
+                        entry_price       = entry_px,
+                        ms                = ms,
+                    )
+                except Exception as sig_exc:
+                    self._log("warning", f"record_trade_signal failed (non-fatal): {sig_exc}")
+
                 if self._entry_oid is not None:
                     try:
                         await record_position_order(
@@ -758,11 +774,12 @@ class MomentumScalperBot:
         """
         # Snapshot all position state before any mutations (cancel / reset_state
         # will clear these fields).
-        snap_entry_price   = self._entry_price
-        snap_position_size = self._position_size
-        snap_is_long       = self._is_long
-        snap_current_coin  = self._current_coin
-        snap_entry_time    = self._entry_time   # ms, set at entry order placement
+        snap_entry_price      = self._entry_price
+        snap_position_size    = self._position_size
+        snap_is_long          = self._is_long
+        snap_current_coin     = self._current_coin
+        snap_entry_time       = self._entry_time   # ms, set at entry order placement
+        snap_position_group_id = self._position_group_id
 
         short_coin = (
             snap_current_coin.split(":")[-1]
@@ -875,6 +892,18 @@ class MomentumScalperBot:
                 self._log("info", f"position_group {self._position_group_id} closed in DB")
             except Exception as exc:
                 self._log("error", f"close_position_group() failed: {exc}")
+
+        # Update trade_signal row with outcome and PnL — fire-and-forget.
+        if snap_position_group_id and self._db:
+            try:
+                await update_trade_signal_outcome(
+                    db                = self._db,
+                    position_group_id = snap_position_group_id,
+                    outcome           = outcome,
+                    pnl_usd           = pnl_usd,
+                )
+            except Exception as sig_exc:
+                self._log("warning", f"update_trade_signal_outcome failed (non-fatal): {sig_exc}")
 
         # Enter cooldown.
         self._reset_state()

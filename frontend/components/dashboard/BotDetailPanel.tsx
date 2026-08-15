@@ -31,8 +31,15 @@ function fmtDate(ts: string | number) {
 }
 
 function fmtPnl(v: number, decimals = 4) {
-  const sign = v >= 0 ? '+' : ''
+  if (v === 0) return `$${v.toFixed(decimals)}`
+  const sign = v > 0 ? '+' : '-'
   return `${sign}$${Math.abs(v).toFixed(decimals)}`
+}
+
+function pnlColor(v: number) {
+  if (v > 0) return '#10b981'
+  if (v < 0) return '#ef4444'
+  return '#9ca3af'
 }
 
 function formatConfigKey(key: string): string {
@@ -226,7 +233,7 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
               <StatCard
                 label="Total PnL"
                 value={fmtPnl(stats.total_pnl ?? 0)}
-                color={(stats.total_pnl ?? 0) >= 0 ? '#10b981' : '#ef4444'}
+                color={pnlColor(stats.total_pnl ?? 0)}
               />
               <StatCard
                 label="Total Fees"
@@ -236,7 +243,7 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
               <StatCard
                 label="Net PnL"
                 value={fmtPnl(stats.net_pnl ?? 0)}
-                color={(stats.net_pnl ?? 0) >= 0 ? '#10b981' : '#ef4444'}
+                color={pnlColor(stats.net_pnl ?? 0)}
               />
               <StatCard
                 label="Win Rate"
@@ -246,10 +253,10 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
               <StatCard
                 label="Avg Trade PnL"
                 value={fmtPnl(stats.avg_trade_pnl ?? 0)}
-                color={(stats.avg_trade_pnl ?? 0) >= 0 ? '#10b981' : '#ef4444'}
+                color={pnlColor(stats.avg_trade_pnl ?? 0)}
               />
-              <StatCard label="Best Trade"  value={fmtPnl(stats.best_trade  ?? 0)} color="#10b981" />
-              <StatCard label="Worst Trade" value={fmtPnl(stats.worst_trade ?? 0)} color="#ef4444" />
+              <StatCard label="Best Trade"  value={fmtPnl(stats.best_trade  ?? 0)} color={pnlColor(stats.best_trade  ?? 0)} />
+              <StatCard label="Worst Trade" value={fmtPnl(stats.worst_trade ?? 0)} color={pnlColor(stats.worst_trade ?? 0)} />
               <StatCard
                 label="Total Volume"
                 value={`$${(stats.total_volume ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}

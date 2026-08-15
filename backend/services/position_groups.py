@@ -12,11 +12,17 @@ and manual trading routes alike.
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from supabase import create_client
+
+if TYPE_CHECKING:
+    from bots.momentum_scalper.scanner import MarketScore
+
+logger = logging.getLogger(__name__)
 
 
 def _supabase():
@@ -225,3 +231,75 @@ async def get_open_position_group(
     if res.data:
         return res.data[0]
     return None
+
+
+async def record_trade_signal(
+    db,
+    position_group_id: str,
+    bot_id: Optional[str],
+    coin: str,
+    side: str,
+    entry_price: float,
+    ms: "MarketScore",
+) -> None:
+    """Insert a trade_signals row capturing the full indicator breakdown at entry.
+
+    Fire-and-forget: wrapped in try/except so a DB failure never affects trading.
+    The ``ms`` argument is the MarketScore object returned by scan_symbol().
+    """
+    try:
+        db.table("trade_signals").insert({
+            "position_group_id": position_group_id,
+            "bot_id":            bot_id,
+            "coin":              coin,
+            "side":              side,
+            "entry_price":       entry_price,
+            "score_total":       float(ms.total_score),
+            "trend_score":       float(ms.trend_score),
+            "momentum_score":    float(ms.momentum_score),
+            "volume_score":      float(ms.volume_score),
+            "volatility_score":  float(ms.volatility_score),
+            "pullback_score":    float(ms.pullback_score),
+            "structure_score":   float(ms.structure_score),
+            "execution_score":   float(ms.execution_score),
+            "ema_sep_pct":       float(ms.ema_sep_pct),
+            "rsi_m5":            float(ms.rsi_m5),
+            "adx_m5":            float(ms.adx_value) if ms.adx_value is not None else None,
+            "rsi_m1":            float(ms.rsi_value),
+            "atr_pct":           float(ms.atr_pct),
+            "volume_ratio_m1":   float(ms.volume_ratio_m1),
+            "spread_pct":        float(ms.spread_pct),
+            "depth_usd":         float(ms.depth_usd),
+            "created_at":        datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception as exc:
+        logger.warning(
+            "[position_groups] record_trade_signal failed (non-fatal) — "
+            "position_group_id=%s bot_id=%s coin=%s: %s",
+            position_group_id, bot_id, coin, exc,
+        )
+
+
+async def update_trade_signal_outcome(
+    db,
+    position_group_id: str,
+    outcome: str,
+    pnl_usd: float,
+) -> None:
+    """Update the trade_signals row for this position_group with outcome and PnL.
+
+    Fire-and-forget: wrapped in try/except so a DB failure never affects trading.
+    ``outcome`` must be one of 'TP_HIT', 'SL_HIT', 'CLOSED_UNKNOWN'.
+    """
+    try:
+        db.table("trade_signals").update({
+            "outcome":   outcome,
+            "pnl_usd":  float(pnl_usd),
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("position_group_id", position_group_id).execute()
+    except Exception as exc:
+        logger.warning(
+            "[position_groups] update_trade_signal_outcome failed (non-fatal) — "
+            "position_group_id=%s outcome=%s pnl_usd=%s: %s",
+            position_group_id, outcome, pnl_usd, exc,
+        )

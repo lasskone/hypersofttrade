@@ -109,6 +109,12 @@ class MarketScore:
     rsi_value:        float       # RSI(14) on M1, most recent closed bar
     adx_value:        float | None  # ADX(14) on M5, most recent closed bar
     reasons:          list[str] = field(default_factory=list)
+    # Raw indicator values for trade_signals logging — added as keyword-only
+    # fields with defaults so existing _zero_score() callers are unaffected.
+    ema_sep_pct:      float = 0.0  # EMA20/EMA50 separation % for winning direction
+    rsi_m5:           float = 0.0  # RSI(14) on M5, most recent closed bar
+    volume_ratio_m1:  float = 0.0  # vol ratio on M1 (latest bar / 20-bar SMA)
+    depth_usd:        float = 0.0  # order-book depth USD within 0.1% of mid
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -330,6 +336,14 @@ async def scan_symbol(symbol: str, config: dict) -> MarketScore:
             f"neither ≥ {_MIN_TREND_FOR_DIRECTION} threshold) → 0/20"
         )
 
+    # EMA separation % for the winning direction — stored on MarketScore for signal logging.
+    if direction == "long":
+        ema_sep_pct = (ema20_m5 - ema50_m5) / ema50_m5 * 100 if ema50_m5 else 0.0
+    elif direction == "short":
+        ema_sep_pct = (ema50_m5 - ema20_m5) / ema50_m5 * 100 if ema50_m5 else 0.0
+    else:
+        ema_sep_pct = 0.0
+
     # ── M1 indicators ─────────────────────────────────────────────────────────
     m1_closes = [c["close"] for c in m1]
 
@@ -541,6 +555,7 @@ async def scan_symbol(symbol: str, config: dict) -> MarketScore:
     bids = ob.get("bids", [])
     asks = ob.get("asks", [])
     spread_pct = 0.0
+    depth_usd  = 0.0   # populated inside the execution try block; default for signal logging
 
     if not bids or not asks:
         execution_score = 0.0
@@ -609,6 +624,10 @@ async def scan_symbol(symbol: str, config: dict) -> MarketScore:
         rsi_value        = round(rsi14_m1, 2),
         adx_value        = round(adx14_m5, 2) if adx14_m5 is not None else None,
         reasons          = reasons,
+        ema_sep_pct      = round(ema_sep_pct, 4),
+        rsi_m5           = round(rsi14_m5, 2),
+        volume_ratio_m1  = round(vol_ratio, 4),
+        depth_usd        = round(depth_usd, 2),
     )
 
 
