@@ -333,7 +333,7 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                        {['Time', 'Side', 'Price', 'Size', 'Closed PnL', 'Fee', 'Net'].map(h => (
+                        {['Time', 'Coin', 'Side', 'Price', 'Size', 'Closed PnL', 'Fee', 'Net'].map(h => (
                           <th key={h} style={{
                             padding: '8px 16px', textAlign: 'left',
                             fontSize: 11, fontWeight: 700, color: '#6b7280', whiteSpace: 'nowrap',
@@ -354,6 +354,9 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                             <td style={{ padding: '8px 16px', fontSize: 12, color: '#9ca3af', whiteSpace: 'nowrap' }}>
                               {fmtDate(f.time)}
                             </td>
+                            <td style={{ padding: '8px 16px', fontSize: 12, color: '#e5e7eb', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              {(f.coin ?? '').split(':').pop()}
+                            </td>
                             <td style={{ padding: '8px 16px' }}>
                               <span style={{
                                 fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700,
@@ -369,14 +372,14 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                             <td style={{ padding: '8px 16px', fontSize: 12, color: '#e5e7eb' }}>
                               {parseFloat(f.sz ?? '0').toFixed(6)}
                             </td>
-                            <td style={{ padding: '8px 16px', fontSize: 12, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>
-                              {pnl >= 0 ? '+' : ''}{pnl.toFixed(4)}
+                            <td style={{ padding: '8px 16px', fontSize: 12, fontWeight: 600, color: pnlColor(pnl) }}>
+                              {fmtPnl(pnl)}
                             </td>
                             <td style={{ padding: '8px 16px', fontSize: 12, color: '#f59e0b' }}>
                               {fee.toFixed(4)}
                             </td>
-                            <td style={{ padding: '8px 16px', fontSize: 12, fontWeight: 600, color: net >= 0 ? '#10b981' : '#ef4444' }}>
-                              {net >= 0 ? '+' : ''}{net.toFixed(4)}
+                            <td style={{ padding: '8px 16px', fontSize: 12, fontWeight: 600, color: pnlColor(net) }}>
+                              {fmtPnl(net)}
                             </td>
                           </tr>
                         )
