@@ -3,6 +3,7 @@ backend/routers/scanner.py
 
 Technical scanner endpoints — watchlist management + signals feed.
 
+  GET    /scanner/available-symbols                   all tradeable perp symbols (cached 5 min)
   GET    /scanner/watchlist?wallet_address=X          list active watchlist entries
   POST   /scanner/watchlist                           add a coin (upsert, reactivates)
   DELETE /scanner/watchlist/{id}?wallet_address=X     soft-delete (active=false)
@@ -11,15 +12,63 @@ Technical scanner endpoints — watchlist management + signals feed.
 from __future__ import annotations
 
 import os
+import time
 
 from fastapi import APIRouter, HTTPException
 from supabase import create_client
 
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# In-process symbol cache — backed by the existing get_all_markets() call
+# (which already calls allPerpMetas + metaAndAssetCtxs).  5-minute TTL is
+# fine because the perp listing changes rarely.
+# ---------------------------------------------------------------------------
+_symbols_cache: list[str] = []
+_symbols_cache_time: float = 0.0
+_SYMBOLS_TTL = 300  # seconds
+
 
 def _db():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+
+
+# ---------------------------------------------------------------------------
+# GET /scanner/available-symbols
+# ---------------------------------------------------------------------------
+@router.get("/available-symbols")
+async def get_available_symbols():
+    """Return a sorted flat list of all tradeable perp coin names.
+
+    Backed by get_all_markets() (which calls allPerpMetas).  Cached in-process
+    for 5 minutes so autocomplete keystrokes never hit Hyperliquid directly.
+    """
+    global _symbols_cache, _symbols_cache_time
+
+    now = time.time()
+    if _symbols_cache and (now - _symbols_cache_time) < _SYMBOLS_TTL:
+        return {"symbols": _symbols_cache}
+
+    from services.hyperliquid_service import get_all_markets
+    try:
+        markets = await get_all_markets()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch symbols: {exc}") from exc
+
+    # display_name is already the clean symbol without dex prefix.
+    # Use a set to deduplicate (HIP-3 coins that share a name with a main-DEX coin).
+    seen: set[str] = set()
+    symbols: list[str] = []
+    for m in markets:
+        name = m.get("display_name") or m.get("name", "")
+        if name and name not in seen:
+            seen.add(name)
+            symbols.append(name)
+
+    symbols.sort()
+    _symbols_cache = symbols
+    _symbols_cache_time = now
+    return {"symbols": symbols}
 
 
 # ---------------------------------------------------------------------------

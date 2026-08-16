@@ -57,23 +57,177 @@ function timeAgo(isoString: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// CoinAutocomplete — mirrors MarketMultiSelect styling from BotsPanel
+// ---------------------------------------------------------------------------
+function CoinAutocomplete({
+  symbols,
+  symbolsLoading,
+  alreadyAdded,
+  onAdd,
+}: {
+  symbols: string[];
+  symbolsLoading: boolean;
+  alreadyAdded: Set<string>;
+  onAdd: (coin: string) => Promise<void>;
+}) {
+  const [query, setQuery]         = useState('');
+  const [open, setOpen]           = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const [adding, setAdding]       = useState(false);
+  const containerRef              = useRef<HTMLDivElement>(null);
+  const inputRef                  = useRef<HTMLInputElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query.trim()
+    ? symbols.filter(s => s.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 60)
+    : symbols.slice(0, 60);
+
+  const handleSelect = async (coin: string) => {
+    if (alreadyAdded.has(coin)) return;
+    setAdding(true);
+    setQuery('');
+    setOpen(false);
+    setHighlighted(0);
+    await onAdd(coin);
+    setAdding(false);
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open) { if (e.key === 'ArrowDown' || e.key === 'Enter') setOpen(true); return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlighted(i => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlighted(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filtered[highlighted]) handleSelect(filtered[highlighted]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  // Reset highlight when filtered list changes
+  useEffect(() => { setHighlighted(0); }, [query]);
+
+  const borderColor = open ? '#00d4aa88' : '#1a1a2e';
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', flex: 1 }}>
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKeyDown}
+        placeholder={symbolsLoading ? 'Loading symbols…' : 'Search coin, e.g. ETH…'}
+        disabled={symbolsLoading || adding}
+        style={{
+          width: '100%',
+          padding: '8px 12px',
+          borderRadius: 8,
+          background: '#0a0a0f',
+          border: `1px solid ${borderColor}`,
+          color: '#fff',
+          fontSize: 13,
+          outline: 'none',
+          boxSizing: 'border-box',
+          transition: 'border-color 0.15s',
+        }}
+      />
+
+      {open && !symbolsLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            right: 0,
+            background: '#0d0d14',
+            border: '1px solid #1a1a2e',
+            borderRadius: 8,
+            maxHeight: 220,
+            overflowY: 'auto',
+            zIndex: 3000,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: '12px 14px', color: '#6b7280', fontSize: 13 }}>
+              No symbols match &ldquo;{query}&rdquo;
+            </div>
+          ) : (
+            filtered.map((sym, i) => {
+              const added = alreadyAdded.has(sym);
+              return (
+                <div
+                  key={sym}
+                  onMouseEnter={() => setHighlighted(i)}
+                  onClick={() => handleSelect(sym)}
+                  style={{
+                    padding: '8px 14px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    cursor: added ? 'default' : 'pointer',
+                    background: i === highlighted && !added ? '#1a1a2e' : 'transparent',
+                    opacity: added ? 0.4 : 1,
+                    fontSize: 13,
+                    color: '#fff',
+                    transition: 'background 0.1s',
+                  }}
+                >
+                  <span>{sym}</span>
+                  {added && <span style={{ fontSize: 11, color: '#00d4aa' }}>✓ added</span>}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
 // ---------------------------------------------------------------------------
 export default function ScannerPanel({ walletAddress }: { walletAddress: string }) {
-  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
-  const [signals, setSignals]     = useState<Signal[]>([]);
-  const [loadingWl, setLoadingWl] = useState(true);
-  const [loadingSig, setLoadingSig] = useState(true);
-  const [coinInput, setCoinInput] = useState('');
-  const [adding, setAdding]       = useState(false);
-  const [toast, setToast]         = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const toastTimer                = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [watchlist, setWatchlist]       = useState<WatchlistEntry[]>([]);
+  const [signals, setSignals]           = useState<Signal[]>([]);
+  const [loadingWl, setLoadingWl]       = useState(true);
+  const [loadingSig, setLoadingSig]     = useState(true);
+  const [symbols, setSymbols]           = useState<string[]>([]);
+  const [symbolsLoading, setSymbolsLoading] = useState(true);
+  const [toast, setToast]               = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const toastTimer                      = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = (type: 'success' | 'error', message: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ type, message });
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   };
+
+  // ── Fetch symbol list (once on mount) ────────────────────────────────────
+  useEffect(() => {
+    fetch(`${API_URL}/scanner/available-symbols`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => setSymbols(data.symbols || []))
+      .catch(() => setSymbols([]))
+      .finally(() => setSymbolsLoading(false));
+  }, []);
 
   // ── Fetch watchlist ──────────────────────────────────────────────────────
   const fetchWatchlist = async () => {
@@ -112,11 +266,8 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
 
-  // ── Add coin ─────────────────────────────────────────────────────────────
-  const handleAdd = async () => {
-    const coin = coinInput.trim().toUpperCase();
-    if (!coin) return;
-    setAdding(true);
+  // ── Add coin (called by autocomplete on selection) ───────────────────────
+  const handleAdd = async (coin: string) => {
     try {
       const res = await fetch(`${API_URL}/scanner/watchlist`, {
         method: 'POST',
@@ -128,13 +279,10 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
         showToast('error', err.detail || 'Failed to add coin');
         return;
       }
-      setCoinInput('');
       showToast('success', `${coin} added to watchlist`);
       await fetchWatchlist();
     } catch {
       showToast('error', 'Network error — could not add coin');
-    } finally {
-      setAdding(false);
     }
   };
 
@@ -145,16 +293,15 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
         `${API_URL}/scanner/watchlist/${entry.id}?wallet_address=${encodeURIComponent(walletAddress)}`,
         { method: 'DELETE' }
       );
-      if (!res.ok) {
-        showToast('error', 'Failed to remove coin');
-        return;
-      }
+      if (!res.ok) { showToast('error', 'Failed to remove coin'); return; }
       showToast('success', `${entry.coin} removed`);
-      setWatchlist((prev) => prev.filter((e) => e.id !== entry.id));
+      setWatchlist(prev => prev.filter(e => e.id !== entry.id));
     } catch {
       showToast('error', 'Network error — could not remove coin');
     }
   };
+
+  const alreadyAdded = new Set(watchlist.map(e => e.coin));
 
   // ---------------------------------------------------------------------------
   // Render
@@ -199,42 +346,14 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
       >
         <h3 className="text-sm font-semibold text-white mb-4">Watchlist</h3>
 
-        {/* Add row */}
+        {/* Autocomplete add row */}
         <div className="flex gap-2 mb-4">
-          <input
-            type="text"
-            placeholder="Coin symbol, e.g. ETH"
-            value={coinInput}
-            onChange={(e) => setCoinInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-            style={{
-              flex: 1,
-              padding: '8px 12px',
-              borderRadius: 8,
-              background: '#0a0a0f',
-              border: '1px solid #1a1a2e',
-              color: '#fff',
-              fontSize: 13,
-              outline: 'none',
-            }}
+          <CoinAutocomplete
+            symbols={symbols}
+            symbolsLoading={symbolsLoading}
+            alreadyAdded={alreadyAdded}
+            onAdd={handleAdd}
           />
-          <button
-            onClick={handleAdd}
-            disabled={adding || !coinInput.trim()}
-            style={{
-              padding: '8px 18px',
-              borderRadius: 8,
-              background: adding || !coinInput.trim() ? '#1a1a2e' : '#00d4aa',
-              color: adding || !coinInput.trim() ? '#6b7280' : '#0a0a0f',
-              fontSize: 13,
-              fontWeight: 600,
-              border: 'none',
-              cursor: adding || !coinInput.trim() ? 'not-allowed' : 'pointer',
-              transition: 'background 0.15s',
-            }}
-          >
-            {adding ? 'Adding…' : 'Add'}
-          </button>
         </div>
 
         {/* Coin chips */}
@@ -242,11 +361,11 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
           <p style={{ color: '#6b7280', fontSize: 13 }}>Loading watchlist…</p>
         ) : watchlist.length === 0 ? (
           <p style={{ color: '#6b7280', fontSize: 13 }}>
-            No coins yet — add one above to start scanning.
+            No coins yet — search and select one above to start scanning.
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {watchlist.map((entry) => (
+            {watchlist.map(entry => (
               <div
                 key={entry.id}
                 className="flex items-center gap-1.5"
@@ -287,7 +406,10 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
         className="rounded-xl"
         style={{ backgroundColor: '#0d0d14', border: '1px solid #1a1a2e', overflow: 'hidden' }}
       >
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #1a1a2e' }}>
+        <div
+          className="flex items-center justify-between px-5 py-4"
+          style={{ borderBottom: '1px solid #1a1a2e' }}
+        >
           <h3 className="text-sm font-semibold text-white">Recent Signals</h3>
           <span style={{ fontSize: 11, color: '#6b7280' }}>Auto-refreshes every 45 s</span>
         </div>
@@ -306,7 +428,7 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #1a1a2e' }}>
-                  {['Coin', 'Timeframe', 'Signal', 'Price', 'When'].map((h) => (
+                  {['Coin', 'Timeframe', 'Signal', 'Price', 'When'].map(h => (
                     <th
                       key={h}
                       style={{
