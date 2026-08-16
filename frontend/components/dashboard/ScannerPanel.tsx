@@ -26,6 +26,7 @@ interface Signal {
   signal_type: string;
   price: number;
   detected_at: string;
+  bar_time?: string | null;  // ISO timestamp of triggering candle open; null on old rows
 }
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,15 @@ const SIGNAL_LABELS: Record<string, string> = {
 
 const isBullish = (signal_type: string) =>
   signal_type.endsWith('_bullish') || signal_type.endsWith('_up');
+
+// Mirrors HistoryPanel's fmtTime — local timezone, no seconds, same en-US format.
+function fmtTime(isoString: string): string {
+  if (!isoString) return '—';
+  return new Date(isoString).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
 
 function timeAgo(isoString: string): string {
   const diffMs = Date.now() - new Date(isoString).getTime();
@@ -428,7 +438,7 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #1a1a2e' }}>
-                  {['Coin', 'Timeframe', 'Signal', 'Price', 'When'].map(h => (
+                  {['Coin', 'Timeframe', 'Signal', 'Price', 'Bar Time'].map(h => (
                     <th
                       key={h}
                       style={{
@@ -486,8 +496,13 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
                           maximumFractionDigits: 4,
                         })}
                       </td>
-                      <td style={{ padding: '10px 16px', color: '#6b7280' }}>
-                        {timeAgo(sig.detected_at)}
+                      <td style={{ padding: '10px 16px' }}>
+                        <div style={{ color: '#9ca3af', fontSize: 13 }}>
+                          {sig.bar_time ? fmtTime(sig.bar_time) : fmtTime(sig.detected_at)}
+                        </div>
+                        <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2 }}>
+                          {timeAgo(sig.bar_time || sig.detected_at)}
+                        </div>
                       </td>
                     </tr>
                   );

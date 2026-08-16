@@ -474,6 +474,7 @@ async def _run_technical_scanner_cycle() -> None:
             if key in seen:
                 continue
             try:
+                bar_ts = datetime.fromtimestamp(sig["bar_time"], tz=timezone.utc).isoformat()
                 db.table("technical_signals").insert({
                     "wallet_address": wallet,
                     "coin":           coin,
@@ -481,6 +482,7 @@ async def _run_technical_scanner_cycle() -> None:
                     "signal_type":    sig["signal_type"],
                     "price":          sig["price"],
                     "detected_at":    now.isoformat(),
+                    "bar_time":       bar_ts,
                 }).execute()
                 seen.add(key)
                 print(

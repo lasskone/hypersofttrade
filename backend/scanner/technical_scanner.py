@@ -242,7 +242,9 @@ async def scan_pair_all_timeframes(
 
     Runs all four detectors (RSI divergence, EMA200 cross, EMA361 cross,
     breakout) on each timeframe.  Returns a flat list of signal dicts:
-        {"timeframe": str, "signal_type": str, "price": float}
+        {"timeframe": str, "signal_type": str, "price": float, "bar_time": int}
+    bar_time is the epoch-seconds open timestamp of the triggering candle (the
+    last closed bar) — the same value get_candles() stores in candle["time"].
     Returns [] when no signal fires — that is the normal, expected outcome.
 
     The current still-open bar is dropped before any indicator is computed,
@@ -270,34 +272,35 @@ async def scan_pair_all_timeframes(
         if not candles:
             continue
 
-        price = float(candles[-1]["close"])
+        price    = float(candles[-1]["close"])
+        bar_time = int(candles[-1]["time"])   # epoch seconds — open time of triggering bar
 
         # ── RSI divergence ────────────────────────────────────────────────────
         div = detect_rsi_divergence(candles)
         if div == "bullish":
-            signals.append({"timeframe": tf, "signal_type": "rsi_divergence_bullish", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "rsi_divergence_bullish", "price": price, "bar_time": bar_time})
         elif div == "bearish":
-            signals.append({"timeframe": tf, "signal_type": "rsi_divergence_bearish", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "rsi_divergence_bearish", "price": price, "bar_time": bar_time})
 
         # ── EMA(200) cross ────────────────────────────────────────────────────
         x200 = detect_ema_cross(candles, 200)
         if x200 == "up":
-            signals.append({"timeframe": tf, "signal_type": "ema200_cross_up", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "ema200_cross_up", "price": price, "bar_time": bar_time})
         elif x200 == "down":
-            signals.append({"timeframe": tf, "signal_type": "ema200_cross_down", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "ema200_cross_down", "price": price, "bar_time": bar_time})
 
         # ── EMA(361) cross ────────────────────────────────────────────────────
         x361 = detect_ema_cross(candles, 361)
         if x361 == "up":
-            signals.append({"timeframe": tf, "signal_type": "ema361_cross_up", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "ema361_cross_up", "price": price, "bar_time": bar_time})
         elif x361 == "down":
-            signals.append({"timeframe": tf, "signal_type": "ema361_cross_down", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "ema361_cross_down", "price": price, "bar_time": bar_time})
 
         # ── Donchian breakout ─────────────────────────────────────────────────
         bo = detect_breakout(candles)
         if bo == "up":
-            signals.append({"timeframe": tf, "signal_type": "breakout_up", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "breakout_up", "price": price, "bar_time": bar_time})
         elif bo == "down":
-            signals.append({"timeframe": tf, "signal_type": "breakout_down", "price": price})
+            signals.append({"timeframe": tf, "signal_type": "breakout_down", "price": price, "bar_time": bar_time})
 
     return signals
