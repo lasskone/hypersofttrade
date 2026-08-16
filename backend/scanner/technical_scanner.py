@@ -95,20 +95,29 @@ def detect_rsi_divergence(
     candles: list[dict],
     rsi_period: int = 14,
     lookback: int = 30,
+    oversold_threshold: float = 30.0,
+    overbought_threshold: float = 70.0,
 ) -> Optional[str]:
     """Detect classic RSI divergence on the most recent closed bars.
 
     Returns 'bullish', 'bearish', or None.
 
-    Strategy
-    --------
-    Bullish (hidden-reversal early warning):
-      Price's last swing low is LOWER than the previous swing low, but
-      RSI's value at those same bars is HIGHER — momentum is not confirming
-      the new price low, suggesting selling pressure is exhausting.
+    Mandatory zone requirements (all four conditions must hold, or None is returned):
+    ─────────────────────────────────────────────────────────────────────────────────
+    BULLISH divergence:
+      1. First (older) swing low RSI  ≤ oversold_threshold  (leg started in oversold)
+      2. Second (recent) swing low RSI > oversold_threshold  (RSI exited the zone)
+      3. Price:  second low  < first low   (lower low in price)
+      4. RSI:    second RSI  > first RSI   (higher low in RSI — momentum diverges)
 
-    Bearish (mirror):
-      Price's last swing high is HIGHER, but RSI is LOWER.
+    BEARISH divergence:
+      1. First (older) swing high RSI  ≥ overbought_threshold  (leg started overbought)
+      2. Second (recent) swing high RSI < overbought_threshold  (RSI exited the zone)
+      3. Price:  second high > first high  (higher high in price)
+      4. RSI:    second RSI  < first RSI   (lower high in RSI — momentum diverges)
+
+    Without the zone requirement (conditions 1 & 2) the detector fires on neutral-zone
+    pivots that never represented an exhausted trend — producing false signals.
 
     Implementation detail
     ---------------------
@@ -140,7 +149,12 @@ def detect_rsi_divergence(
     if len(lows_idx) >= 2:
         (i1, price_lo1), (i2, price_lo2) = lows_idx[-2], lows_idx[-1]
         rsi_lo1, rsi_lo2 = rsi_vals[i1], rsi_vals[i2]
-        if price_lo2 < price_lo1 and rsi_lo2 > rsi_lo1:
+        if (
+            rsi_lo1 <= oversold_threshold       # cond 1: first leg started oversold
+            and rsi_lo2 > oversold_threshold    # cond 2: second leg exited oversold
+            and price_lo2 < price_lo1           # cond 3: price made lower low
+            and rsi_lo2 > rsi_lo1               # cond 4: RSI made higher low
+        ):
             return "bullish"
 
     # ── Bearish divergence: compare last two swing HIGHS ─────────────────────
@@ -148,7 +162,12 @@ def detect_rsi_divergence(
     if len(highs_idx) >= 2:
         (i1, price_hi1), (i2, price_hi2) = highs_idx[-2], highs_idx[-1]
         rsi_hi1, rsi_hi2 = rsi_vals[i1], rsi_vals[i2]
-        if price_hi2 > price_hi1 and rsi_hi2 < rsi_hi1:
+        if (
+            rsi_hi1 >= overbought_threshold     # cond 1: first leg started overbought
+            and rsi_hi2 < overbought_threshold  # cond 2: second leg exited overbought
+            and price_hi2 > price_hi1           # cond 3: price made higher high
+            and rsi_hi2 < rsi_hi1               # cond 4: RSI made lower high
+        ):
             return "bearish"
 
     return None
