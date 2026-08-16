@@ -55,12 +55,15 @@ async def get_available_symbols():
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch symbols: {exc}") from exc
 
-    # display_name is already the clean symbol without dex prefix.
-    # Use a set to deduplicate (HIP-3 coins that share a name with a main-DEX coin).
+    # Use m["name"] — the full identifier including dex prefix for HIP-3 coins
+    # (e.g. "xyz:TSLA100"), which is exactly what TradePanel uses and what the
+    # scanner_watchlist.coin column must store to correctly route candle fetches.
+    # display_name (the stripped label) must NOT be used here: it loses the prefix,
+    # causing scan_pair_all_timeframes to query the wrong DEX for HIP-3-only coins.
     seen: set[str] = set()
     symbols: list[str] = []
     for m in markets:
-        name = m.get("display_name") or m.get("name", "")
+        name = m.get("name", "")
         if name and name not in seen:
             seen.add(name)
             symbols.append(name)
