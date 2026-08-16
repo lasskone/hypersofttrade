@@ -65,6 +65,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from bots.momentum_scalper.risk_manager import RiskManager
+from services.db_utils import _run_db_call, _SUPABASE_CALL_TIMEOUT_S
 from bots.momentum_fade_scalper.scanner import (
     DEFAULT_SCANNER_CONFIG,
     FadeMarketScore,
@@ -413,7 +414,7 @@ class FadeScalperBot:
         if not self._db:
             return
         try:
-            self._db.table("trade_signals").insert({
+            signal_row = {
                 "position_group_id": position_group_id,
                 "bot_id":            self._bot_id,
                 "coin":              coin,
@@ -441,7 +442,10 @@ class FadeScalperBot:
                 # Order-book depth: not computed by fade scanner.
                 "depth_usd":         None,
                 "created_at":        datetime.now(timezone.utc).isoformat(),
-            }).execute()
+            }
+            await _run_db_call(
+                lambda: self._db.table("trade_signals").insert(signal_row).execute()
+            )
             er_str = (
                 f"{ms.efficiency_ratio:.3f}"
                 if ms.efficiency_ratio is not None else "n/a"
@@ -452,6 +456,12 @@ class FadeScalperBot:
                 f"rsi7={ms.rsi7:.1f} ER={er_str} "
                 f"atr_pct={ms.atr_pct:.3f}% vol_ratio={ms.volume_ratio:.2f} "
                 f"spread={ms.spread_pct:.4f}%",
+            )
+        except asyncio.TimeoutError:
+            self._log(
+                "warning",
+                f"_record_fade_signal timed out after {_SUPABASE_CALL_TIMEOUT_S:.0f}s "
+                f"(non-fatal) — trade_signals row not recorded for {coin}",
             )
         except Exception as exc:
             self._log("warning", f"_record_fade_signal failed (non-fatal): {exc}")

@@ -40,11 +40,15 @@ for drawdown-protection logic which can tolerate that level of noise.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+from services.db_utils import _run_db_call, _SUPABASE_CALL_TIMEOUT_S
+
 logger = logging.getLogger(__name__)
+
 
 # Fraction of equity that may be posted as margin for a single order.
 # Keeps 10 % in reserve for Hyperliquid's maintenance margin requirement
@@ -125,12 +129,22 @@ class RiskManager:
             return
 
         try:
-            res = (
-                self._db.table("bot_risk_state")
-                .select("*")
-                .eq("bot_id", self._bot_id)
-                .execute()
-            )
+            try:
+                res = await _run_db_call(
+                    lambda: (
+                        self._db.table("bot_risk_state")
+                        .select("*")
+                        .eq("bot_id", self._bot_id)
+                        .execute()
+                    )
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[RiskManager] Supabase call timed out after %.0fs — "
+                    "load_or_init select (bot_id=%s) — using in-memory defaults",
+                    _SUPABASE_CALL_TIMEOUT_S, self._bot_id,
+                )
+                return
             rows = res.data or []
 
             if rows:
@@ -192,7 +206,7 @@ class RiskManager:
             else:
                 # First ever run for this bot — insert initial row.
                 now = datetime.now(timezone.utc).isoformat()
-                self._db.table("bot_risk_state").insert({
+                initial_row = {
                     "bot_id":             self._bot_id,
                     "equity":             self._allocated_usdc,
                     "high_water_mark":    self._allocated_usdc,
@@ -204,7 +218,19 @@ class RiskManager:
                     "cooldown_until":     None,
                     "created_at":         now,
                     "updated_at":         now,
-                }).execute()
+                }
+                try:
+                    await _run_db_call(
+                        lambda: self._db.table("bot_risk_state").insert(initial_row).execute()
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[RiskManager] Supabase call timed out after %.0fs — "
+                        "load_or_init insert (bot_id=%s) — risk state not persisted, "
+                        "using in-memory defaults",
+                        _SUPABASE_CALL_TIMEOUT_S, self._bot_id,
+                    )
+                    return
                 logger.info(
                     "[RiskManager] Inserted initial risk state for bot_id=%s: "
                     "equity=%.2f",
@@ -555,24 +581,34 @@ class RiskManager:
 
         try:
             now = datetime.now(timezone.utc).isoformat()
-            self._db.table("bot_risk_state").upsert(
-                {
-                    "bot_id":             self._bot_id,
-                    "equity":             round(self.equity, 8),
-                    "high_water_mark":    round(self.high_water_mark, 8),
-                    "daily_loss_usd":     round(self.daily_loss_usd, 8),
-                    "daily_loss_date":    self.daily_loss_date.isoformat(),
-                    "consecutive_losses": self.consecutive_losses,
-                    "trading_halted":     self.trading_halted,
-                    "halt_reason":        self.halt_reason,
-                    "cooldown_until":     (
-                        self.cooldown_until.isoformat()
-                        if self.cooldown_until is not None else None
-                    ),
-                    "updated_at":         now,
-                },
-                on_conflict="bot_id",
-            ).execute()
+            state_row = {
+                "bot_id":             self._bot_id,
+                "equity":             round(self.equity, 8),
+                "high_water_mark":    round(self.high_water_mark, 8),
+                "daily_loss_usd":     round(self.daily_loss_usd, 8),
+                "daily_loss_date":    self.daily_loss_date.isoformat(),
+                "consecutive_losses": self.consecutive_losses,
+                "trading_halted":     self.trading_halted,
+                "halt_reason":        self.halt_reason,
+                "cooldown_until":     (
+                    self.cooldown_until.isoformat()
+                    if self.cooldown_until is not None else None
+                ),
+                "updated_at":         now,
+            }
+            await _run_db_call(
+                lambda: self._db.table("bot_risk_state").upsert(
+                    state_row,
+                    on_conflict="bot_id",
+                ).execute()
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[RiskManager] Supabase call timed out after %.0fs — "
+                "_persist upsert (bot_id=%s) — risk state NOT saved to DB. "
+                "Drawdown protection will reset on next restart.",
+                _SUPABASE_CALL_TIMEOUT_S, self._bot_id,
+            )
         except Exception as exc:
             logger.warning(
                 "[RiskManager] PERSISTENCE FAILURE — risk state NOT saved to DB. "

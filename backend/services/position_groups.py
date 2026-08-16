@@ -12,12 +12,15 @@ and manual trading routes alike.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
 from supabase import create_client
+
+from services.db_utils import _run_db_call, _SUPABASE_CALL_TIMEOUT_S
 
 if TYPE_CHECKING:
     from bots.momentum_scalper.scanner import MarketScore
@@ -68,7 +71,7 @@ async def create_position_group(
     Raises
     ------
     RuntimeError
-        If the Supabase insert does not return a row.
+        If the Supabase insert does not return a row, or if the call times out.
     """
     now = datetime.now(timezone.utc).isoformat()
     row = {
@@ -82,7 +85,16 @@ async def create_position_group(
         "status": "open",
         "created_at": now,
     }
-    res = db.table("position_groups").insert(row).execute()
+    try:
+        res = await _run_db_call(
+            lambda: db.table("position_groups").insert(row).execute()
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"[position_groups] create_position_group timed out after "
+            f"{_SUPABASE_CALL_TIMEOUT_S:.0f}s "
+            f"(wallet={wallet_address} coin={coin} side={side})"
+        )
     if not res.data:
         raise RuntimeError(
             f"[position_groups] create_position_group failed — no row returned "
@@ -108,26 +120,56 @@ async def close_position_group(db, position_group_id: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
 
     # Close the position group (only if currently open — idempotent).
-    db.table("position_groups").update({
-        "status": "closed",
-        "closed_at": now,
-    }).eq("id", position_group_id).eq("status", "open").execute()
+    try:
+        await _run_db_call(
+            lambda: db.table("position_groups").update({
+                "status": "closed",
+                "closed_at": now,
+            }).eq("id", position_group_id).eq("status", "open").execute()
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[position_groups] close_position_group update timed out after %.0fs "
+            "(position_group_id=%s) — position_group may remain open in DB",
+            _SUPABASE_CALL_TIMEOUT_S, position_group_id,
+        )
+
+    # Fetch trailing stops linked to this position group.
+    try:
+        linked_ts = await _run_db_call(
+            lambda: (
+                db.table("trailing_stops")
+                .select("id")
+                .eq("position_group_id", position_group_id)
+                .in_("status", ["waiting", "active"])
+                .execute()
+            )
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[position_groups] close_position_group trailing_stops select timed out "
+            "after %.0fs (position_group_id=%s) — linked stops may not be cancelled",
+            _SUPABASE_CALL_TIMEOUT_S, position_group_id,
+        )
+        return
 
     # Cancel any waiting/active trailing stops scoped to this position group.
     # This is more precise than wallet+coin matching: only stops that were
     # explicitly linked to this position instance are cancelled.
-    linked_ts = (
-        db.table("trailing_stops")
-        .select("id")
-        .eq("position_group_id", position_group_id)
-        .in_("status", ["waiting", "active"])
-        .execute()
-    )
     for rec in (linked_ts.data or []):
-        db.table("trailing_stops").update({
-            "status": "cancelled",
-            "updated_at": now,
-        }).eq("id", rec["id"]).execute()
+        try:
+            await _run_db_call(
+                lambda: db.table("trailing_stops").update({
+                    "status": "cancelled",
+                    "updated_at": now,
+                }).eq("id", rec["id"]).execute()
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[position_groups] close_position_group trailing_stop cancel timed out "
+                "after %.0fs (stop_id=%s) — stop may remain active in DB",
+                _SUPABASE_CALL_TIMEOUT_S, rec["id"],
+            )
 
 
 async def record_position_order(
@@ -159,16 +201,20 @@ async def record_position_order(
     -----
     This function is intentionally fire-and-forget: callers MUST wrap it in
     try/except so that a tracking failure never crashes a real-money strategy.
+    asyncio.TimeoutError is allowed to propagate — callers' try/except blocks
+    will catch it and log appropriately.
     """
-    db.table("position_orders").insert({
-        "position_group_id": position_group_id,
-        "bot_id":            bot_id,
-        "oid":               oid,
-        "order_role":        order_role,
-        "coin":              coin,
-        "status":            "resting",
-        "placed_at":         datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    await _run_db_call(
+        lambda: db.table("position_orders").insert({
+            "position_group_id": position_group_id,
+            "bot_id":            bot_id,
+            "oid":               oid,
+            "order_role":        order_role,
+            "coin":              coin,
+            "status":            "resting",
+            "placed_at":         datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    )
 
 
 async def mark_position_order_filled(db, oid: int) -> None:
@@ -186,11 +232,15 @@ async def mark_position_order_filled(db, oid: int) -> None:
     Matches on oid only — oids are exchange-unique per instrument per session.
     Safe to call on an already-filled row (the update simply becomes a no-op
     if the row status is already 'filled').
+    asyncio.TimeoutError is allowed to propagate — callers' try/except blocks
+    will catch it.
     """
-    db.table("position_orders").update({
-        "status":    "filled",
-        "filled_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("oid", oid).execute()
+    await _run_db_call(
+        lambda: db.table("position_orders").update({
+            "status":    "filled",
+            "filled_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("oid", oid).execute()
+    )
 
 
 async def get_open_position_group(
@@ -217,16 +267,24 @@ async def get_open_position_group(
     -------
     dict or None
         The full position_group row dict, or None if no open group exists.
+
+    Raises
+    ------
+    asyncio.TimeoutError
+        If the Supabase call does not complete within _SUPABASE_CALL_TIMEOUT_S
+        seconds — propagated to the caller.
     """
-    res = (
-        db.table("position_groups")
-        .select("*")
-        .ilike("wallet_address", wallet_address)
-        .eq("coin", coin)
-        .eq("status", "open")
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
+    res = await _run_db_call(
+        lambda: (
+            db.table("position_groups")
+            .select("*")
+            .ilike("wallet_address", wallet_address)
+            .eq("coin", coin)
+            .eq("status", "open")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
     )
     if res.data:
         return res.data[0]
@@ -248,30 +306,38 @@ async def record_trade_signal(
     The ``ms`` argument is the MarketScore object returned by scan_symbol().
     """
     try:
-        db.table("trade_signals").insert({
-            "position_group_id": position_group_id,
-            "bot_id":            bot_id,
-            "coin":              coin,
-            "side":              side,
-            "entry_price":       entry_price,
-            "score_total":       float(ms.total_score),
-            "trend_score":       float(ms.trend_score),
-            "momentum_score":    float(ms.momentum_score),
-            "volume_score":      float(ms.volume_score),
-            "volatility_score":  float(ms.volatility_score),
-            "pullback_score":    float(ms.pullback_score),
-            "structure_score":   float(ms.structure_score),
-            "execution_score":   float(ms.execution_score),
-            "ema_sep_pct":       float(ms.ema_sep_pct),
-            "rsi_m5":            float(ms.rsi_m5),
-            "adx_m5":            float(ms.adx_value) if ms.adx_value is not None else None,
-            "rsi_m1":            float(ms.rsi_value),
-            "atr_pct":           float(ms.atr_pct),
-            "volume_ratio_m1":   float(ms.volume_ratio_m1),
-            "spread_pct":        float(ms.spread_pct),
-            "depth_usd":         float(ms.depth_usd),
-            "created_at":        datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        await _run_db_call(
+            lambda: db.table("trade_signals").insert({
+                "position_group_id": position_group_id,
+                "bot_id":            bot_id,
+                "coin":              coin,
+                "side":              side,
+                "entry_price":       entry_price,
+                "score_total":       float(ms.total_score),
+                "trend_score":       float(ms.trend_score),
+                "momentum_score":    float(ms.momentum_score),
+                "volume_score":      float(ms.volume_score),
+                "volatility_score":  float(ms.volatility_score),
+                "pullback_score":    float(ms.pullback_score),
+                "structure_score":   float(ms.structure_score),
+                "execution_score":   float(ms.execution_score),
+                "ema_sep_pct":       float(ms.ema_sep_pct),
+                "rsi_m5":            float(ms.rsi_m5),
+                "adx_m5":            float(ms.adx_value) if ms.adx_value is not None else None,
+                "rsi_m1":            float(ms.rsi_value),
+                "atr_pct":           float(ms.atr_pct),
+                "volume_ratio_m1":   float(ms.volume_ratio_m1),
+                "spread_pct":        float(ms.spread_pct),
+                "depth_usd":         float(ms.depth_usd),
+                "created_at":        datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[position_groups] record_trade_signal timed out after %.0fs (non-fatal) — "
+            "position_group_id=%s bot_id=%s coin=%s",
+            _SUPABASE_CALL_TIMEOUT_S, position_group_id, bot_id, coin,
+        )
     except Exception as exc:
         logger.warning(
             "[position_groups] record_trade_signal failed (non-fatal) — "
@@ -292,11 +358,19 @@ async def update_trade_signal_outcome(
     ``outcome`` must be one of 'TP_HIT', 'SL_HIT', 'CLOSED_UNKNOWN'.
     """
     try:
-        db.table("trade_signals").update({
-            "outcome":   outcome,
-            "pnl_usd":  float(pnl_usd),
-            "closed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("position_group_id", position_group_id).execute()
+        await _run_db_call(
+            lambda: db.table("trade_signals").update({
+                "outcome":   outcome,
+                "pnl_usd":  float(pnl_usd),
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("position_group_id", position_group_id).execute()
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[position_groups] update_trade_signal_outcome timed out after %.0fs "
+            "(non-fatal) — position_group_id=%s outcome=%s pnl_usd=%s",
+            _SUPABASE_CALL_TIMEOUT_S, position_group_id, outcome, pnl_usd,
+        )
     except Exception as exc:
         logger.warning(
             "[position_groups] update_trade_signal_outcome failed (non-fatal) — "
