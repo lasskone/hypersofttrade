@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -413,6 +413,99 @@ async def trailing_stop_loop() -> None:
         await asyncio.sleep(30)
 
 
+async def _run_technical_scanner_cycle() -> None:
+    """Single scan cycle: check every active watchlist coin for new signals.
+
+    Isolation guarantee: this coroutine sleeps 0.5 s between watchlist pairs to
+    yield the event loop back to bot tasks.  It never touches the bots table or
+    the BotManager, so it cannot interfere with running bots even if it raises.
+    """
+    from scanner.technical_scanner import scan_pair_all_timeframes
+
+    db = _supabase()
+    now = datetime.now(timezone.utc)
+
+    # ── Fetch active watchlist ────────────────────────────────────────────────
+    try:
+        wl_result = db.table("scanner_watchlist").select("*").eq("active", True).execute()
+        watchlist = wl_result.data or []
+    except Exception as e:
+        print(f"[scanner] watchlist fetch failed: {e}", flush=True)
+        return
+
+    if not watchlist:
+        return
+
+    # ── Build dedup set from last 4 hours ─────────────────────────────────────
+    # Key: (wallet_address, coin, timeframe, signal_type)
+    # We check locally before inserting to avoid duplicate rows within the same
+    # cycle and to suppress re-alerting on a signal that fired recently.
+    cutoff = (now - timedelta(hours=4)).isoformat()
+    try:
+        seen_result = (
+            db.table("technical_signals")
+            .select("wallet_address,coin,timeframe,signal_type")
+            .gte("detected_at", cutoff)
+            .execute()
+        )
+        seen: set[tuple[str, str, str, str]] = {
+            (r["wallet_address"], r["coin"], r["timeframe"], r["signal_type"])
+            for r in (seen_result.data or [])
+        }
+    except Exception as e:
+        print(f"[scanner] dedup fetch failed: {e}", flush=True)
+        seen = set()
+
+    # ── Scan each watchlist entry ─────────────────────────────────────────────
+    for entry in watchlist:
+        wallet = entry["wallet_address"]
+        coin   = entry["coin"]
+        dex    = entry.get("dex") or ""
+
+        try:
+            signals = await scan_pair_all_timeframes(coin, dex)
+        except Exception as e:
+            print(f"[scanner] scan failed {coin}: {e}", flush=True)
+            await asyncio.sleep(0.5)
+            continue
+
+        for sig in signals:
+            key = (wallet, coin, sig["timeframe"], sig["signal_type"])
+            if key in seen:
+                continue
+            try:
+                db.table("technical_signals").insert({
+                    "wallet_address": wallet,
+                    "coin":           coin,
+                    "timeframe":      sig["timeframe"],
+                    "signal_type":    sig["signal_type"],
+                    "price":          sig["price"],
+                    "detected_at":    now.isoformat(),
+                }).execute()
+                seen.add(key)
+                print(
+                    f"[scanner] {wallet[:8]}... {coin} {sig['timeframe']} "
+                    f"{sig['signal_type']} @ {sig['price']:.4f}",
+                    flush=True,
+                )
+            except Exception as e:
+                print(f"[scanner] insert failed {coin} {sig['signal_type']}: {e}", flush=True)
+
+        # Yield event loop back to bot tasks between pairs.
+        await asyncio.sleep(0.5)
+
+
+async def technical_scanner_loop() -> None:
+    """Run the technical scanner every 5 minutes (300 s)."""
+    print("[worker] Technical scanner loop starting...", flush=True)
+    while True:
+        try:
+            await _run_technical_scanner_cycle()
+        except Exception as e:
+            print(f"[scanner] loop error: {e}", flush=True)
+        await asyncio.sleep(300)
+
+
 async def reconcile_loop():
     print("[worker] Reconciliation loop starting...", flush=True)
     await cold_start_restore()
@@ -517,5 +610,5 @@ async def reconcile_loop():
 
 if __name__ == "__main__":
     async def _main():
-        await asyncio.gather(reconcile_loop(), trailing_stop_loop())
+        await asyncio.gather(reconcile_loop(), trailing_stop_loop(), technical_scanner_loop())
     asyncio.run(_main())

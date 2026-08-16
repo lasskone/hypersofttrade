@@ -13,6 +13,7 @@ import BotsPanel from '@/components/dashboard/BotsPanel';
 import BacktestPanel from '@/components/dashboard/BacktestPanel';
 import BotDetailPanel from '@/components/dashboard/BotDetailPanel';
 import HistoryPanel from '@/components/dashboard/HistoryPanel';
+import ScannerPanel from '@/components/dashboard/ScannerPanel';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
@@ -79,6 +80,7 @@ function DashboardLayout({
           {section === 'bot_detail' && selectedBotId && <BotDetailPanel botId={selectedBotId} walletAddress={address} onBack={() => onNavigate('bots')} />}
           {section === 'backtest' && <BacktestPanel walletAddress={address} />}
           {section === 'history' && <HistoryPanel walletAddress={address} />}
+          {section === 'scanner' && <ScannerPanel walletAddress={address} />}
           {section === 'settings' && <SettingsPanel walletAddress={address} />}
         </main>
       </div>

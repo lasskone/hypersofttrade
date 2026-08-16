@@ -11,6 +11,7 @@ from routers import account, bots
 from services.backtest_engine import backtest_rsi_dca_grid
 from routers.orders import router as market_router, orders_router
 from routers.saved_backtests import router as saved_backtests_router
+from routers.scanner import router as scanner_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +67,7 @@ app.include_router(market_router,           prefix="/market",          tags=["ma
 app.include_router(orders_router,           prefix="/orders",          tags=["orders"])
 app.include_router(bots.router,             prefix="/bots",            tags=["bots"])
 app.include_router(saved_backtests_router,  prefix="/backtest/saved",  tags=["backtest"])
+app.include_router(scanner_router,          prefix="/scanner",          tags=["scanner"])
 
 
 # ---------------------------------------------------------------------------
