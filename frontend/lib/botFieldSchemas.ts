@@ -87,3 +87,45 @@ export const MOMENTUM_SCALPER_META = {
 export const MOMENTUM_SCALPER_DEFAULTS: Record<string, number> = Object.fromEntries(
   MOMENTUM_SCALPER_FIELDS.map(f => [f.key, f.default])
 )
+
+// ── Momentum Fade Scalper ─────────────────────────────────────────────────────
+
+export const FADE_SCALPER_FIELDS: BotField[] = [
+  { key: 'tp_atr_multiplier',                 label: 'Take Profit ATR Multiplier',       default: 2.0,  hint: 'Take profit distance = ATR × this value. Default 2.0 gives room for the momentum burst to extend before reversing.' },
+  { key: 'sl_atr_multiplier',                 label: 'Stop Loss ATR Multiplier',         default: 1.0,  hint: 'Stop loss distance = ATR × this value. Kept tighter than TP (1.0 vs 2.0) for a 2R reward/risk on each entry.' },
+  { key: 'breakeven_atr_trigger',             label: 'Breakeven Trigger (ATR)',          default: 0.5,  hint: 'When price moves this many ATRs in your favour, SL moves to breakeven. Protects winning trades from turning into losers.' },
+  { key: 'cooldown_after_trade_seconds',      label: 'Cooldown After Trade (s)',         default: 10,   hint: 'Seconds to wait after any trade closes before the scanner looks for the next entry.' },
+  { key: 'cooldown_after_loss_seconds',       label: 'Cooldown After Loss (s)',          default: 60,   hint: 'Extended cooldown after a losing trade to avoid chasing in hostile conditions.' },
+  { key: 'scan_interval_seconds',             label: 'Scan Interval (s)',                default: 5,    hint: 'How often the market scanner runs. Lower = more responsive; higher = lower API load.' },
+  { key: 'risk_per_trade',                    label: 'Risk Per Trade (fraction)',        default: 0.02, hint: 'Fraction of current equity to risk per trade (e.g. 0.02 = 2%). Scaled down automatically during drawdowns.' },
+  { key: 'max_daily_loss_pct',                label: 'Max Daily Loss (fraction)',        default: 0.10, hint: 'Trading halts for the rest of the UTC day if cumulative losses exceed this fraction of equity.' },
+  { key: 'max_consecutive_losses',            label: 'Max Consecutive Losses',           default: 3,    hint: 'After this many back-to-back losses, the bot pauses for the consecutive-loss cooldown period.' },
+  { key: 'consecutive_loss_cooldown_minutes', label: 'Consecutive-Loss Cooldown (min)',  default: 30,   hint: 'Minutes to pause after hitting the consecutive-loss limit.' },
+  { key: 'min_profit_to_fee_ratio',           label: 'Min Profit-to-Fee Ratio',         default: 3.0,  hint: 'Minimum ratio of expected TP profit to estimated round-trip fee. Entries where this cannot be met are skipped.' },
+  { key: 'min_efficiency_ratio',              label: 'Min Efficiency Ratio',             default: 0.3,  hint: 'Kaufman Efficiency Ratio threshold (0–1). 0 = pure chop, 1 = perfectly linear move. 0.3 filters out choppy, low-conviction setups.' },
+  { key: 'min_volume_ratio',                  label: 'Min Volume Ratio',                 default: 1.3,  hint: 'Current-bar volume must be ≥ this multiple of the 20-bar volume SMA. Ensures elevated participation at entry.' },
+  { key: 'max_spread_pct',                    label: 'Max Spread %',                     default: 0.03, hint: 'Maximum bid-ask spread as a percentage of mid price. Wide spreads are skipped to avoid excessive slippage.' },
+]
+
+export const FADE_SCALPER_META = {
+  name:        'Momentum Fade Scalper',
+  emoji:       '🌊',
+  tagline:     'Early momentum entries via RSI midline cross + Efficiency Ratio',
+  description: 'Scans BTC, ETH, SOL for the start of a momentum burst using fast EMAs (9/21 on M1), an RSI(7) midline-cross trigger, and the Kaufman Efficiency Ratio as a trend-quality gate. All five gates must pass simultaneously — no partial credit. Exits via ATR-scaled TP/SL with a breakeven move.',
+  howItWorks:  [
+    'EMA9/21 on M1 candles sets directional bias (long or short)',
+    'RSI(7) midline-cross through 50 fires at the start of a momentum shift — earlier than extreme-zone RSI',
+    'Kaufman Efficiency Ratio > 0.3 confirms clean directional movement vs. choppy noise',
+    'Volume ratio and bid-ask spread gates filter out low-conviction and illiquid entries',
+    'Risk Manager tracks equity, drawdown tiers, and daily loss — sizes down or halts automatically',
+  ],
+  bestFor:     'Fast-moving, trending markets',
+  risk:        'High',
+  riskColor:   '#ef4444',
+  minAllocation: 100,
+  color:       '#06b6d4',
+}
+
+export const FADE_SCALPER_DEFAULTS: Record<string, number> = Object.fromEntries(
+  FADE_SCALPER_FIELDS.map(f => [f.key, f.default])
+)

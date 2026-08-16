@@ -6,13 +6,15 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 // ── constants ────────────────────────────────────────────────────────────────
 
 const BOT_TYPE_LABELS: Record<string, string> = {
-  rsi_dca:          'RSI DCA Grid',
-  momentum_scalper: 'Momentum Scalper',
+  rsi_dca:               'RSI DCA Grid',
+  momentum_scalper:      'Momentum Scalper',
+  momentum_fade_scalper: 'Momentum Fade Scalper',
 }
 
 const BOT_TYPE_COLORS: Record<string, string> = {
-  rsi_dca:          '#8b5cf6',
-  momentum_scalper: '#f97316',
+  rsi_dca:               '#8b5cf6',
+  momentum_scalper:      '#f97316',
+  momentum_fade_scalper: '#06b6d4',
 }
 
 // Keys shown in the header already — skip in config grid

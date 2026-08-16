@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   RSI_DCA_FIELDS, RSI_DCA_META, RSI_DCA_DEFAULTS,
   MOMENTUM_SCALPER_FIELDS, MOMENTUM_SCALPER_META, MOMENTUM_SCALPER_DEFAULTS,
+  FADE_SCALPER_FIELDS, FADE_SCALPER_META, FADE_SCALPER_DEFAULTS,
   type BotField,
 } from '@/lib/botFieldSchemas'
 
@@ -40,17 +41,32 @@ const BOT_TYPES: Record<string, {
     color:       MOMENTUM_SCALPER_META.color,
     params:      Object.fromEntries(MOMENTUM_SCALPER_FIELDS.map(f => [f.key, { label: f.label, hint: f.hint }])),
   },
+  momentum_fade_scalper: {
+    name:        FADE_SCALPER_META.name,
+    emoji:       FADE_SCALPER_META.emoji,
+    tagline:     FADE_SCALPER_META.tagline,
+    description: FADE_SCALPER_META.description,
+    howItWorks:  FADE_SCALPER_META.howItWorks,
+    bestFor:     FADE_SCALPER_META.bestFor,
+    risk:        FADE_SCALPER_META.risk,
+    riskColor:   FADE_SCALPER_META.riskColor,
+    minAllocation: FADE_SCALPER_META.minAllocation,
+    color:       FADE_SCALPER_META.color,
+    params:      Object.fromEntries(FADE_SCALPER_FIELDS.map(f => [f.key, { label: f.label, hint: f.hint }])),
+  },
 }
 
 const BOT_TYPE_DEFAULTS: Record<string, Record<string, any>> = {
-  rsi_dca:          RSI_DCA_DEFAULTS,
-  momentum_scalper: MOMENTUM_SCALPER_DEFAULTS,
+  rsi_dca:                RSI_DCA_DEFAULTS,
+  momentum_scalper:       MOMENTUM_SCALPER_DEFAULTS,
+  momentum_fade_scalper:  FADE_SCALPER_DEFAULTS,
 }
 
 // Returns the right field list for a given bot type.
 function getSchemaFields(botType: string): BotField[] {
   if (botType === 'rsi_dca') return RSI_DCA_FIELDS
   if (botType === 'momentum_scalper') return MOMENTUM_SCALPER_FIELDS
+  if (botType === 'momentum_fade_scalper') return FADE_SCALPER_FIELDS
   return []
 }
 
@@ -688,10 +704,15 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const ip = initialParams ?? {}
   const typeDefaults = BOT_TYPE_DEFAULTS[botType] ?? {}
   const isMomentumScalper = botType === 'momentum_scalper'
+  const isFadeScalper = botType === 'momentum_fade_scalper'
+  const isMultiSymbol = isMomentumScalper || isFadeScalper
+  const chipColor = isFadeScalper ? '#06b6d4' : '#f97316'
   const [name, setName] = useState(`My ${BOT_TYPES[botType as keyof typeof BOT_TYPES]?.name ?? 'Bot'}`)
   const [symbol, setSymbol] = useState(initialSymbol ?? 'BTC')
   const [dex, setDex] = useState(initialDex ?? '')
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC', 'ETH', 'SOL', 'XRP', 'HYPE'])
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
+    isFadeScalper ? ['BTC', 'ETH', 'SOL'] : ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
+  )
   const [symbolInput, setSymbolInput] = useState('')
   const [allocatedUsdc, setAllocatedUsdc] = useState('100')
   const [leverage, setLeverage] = useState(String(ip.leverage ?? typeDefaults.leverage ?? 1))
@@ -736,11 +757,11 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
           wallet_address: walletAddress,
           name,
           bot_type: botType,
-          symbol: isMomentumScalper ? selectedSymbols.join(',') : symbol,
+          symbol: isMultiSymbol ? selectedSymbols.join(',') : symbol,
           allocated_usdc: parseFloat(allocatedUsdc),
           config: {
             ...params,
-            ...(isMomentumScalper ? { symbols: selectedSymbols } : { dex }),
+            ...(isMultiSymbol ? { symbols: selectedSymbols } : { dex }),
             allocated_usdc: parseFloat(allocatedUsdc),
             leverage: parseInt(leverage),
           }
@@ -779,8 +800,8 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
-          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for Momentum Scalper */}
-          {isMomentumScalper ? (
+          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for multi-symbol bots */}
+          {isMultiSymbol ? (
             <div>
               <label style={labelStyle}>SYMBOLS TO SCAN</label>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const, marginBottom: 8 }}>
@@ -788,11 +809,11 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                   <span key={sym} style={{
                     display: 'inline-flex', alignItems: 'center', gap: 4,
                     padding: '4px 10px', borderRadius: 5, fontSize: 12, fontWeight: 700,
-                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644',
+                    background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44`,
                   }}>
                     {sym}
                     <button type="button" onClick={() => setSelectedSymbols(prev => prev.filter(s => s !== sym))}
-                      style={{ background: 'none', border: 'none', color: '#f97316', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.7 }}>
+                      style={{ background: 'none', border: 'none', color: chipColor, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.7 }}>
                       ×
                     </button>
                   </span>
@@ -820,7 +841,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                     setSymbolInput('')
                   }}
                   style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644' }}>
+                    background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44` }}>
                   Add
                 </button>
               </div>
@@ -951,11 +972,15 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const def = BOT_TYPE_DEFAULTS[bot.bot_type] ?? {}
   const cfg: any = bot.config ?? {}
   const isMomentumScalper = bot.bot_type === 'momentum_scalper'
+  const isFadeScalper = bot.bot_type === 'momentum_fade_scalper'
+  const isMultiSymbol = isMomentumScalper || isFadeScalper
+  const chipColor = isFadeScalper ? '#06b6d4' : '#f97316'
   const [name, setName] = useState(bot.name ?? '')
   const [symbol, setSymbol] = useState<string>(String(cfg.symbol ?? bot.symbol ?? ''))
   const [dex, setDex] = useState<string>(String(cfg.dex ?? ''))
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
-    cfg.symbols && Array.isArray(cfg.symbols) ? cfg.symbols : ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
+    cfg.symbols && Array.isArray(cfg.symbols) ? cfg.symbols :
+    isFadeScalper ? ['BTC', 'ETH', 'SOL'] : ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
   )
   const [symbolInput, setSymbolInput] = useState('')
   const [allocatedUsdc, setAllocatedUsdc] = useState(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? '100'))
@@ -1010,7 +1035,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
       const finalConfig = {
         bot_type:      bot.bot_type,
         ...params,
-        ...(isMomentumScalper ? { symbols: selectedSymbols } : { symbol, dex }),
+        ...(isMultiSymbol ? { symbols: selectedSymbols } : { symbol, dex }),
         allocated_usdc: parseFloat(allocatedUsdc),
         leverage:       parseInt(leverage),
       }
@@ -1054,8 +1079,8 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
 
-          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for Momentum Scalper */}
-          {isMomentumScalper ? (
+          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for multi-symbol bots */}
+          {isMultiSymbol ? (
             <div>
               <label style={labelStyle}>SYMBOLS TO SCAN</label>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const, marginBottom: 8 }}>
@@ -1063,11 +1088,11 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   <span key={sym} style={{
                     display: 'inline-flex', alignItems: 'center', gap: 4,
                     padding: '4px 10px', borderRadius: 5, fontSize: 12, fontWeight: 700,
-                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644',
+                    background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44`,
                   }}>
                     {sym}
                     <button type="button" onClick={() => setSelectedSymbols(prev => prev.filter(s => s !== sym))}
-                      style={{ background: 'none', border: 'none', color: '#f97316', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.7 }}>
+                      style={{ background: 'none', border: 'none', color: chipColor, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.7 }}>
                       ×
                     </button>
                   </span>
@@ -1095,7 +1120,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                     setSymbolInput('')
                   }}
                   style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                    background: '#f9731618', color: '#f97316', border: '1px solid #f9731644' }}>
+                    background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44` }}>
                   Add
                 </button>
               </div>

@@ -104,6 +104,8 @@ class BotManager:
             await self._run_rsi_dca_bot(bot_id, config, wallet_address, private_key, api_wallet)
         elif bot_type == "momentum_scalper":
             await self._run_momentum_scalper_bot(bot_id, config, wallet_address, private_key, api_wallet)
+        elif bot_type == "momentum_fade_scalper":
+            await self._run_fade_scalper_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             self._add_log(bot_id, "error", f"Unknown bot_type '{bot_type}' — no strategy registered for this type")
             db = _supabase()
@@ -232,6 +234,67 @@ class BotManager:
             f"sz_decimals_map={sz_decimals_map} "
             f"allocation=${config.get('allocated_usdc', 200)} "
             f"min_score={config.get('min_score', 75)}"
+        ))
+        await bot.run()
+
+
+    async def _run_fade_scalper_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
+        from bots.momentum_fade_scalper.strategy import FadeScalperBot
+        from services.hyperliquid_meta import get_sz_decimals
+
+        symbols = list(config.get("symbols", ["BTC", "ETH", "SOL"]))
+
+        # Build sz_decimals_map concurrently for all symbols.
+        decimals_list = await asyncio.gather(*[get_sz_decimals(sym) for sym in symbols])
+        sz_decimals_map = dict(zip(symbols, decimals_list))
+
+        # Only pass optional keys that are present in config — lets strategy defaults
+        # apply without duplicating hardcoded values here.
+        optional: dict = {}
+
+        _float_keys = [
+            "allocated_usdc",
+            "tp_atr_multiplier", "sl_atr_multiplier", "breakeven_atr_trigger",
+            "risk_per_trade", "max_daily_loss_pct",
+            "min_profit_to_fee_ratio", "estimated_fee_pct",
+        ]
+        _int_keys = [
+            "leverage",
+            "cooldown_after_trade_seconds", "cooldown_after_loss_seconds",
+            "scan_interval_seconds",
+            "max_consecutive_losses", "consecutive_loss_cooldown_minutes",
+        ]
+
+        for k in _float_keys:
+            if config.get(k) is not None:
+                optional[k] = float(config[k])
+        for k in _int_keys:
+            if config.get(k) is not None:
+                optional[k] = int(config[k])
+
+        # Build scanner_config from scanner-specific keys in config.
+        _scanner_keys = ["min_efficiency_ratio", "min_volume_ratio", "max_spread_pct", "rsi_period"]
+        scanner_config: dict = {}
+        for k in _scanner_keys:
+            if config.get(k) is not None:
+                scanner_config[k] = float(config[k])
+        if scanner_config:
+            optional["scanner_config"] = scanner_config
+
+        bot = FadeScalperBot(
+            private_key     = private_key,
+            master_address  = master_address,
+            symbols         = symbols,
+            sz_decimals_map = sz_decimals_map,
+            db_client       = _supabase(),
+            bot_id          = bot_id,
+            log_callback    = lambda level, msg: self._add_log(bot_id, level, msg),
+            **optional,
+        )
+        self._add_log(bot_id, "info", (
+            f"Momentum Fade Scalper initializing — symbols={symbols} "
+            f"sz_decimals_map={sz_decimals_map} "
+            f"allocation=${config.get('allocated_usdc', 100)}"
         ))
         await bot.run()
 
