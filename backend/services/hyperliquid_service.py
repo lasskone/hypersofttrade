@@ -18,10 +18,18 @@ INFO_ENDPOINT = f"{MAINNET_API_URL}/info"
 
 logger = logging.getLogger("hyperliquid_service")
 
-# Maximum time (seconds) to wait for a Hyperliquid SDK call (exchange.order,
-# exchange.cancel, etc.) running in a thread-pool via asyncio.to_thread.
-# These calls use the requests library internally and have no built-in timeout;
-# a TCP stall at the kernel level would otherwise hang forever.
+# Maximum time (seconds) to wait for any Hyperliquid network call:
+#   • Signed exchange SDK calls (exchange.order, exchange.cancel, etc.) run
+#     in a thread-pool via asyncio.to_thread using the requests library, which
+#     has no built-in timeout — a TCP stall would hang the thread indefinitely.
+#   • Read-only market-data calls (get_candles, get_orderbook, get_all_mids,
+#     get_clearinghouse_state, get_user_fills, get_open_orders, etc.) use
+#     httpx.AsyncClient — these are called every scan tick (every 5 s) and are
+#     far more frequent than signed calls.  A TCP stall on any of them blocks
+#     the awaiting coroutine (and therefore the worker event loop) until the
+#     kernel-level socket timeout fires, which can take minutes.
+# Both call paths enforce this ceiling so no single network call can freeze the
+# event loop beyond _EXCHANGE_CALL_TIMEOUT_S seconds.
 _EXCHANGE_CALL_TIMEOUT_S: float = 15.0
 
 # Maximum time (seconds) to wait when acquiring the per-wallet asyncio.Lock
@@ -69,7 +77,7 @@ class HyperliquidService:
     async def get_all_mids(self) -> dict:
         """Return a dict of symbol -> mid price for all assets."""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"})
                 resp.raise_for_status()
             return resp.json()
@@ -80,7 +88,7 @@ class HyperliquidService:
     async def get_orderbook(self, symbol: str) -> dict:
         """Return top-of-book bids and asks for *symbol*."""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 resp = await client.post(
                     INFO_ENDPOINT, json={"type": "l2Book", "coin": symbol}
                 )
@@ -101,7 +109,7 @@ class HyperliquidService:
     async def get_all_perp_dexes(self) -> list[str]:
         """Return all perp DEX identifiers: '' for main, name string for HIP-3."""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
                     INFO_ENDPOINT,
                     json={"type": "perpDexs"},
@@ -125,7 +133,7 @@ class HyperliquidService:
             payload: dict = {"type": "clearinghouseState", "user": wallet_address}
             if dex:
                 payload["dex"] = dex
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
                     INFO_ENDPOINT,
                     json=payload,
@@ -139,12 +147,11 @@ class HyperliquidService:
     async def get_spot_state(self, wallet_address: str) -> dict:
         """Return spot balances for *wallet_address*."""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
                     INFO_ENDPOINT,
                     json={"type": "spotClearinghouseState", "user": wallet_address},
                     headers={"Content-Type": "application/json"},
-                    timeout=10.0,
                 )
                 return response.json()
         except Exception as e:
@@ -154,12 +161,11 @@ class HyperliquidService:
     async def get_user_fills(self, wallet_address: str) -> list:
         """Return full trade history for *wallet_address*."""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
                     INFO_ENDPOINT,
                     json={"type": "userFills", "user": wallet_address},
                     headers={"Content-Type": "application/json"},
-                    timeout=10.0,
                 )
                 return response.json()
         except Exception as e:
@@ -176,12 +182,11 @@ class HyperliquidService:
             payload: dict = {"type": "frontendOpenOrders", "user": wallet_address}
             if dex:
                 payload["dex"] = dex
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
                     INFO_ENDPOINT,
                     json=payload,
                     headers={"Content-Type": "application/json"},
-                    timeout=10.0,
                 )
                 return response.json()
         except Exception as e:
@@ -269,7 +274,7 @@ class HyperliquidService:
 
         # Fetch mark prices and sz_decimals for position enrichment
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 mids_r, metas_r = await asyncio.gather(
                     client.post(INFO_ENDPOINT, json={"type": "allMids"}, headers={"Content-Type": "application/json"}),
                     client.post(INFO_ENDPOINT, json={"type": "allPerpMetas"}, headers={"Content-Type": "application/json"}),
@@ -591,7 +596,7 @@ class HyperliquidService:
         from core.config import settings
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 # Step 1: check user's own referredBy code
                 resp1 = await client.post(
                     INFO_ENDPOINT,
@@ -1173,13 +1178,12 @@ async def get_all_markets() -> list:
     Prices for HIP-3 coins fall back to allMids.
     """
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
             # Flat list of meta dicts, one per DEX
             metas_resp = await client.post(
                 INFO_ENDPOINT,
                 json={"type": "allPerpMetas"},
                 headers={"Content-Type": "application/json"},
-                timeout=15.0,
             )
             all_metas = metas_resp.json()
 
@@ -1188,7 +1192,6 @@ async def get_all_markets() -> list:
                 INFO_ENDPOINT,
                 json={"type": "metaAndAssetCtxs"},
                 headers={"Content-Type": "application/json"},
-                timeout=10.0,
             )
             main_ctxs_data = ctxs_resp.json()
             main_ctxs = main_ctxs_data[1] if len(main_ctxs_data) > 1 else []
@@ -1213,7 +1216,6 @@ async def get_all_markets() -> list:
                 INFO_ENDPOINT,
                 json={"type": "allMids"},
                 headers={"Content-Type": "application/json"},
-                timeout=10.0,
             )
             all_mids = mids_resp.json()
 
@@ -1262,12 +1264,11 @@ async def get_all_markets() -> list:
 async def get_recent_trades(coin: str) -> list:
     """Get the last 20 recent trades for *coin*."""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
             response = await client.post(
                 INFO_ENDPOINT,
                 json={"type": "recentTrades", "coin": coin},
                 headers={"Content-Type": "application/json"},
-                timeout=10.0,
             )
             data = response.json()
 
@@ -1313,7 +1314,7 @@ async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
         ms = interval_ms.get(interval, 900_000)
         start_time = end_time - ms * limit
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
             response = await client.post(
                 INFO_ENDPOINT,
                 json={
@@ -1326,7 +1327,6 @@ async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
                     },
                 },
                 headers={"Content-Type": "application/json"},
-                timeout=15.0,
             )
             candles = response.json()
 

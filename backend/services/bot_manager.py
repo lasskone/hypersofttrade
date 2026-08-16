@@ -29,13 +29,24 @@ class BotManager:
         db.table("bots").update({"status": "running", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
 
     async def stop(self, bot_id: str) -> None:
+        _STOP_TIMEOUT_S = 20.0
         task = self._tasks.pop(bot_id, None)
         if task:
             task.cancel()
             try:
-                await task
+                # asyncio.shield so that if wait_for's own timeout fires, it
+                # cancels the shield future — not the underlying task a second
+                # time — keeping task state clean while we surface the hang.
+                await asyncio.wait_for(asyncio.shield(task), timeout=_STOP_TIMEOUT_S)
             except asyncio.CancelledError:
-                pass
+                pass  # clean cancellation — expected path
+            except asyncio.TimeoutError:
+                self._add_log(
+                    bot_id, "error",
+                    f"Bot {bot_id} task did not respond to cancellation within "
+                    f"{_STOP_TIMEOUT_S}s — the worker event loop may be frozen; "
+                    "manual worker restart may be required",
+                )
         db = _supabase()
         db.table("bots").update({"status": "stopped", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
 
