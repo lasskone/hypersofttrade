@@ -30,8 +30,14 @@ interface Signal {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Constants
 // ---------------------------------------------------------------------------
+const TIMEFRAMES = ['15m', '1h', '4h'] as const;
+type TF = typeof TIMEFRAMES[number];
+
+// How many signals to show per timeframe per coin before the "show more" toggle.
+const SIGNALS_PER_TF = 5;
+
 const SIGNAL_LABELS: Record<string, string> = {
   rsi_divergence_bullish: 'RSI Divergence (Bullish)',
   rsi_divergence_bearish: 'RSI Divergence (Bearish)',
@@ -67,7 +73,7 @@ function timeAgo(isoString: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// CoinAutocomplete — mirrors MarketMultiSelect styling from BotsPanel
+// CoinAutocomplete — unchanged from original
 // ---------------------------------------------------------------------------
 function CoinAutocomplete({
   symbols,
@@ -212,6 +218,218 @@ function CoinAutocomplete({
 }
 
 // ---------------------------------------------------------------------------
+// SignalItem — compact signal row inside a timeframe column
+// ---------------------------------------------------------------------------
+function SignalItem({ sig }: { sig: Signal }) {
+  const bullish = isBullish(sig.signal_type);
+  const color   = bullish ? '#10b981' : '#ef4444';
+  const tsStr   = sig.bar_time || sig.detected_at;
+
+  return (
+    <div style={{ paddingBottom: 8, borderBottom: '1px solid #0a0a0f' }}>
+      {/* Signal badge */}
+      <div
+        style={{
+          display: 'inline-block',
+          padding: '2px 6px',
+          borderRadius: 4,
+          fontSize: 10,
+          fontWeight: 700,
+          background: `${color}18`,
+          border: `1px solid ${color}40`,
+          color,
+          lineHeight: 1.4,
+          wordBreak: 'break-word',
+          marginBottom: 4,
+        }}
+      >
+        {SIGNAL_LABELS[sig.signal_type] || sig.signal_type}
+      </div>
+      {/* Price */}
+      <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'monospace', marginBottom: 2 }}>
+        {Number(sig.price).toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 4,
+        })}
+      </div>
+      {/* Timestamp */}
+      <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.4 }}>
+        {fmtTime(tsStr)}
+      </div>
+      <div style={{ fontSize: 10, color: '#4b5563' }}>
+        {timeAgo(tsStr)}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TimeframeColumn — one TF section inside a ticker card
+// ---------------------------------------------------------------------------
+function TimeframeColumn({
+  tf,
+  sigs,
+  expandKey,
+  expanded,
+  onToggleExpand,
+  isLast,
+}: {
+  tf: TF;
+  sigs: Signal[];
+  expandKey: string;
+  expanded: boolean;
+  onToggleExpand: (key: string) => void;
+  isLast: boolean;
+}) {
+  const visible  = expanded ? sigs : sigs.slice(0, SIGNALS_PER_TF);
+  const overflow = sigs.length - SIGNALS_PER_TF;
+
+  return (
+    <div
+      style={{
+        padding: '10px 10px 8px',
+        borderRight: isLast ? 'none' : '1px solid #1a1a2e',
+        minWidth: 0,
+      }}
+    >
+      {/* TF label */}
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: '#4b5563',
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          marginBottom: 8,
+        }}
+      >
+        {tf}
+      </div>
+
+      {sigs.length === 0 ? (
+        <div style={{ fontSize: 11, color: '#374151', fontStyle: 'italic' }}>
+          No signals
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          {visible.map(sig => (
+            <SignalItem key={sig.id} sig={sig} />
+          ))}
+        </div>
+      )}
+
+      {overflow > 0 && (
+        <button
+          onClick={() => onToggleExpand(expandKey)}
+          style={{
+            marginTop: 6,
+            fontSize: 10,
+            color: '#6b7280',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            textDecoration: 'underline',
+            display: 'block',
+          }}
+        >
+          {expanded ? 'Show less' : `+${overflow} more`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TickerCard — one card per watchlist coin
+// ---------------------------------------------------------------------------
+function TickerCard({
+  entry,
+  coinSignals,
+  expandedTfs,
+  onToggleExpand,
+  onRemove,
+}: {
+  entry: WatchlistEntry;
+  coinSignals: Record<string, Signal[]>;
+  expandedTfs: Set<string>;
+  onToggleExpand: (key: string) => void;
+  onRemove: (entry: WatchlistEntry) => void;
+}) {
+  const totalSignals = Object.values(coinSignals).reduce((n, arr) => n + arr.length, 0);
+
+  return (
+    <div
+      className="rounded-xl"
+      style={{ backgroundColor: '#0d0d14', border: '1px solid #1a1a2e' }}
+    >
+      {/* Card header */}
+      <div
+        className="flex items-center justify-between"
+        style={{
+          padding: '10px 12px',
+          borderBottom: '1px solid #1a1a2e',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
+            {entry.coin}
+          </span>
+          {totalSignals > 0 && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                color: '#6b7280',
+                background: '#1a1a2e',
+                borderRadius: 10,
+                padding: '1px 6px',
+              }}
+            >
+              {totalSignals}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => onRemove(entry)}
+          title={`Remove ${entry.coin} from watchlist`}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#4b5563',
+            cursor: 'pointer',
+            fontSize: 16,
+            lineHeight: 1,
+            padding: '0 2px',
+            borderRadius: 4,
+            transition: 'color 0.15s',
+          }}
+          onMouseEnter={e => ((e.target as HTMLButtonElement).style.color = '#ef4444')}
+          onMouseLeave={e => ((e.target as HTMLButtonElement).style.color = '#4b5563')}
+        >
+          ×
+        </button>
+      </div>
+
+      {/* 3-column timeframe grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }}>
+        {TIMEFRAMES.map((tf, idx) => (
+          <TimeframeColumn
+            key={tf}
+            tf={tf}
+            sigs={coinSignals[tf] ?? []}
+            expandKey={`${entry.coin}::${tf}`}
+            expanded={expandedTfs.has(`${entry.coin}::${tf}`)}
+            onToggleExpand={onToggleExpand}
+            isLast={idx === TIMEFRAMES.length - 1}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function ScannerPanel({ walletAddress }: { walletAddress: string }) {
@@ -224,10 +442,22 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
   const [toast, setToast]               = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const toastTimer                      = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Tracks which coin::timeframe pairs are expanded past SIGNALS_PER_TF.
+  const [expandedTfs, setExpandedTfs]   = useState<Set<string>>(new Set());
+
   const showToast = (type: 'success' | 'error', message: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ type, message });
     toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
+
+  const toggleExpandTf = (key: string) => {
+    setExpandedTfs(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   // ── Fetch symbol list (once on mount) ────────────────────────────────────
@@ -253,10 +483,13 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
   };
 
   // ── Fetch signals ────────────────────────────────────────────────────────
+  // Limit 500 (backend cap) so each watched coin has adequate history across
+  // all 3 timeframes — a flat limit=100 gets exhausted quickly when many coins
+  // are watched and one coin fires frequently.
   const fetchSignals = async () => {
     try {
       const res = await fetch(
-        `${API_URL}/scanner/signals?wallet_address=${encodeURIComponent(walletAddress)}&limit=100`
+        `${API_URL}/scanner/signals?wallet_address=${encodeURIComponent(walletAddress)}&limit=500`
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -276,7 +509,7 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
 
-  // ── Add coin (called by autocomplete on selection) ───────────────────────
+  // ── Add coin ─────────────────────────────────────────────────────────────
   const handleAdd = async (coin: string) => {
     try {
       const res = await fetch(`${API_URL}/scanner/watchlist`, {
@@ -311,13 +544,22 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
     }
   };
 
+  // ── Group signals by coin → timeframe (client-side, no backend change) ──
+  // API returns signals ordered most-recent-first; preserve that order here.
+  const signalsByCoin: Record<string, Record<string, Signal[]>> = {};
+  for (const sig of signals) {
+    if (!signalsByCoin[sig.coin]) signalsByCoin[sig.coin] = {};
+    if (!signalsByCoin[sig.coin][sig.timeframe]) signalsByCoin[sig.coin][sig.timeframe] = [];
+    signalsByCoin[sig.coin][sig.timeframe].push(sig);
+  }
+
   const alreadyAdded = new Set(watchlist.map(e => e.coin));
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
   return (
-    <div className="p-6" style={{ maxWidth: 960, margin: '0 auto' }}>
+    <div className="p-6" style={{ maxWidth: 1200, margin: '0 auto' }}>
 
       {/* Toast */}
       {toast && (
@@ -349,15 +591,20 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
         </p>
       </div>
 
-      {/* ── Watchlist management ─────────────────────────────────────────── */}
+      {/* ── Add-coin row ──────────────────────────────────────────────────── */}
       <div
-        className="rounded-xl p-5 mb-6"
+        className="rounded-xl p-4 mb-6"
         style={{ backgroundColor: '#0d0d14', border: '1px solid #1a1a2e' }}
       >
-        <h3 className="text-sm font-semibold text-white mb-4">Watchlist</h3>
-
-        {/* Autocomplete add row */}
-        <div className="flex gap-2 mb-4">
+        <div className="flex items-center gap-3 mb-2">
+          <h3 className="text-sm font-semibold text-white">Add to Watchlist</h3>
+          {watchlist.length > 0 && (
+            <span style={{ fontSize: 11, color: '#4b5563' }}>
+              {watchlist.length} coin{watchlist.length !== 1 ? 's' : ''} monitored
+            </span>
+          )}
+        </div>
+        <div className="flex gap-2">
           <CoinAutocomplete
             symbols={symbols}
             symbolsLoading={symbolsLoading}
@@ -365,150 +612,51 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
             onAdd={handleAdd}
           />
         </div>
-
-        {/* Coin chips */}
-        {loadingWl ? (
-          <p style={{ color: '#6b7280', fontSize: 13 }}>Loading watchlist…</p>
-        ) : watchlist.length === 0 ? (
-          <p style={{ color: '#6b7280', fontSize: 13 }}>
-            No coins yet — search and select one above to start scanning.
+        {watchlist.length === 0 && !loadingWl && (
+          <p style={{ color: '#4b5563', fontSize: 12, marginTop: 8 }}>
+            Search and select a coin above — a signal card will appear below for each one.
           </p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {watchlist.map(entry => (
-              <div
-                key={entry.id}
-                className="flex items-center gap-1.5"
-                style={{
-                  background: '#00d4aa12',
-                  border: '1px solid #00d4aa30',
-                  borderRadius: 20,
-                  padding: '4px 10px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: '#00d4aa',
-                }}
-              >
-                <span>{entry.coin}</span>
-                <button
-                  onClick={() => handleRemove(entry)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#00d4aa80',
-                    cursor: 'pointer',
-                    fontSize: 14,
-                    lineHeight: 1,
-                    padding: '0 2px',
-                  }}
-                  title={`Remove ${entry.coin}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
         )}
       </div>
 
-      {/* ── Signals feed ────────────────────────────────────────────────── */}
-      <div
-        className="rounded-xl"
-        style={{ backgroundColor: '#0d0d14', border: '1px solid #1a1a2e', overflow: 'hidden' }}
-      >
-        <div
-          className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid #1a1a2e' }}
-        >
-          <h3 className="text-sm font-semibold text-white">Recent Signals</h3>
+      {/* ── Per-ticker signal cards ───────────────────────────────────────── */}
+      <div>
+        {/* Section header */}
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-white">Signals by Coin</h3>
           <span style={{ fontSize: 11, color: '#6b7280' }}>Auto-refreshes every 45 s</span>
         </div>
 
-        {loadingSig ? (
-          <div className="px-5 py-8 text-center" style={{ color: '#6b7280', fontSize: 13 }}>
-            Loading signals…
+        {loadingWl || loadingSig ? (
+          <div style={{ padding: '40px 0', textAlign: 'center', color: '#6b7280', fontSize: 13 }}>
+            Loading…
           </div>
-        ) : signals.length === 0 ? (
-          <div className="px-5 py-8 text-center" style={{ color: '#6b7280', fontSize: 13 }}>
-            No signals yet — most candles are not at a crossover / breakout / divergence.
-            Signals appear here as they are detected.
+        ) : watchlist.length === 0 ? (
+          <div
+            className="rounded-xl"
+            style={{
+              backgroundColor: '#0d0d14',
+              border: '1px solid #1a1a2e',
+              padding: '40px 24px',
+              textAlign: 'center',
+              color: '#6b7280',
+              fontSize: 13,
+            }}
+          >
+            No coins yet — search and select one above to start scanning.
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #1a1a2e' }}>
-                  {['Coin', 'Timeframe', 'Signal', 'Price', 'Bar Time'].map(h => (
-                    <th
-                      key={h}
-                      style={{
-                        padding: '10px 16px',
-                        textAlign: 'left',
-                        fontWeight: 600,
-                        fontSize: 11,
-                        color: '#6b7280',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {signals.map((sig, i) => {
-                  const bullish = isBullish(sig.signal_type);
-                  const color   = bullish ? '#10b981' : '#ef4444';
-                  return (
-                    <tr
-                      key={sig.id}
-                      style={{
-                        borderBottom: i < signals.length - 1 ? '1px solid #0a0a0f' : 'none',
-                        background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)',
-                      }}
-                    >
-                      <td style={{ padding: '10px 16px', color: '#fff', fontWeight: 600 }}>
-                        {sig.coin}
-                      </td>
-                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>
-                        {sig.timeframe}
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            padding: '2px 8px',
-                            borderRadius: 12,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            background: `${color}18`,
-                            border: `1px solid ${color}40`,
-                            color,
-                          }}
-                        >
-                          {SIGNAL_LABELS[sig.signal_type] || sig.signal_type}
-                        </span>
-                      </td>
-                      <td style={{ padding: '10px 16px', color: '#9ca3af', fontFamily: 'monospace' }}>
-                        {Number(sig.price).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 4,
-                        })}
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <div style={{ color: '#9ca3af', fontSize: 13 }}>
-                          {sig.bar_time ? fmtTime(sig.bar_time) : fmtTime(sig.detected_at)}
-                        </div>
-                        <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2 }}>
-                          {timeAgo(sig.bar_time || sig.detected_at)}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {watchlist.map(entry => (
+              <TickerCard
+                key={entry.id}
+                entry={entry}
+                coinSignals={signalsByCoin[entry.coin] ?? {}}
+                expandedTfs={expandedTfs}
+                onToggleExpand={toggleExpandTf}
+                onRemove={handleRemove}
+              />
+            ))}
           </div>
         )}
       </div>
