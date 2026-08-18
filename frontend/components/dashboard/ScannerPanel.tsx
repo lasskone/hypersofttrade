@@ -35,8 +35,17 @@ interface Signal {
 const TIMEFRAMES = ['15m', '1h', '4h'] as const;
 type TF = typeof TIMEFRAMES[number];
 
-// How many signals to show per timeframe per coin before the "show more" toggle.
-const SIGNALS_PER_TF = 5;
+// Signal families: each family groups the bullish and bearish variants of the
+// same underlying indicator.  For each coin×timeframe we show exactly ONE slot
+// per family — the single most recent signal that belongs to that family.
+// This eliminates contradictory stale entries (e.g. old Breakout Up + new
+// Breakout Down both visible at once).
+const SIGNAL_FAMILIES: Array<{ key: string; label: string; types: string[] }> = [
+  { key: 'rsi_divergence', label: 'RSI Divergence', types: ['rsi_divergence_bullish', 'rsi_divergence_bearish'] },
+  { key: 'ema200_cross',   label: 'EMA 200 Cross',  types: ['ema200_cross_up',        'ema200_cross_down']      },
+  { key: 'ema361_cross',   label: 'EMA 361 Cross',  types: ['ema361_cross_up',        'ema361_cross_down']      },
+  { key: 'breakout',       label: 'Breakout',        types: ['breakout_up',            'breakout_down']          },
+];
 
 const SIGNAL_LABELS: Record<string, string> = {
   rsi_divergence_bullish: 'RSI Divergence (Bullish)',
@@ -265,24 +274,32 @@ function SignalItem({ sig }: { sig: Signal }) {
 
 // ---------------------------------------------------------------------------
 // TimeframeColumn — one TF section inside a ticker card
+//
+// Shows exactly 4 slots — one per signal family — each displaying the single
+// most recent signal for that family, or a muted placeholder if none exist.
+// "Most recent" is determined by bar_time when available, else detected_at.
 // ---------------------------------------------------------------------------
 function TimeframeColumn({
   tf,
   sigs,
-  expandKey,
-  expanded,
-  onToggleExpand,
   isLast,
 }: {
   tf: TF;
-  sigs: Signal[];
-  expandKey: string;
-  expanded: boolean;
-  onToggleExpand: (key: string) => void;
+  sigs: Signal[];    // all signals for this coin×TF, already most-recent-first from API
   isLast: boolean;
 }) {
-  const visible  = expanded ? sigs : sigs.slice(0, SIGNALS_PER_TF);
-  const overflow = sigs.length - SIGNALS_PER_TF;
+  // For each family pick the signal with the latest timestamp.
+  // API ordering (detected_at DESC) is usually sufficient, but we sort within
+  // each family by bar_time/detected_at to handle the rare edge case where
+  // bar_time ordering diverges from detected_at ordering.
+  const tsOf = (s: Signal) => new Date(s.bar_time || s.detected_at).getTime();
+
+  const familySlots = SIGNAL_FAMILIES.map(family => {
+    const matching = sigs.filter(s => family.types.includes(s.signal_type));
+    if (matching.length === 0) return { family, signal: null as Signal | null };
+    const best = matching.reduce((a, b) => (tsOf(a) >= tsOf(b) ? a : b));
+    return { family, signal: best };
+  });
 
   return (
     <div
@@ -306,36 +323,26 @@ function TimeframeColumn({
         {tf}
       </div>
 
-      {sigs.length === 0 ? (
-        <div style={{ fontSize: 11, color: '#374151', fontStyle: 'italic' }}>
-          No signals
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {visible.map(sig => (
-            <SignalItem key={sig.id} sig={sig} />
-          ))}
-        </div>
-      )}
-
-      {overflow > 0 && (
-        <button
-          onClick={() => onToggleExpand(expandKey)}
-          style={{
-            marginTop: 6,
-            fontSize: 10,
-            color: '#6b7280',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: 0,
-            textDecoration: 'underline',
-            display: 'block',
-          }}
-        >
-          {expanded ? 'Show less' : `+${overflow} more`}
-        </button>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {familySlots.map(({ family, signal }) =>
+          signal ? (
+            <SignalItem key={family.key} sig={signal} />
+          ) : (
+            <div
+              key={family.key}
+              style={{
+                paddingBottom: 8,
+                borderBottom: '1px solid #0a0a0f',
+                fontSize: 10,
+                color: '#374151',
+                fontStyle: 'italic',
+              }}
+            >
+              No {family.label} signal yet
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -346,17 +353,19 @@ function TimeframeColumn({
 function TickerCard({
   entry,
   coinSignals,
-  expandedTfs,
-  onToggleExpand,
   onRemove,
 }: {
   entry: WatchlistEntry;
   coinSignals: Record<string, Signal[]>;
-  expandedTfs: Set<string>;
-  onToggleExpand: (key: string) => void;
   onRemove: (entry: WatchlistEntry) => void;
 }) {
-  const totalSignals = Object.values(coinSignals).reduce((n, arr) => n + arr.length, 0);
+  // Count how many family×TF slots have at least one signal (max 12 = 4×3).
+  const activeFamilySlots = TIMEFRAMES.reduce((total, tf) => {
+    const tfSigs = coinSignals[tf] ?? [];
+    return total + SIGNAL_FAMILIES.filter(
+      fam => tfSigs.some(s => fam.types.includes(s.signal_type))
+    ).length;
+  }, 0);
 
   return (
     <div
@@ -375,7 +384,7 @@ function TickerCard({
           <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
             {entry.coin}
           </span>
-          {totalSignals > 0 && (
+          {activeFamilySlots > 0 && (
             <span
               style={{
                 fontSize: 10,
@@ -386,7 +395,7 @@ function TickerCard({
                 padding: '1px 6px',
               }}
             >
-              {totalSignals}
+              {activeFamilySlots}/{SIGNAL_FAMILIES.length * TIMEFRAMES.length}
             </span>
           )}
         </div>
@@ -418,9 +427,6 @@ function TickerCard({
             key={tf}
             tf={tf}
             sigs={coinSignals[tf] ?? []}
-            expandKey={`${entry.coin}::${tf}`}
-            expanded={expandedTfs.has(`${entry.coin}::${tf}`)}
-            onToggleExpand={onToggleExpand}
             isLast={idx === TIMEFRAMES.length - 1}
           />
         ))}
@@ -442,22 +448,10 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
   const [toast, setToast]               = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const toastTimer                      = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Tracks which coin::timeframe pairs are expanded past SIGNALS_PER_TF.
-  const [expandedTfs, setExpandedTfs]   = useState<Set<string>>(new Set());
-
   const showToast = (type: 'success' | 'error', message: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ type, message });
     toastTimer.current = setTimeout(() => setToast(null), 3500);
-  };
-
-  const toggleExpandTf = (key: string) => {
-    setExpandedTfs(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
   };
 
   // ── Fetch symbol list (once on mount) ────────────────────────────────────
@@ -652,8 +646,6 @@ export default function ScannerPanel({ walletAddress }: { walletAddress: string 
                 key={entry.id}
                 entry={entry}
                 coinSignals={signalsByCoin[entry.coin] ?? {}}
-                expandedTfs={expandedTfs}
-                onToggleExpand={toggleExpandTf}
                 onRemove={handleRemove}
               />
             ))}
