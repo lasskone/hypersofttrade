@@ -61,12 +61,14 @@ const SIGNAL_LABELS: Record<string, string> = {
 const isBullish = (signal_type: string) =>
   signal_type.endsWith('_bullish') || signal_type.endsWith('_up');
 
-// Mirrors HistoryPanel's fmtTime — local timezone, no seconds, same en-US format.
+// 24-hour format. NOTE: HistoryPanel.tsx has its own separate local copy of
+// fmtTime — this change does NOT affect HistoryPanel.
 function fmtTime(isoString: string): string {
   if (!isoString) return '—';
   return new Date(isoString).toLocaleString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
+    hour12: false,
   });
 }
 
