@@ -229,30 +229,39 @@ function CoinAutocomplete({
 // ---------------------------------------------------------------------------
 // SignalItem — compact signal row inside a timeframe column
 // ---------------------------------------------------------------------------
-function SignalItem({ sig }: { sig: Signal }) {
+function SignalItem({ sig, isNewest = false }: { sig: Signal; isNewest?: boolean }) {
   const bullish = isBullish(sig.signal_type);
   const color   = bullish ? '#10b981' : '#ef4444';
   const tsStr   = sig.bar_time || sig.detected_at;
 
   return (
     <div style={{ paddingBottom: 8, borderBottom: '1px solid #0a0a0f' }}>
-      {/* Signal badge */}
-      <div
-        style={{
-          display: 'inline-block',
-          padding: '2px 6px',
-          borderRadius: 4,
-          fontSize: 10,
-          fontWeight: 700,
-          background: `${color}18`,
-          border: `1px solid ${color}40`,
-          color,
-          lineHeight: 1.4,
-          wordBreak: 'break-word',
-          marginBottom: 4,
-        }}
-      >
-        {SIGNAL_LABELS[sig.signal_type] || sig.signal_type}
+      {/* Signal badge + optional newest-star */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+        <div
+          style={{
+            display: 'inline-block',
+            padding: '2px 6px',
+            borderRadius: 4,
+            fontSize: 10,
+            fontWeight: 700,
+            background: `${color}18`,
+            border: `1px solid ${color}40`,
+            color,
+            lineHeight: 1.4,
+            wordBreak: 'break-word',
+          }}
+        >
+          {SIGNAL_LABELS[sig.signal_type] || sig.signal_type}
+        </div>
+        {isNewest && (
+          <span
+            title="Most recent signal on this card"
+            style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1, flexShrink: 0 }}
+          >
+            ★
+          </span>
+        )}
       </div>
       {/* Price */}
       <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'monospace', marginBottom: 2 }}>
@@ -283,10 +292,12 @@ function TimeframeColumn({
   tf,
   sigs,
   isLast,
+  newestId,
 }: {
   tf: TF;
   sigs: Signal[];    // all signals for this coin×TF, already most-recent-first from API
   isLast: boolean;
+  newestId: string | null;   // id of the card's single most recent signal, or null
 }) {
   // For each family pick the signal with the latest timestamp.
   // API ordering (detected_at DESC) is usually sufficient, but we sort within
@@ -326,7 +337,7 @@ function TimeframeColumn({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
         {familySlots.map(({ family, signal }) =>
           signal ? (
-            <SignalItem key={family.key} sig={signal} />
+            <SignalItem key={family.key} sig={signal} isNewest={signal.id === newestId} />
           ) : (
             <div
               key={family.key}
@@ -366,6 +377,22 @@ function TickerCard({
       fam => tfSigs.some(s => fam.types.includes(s.signal_type))
     ).length;
   }, 0);
+
+  // Find the single most recent signal id across ALL family×TF slots on this
+  // card.  This is the signal that gets the yellow star marker.
+  const tsOf = (s: Signal) => new Date(s.bar_time || s.detected_at).getTime();
+  let newestId: string | null = null;
+  let newestTs = -Infinity;
+  for (const tf of TIMEFRAMES) {
+    const tfSigs = coinSignals[tf] ?? [];
+    for (const fam of SIGNAL_FAMILIES) {
+      const matching = tfSigs.filter(s => fam.types.includes(s.signal_type));
+      if (matching.length === 0) continue;
+      const best = matching.reduce((a, b) => (tsOf(a) >= tsOf(b) ? a : b));
+      const t = tsOf(best);
+      if (t > newestTs) { newestTs = t; newestId = best.id; }
+    }
+  }
 
   return (
     <div
@@ -428,6 +455,7 @@ function TickerCard({
             tf={tf}
             sigs={coinSignals[tf] ?? []}
             isLast={idx === TIMEFRAMES.length - 1}
+            newestId={newestId}
           />
         ))}
       </div>
