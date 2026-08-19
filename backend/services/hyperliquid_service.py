@@ -709,27 +709,32 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
 
-            # Build perp_dexs list for HIP-3 coins; standard HL perps use None
+            # Build perp_dexs list for HIP-3 coins; standard HL perps use None.
+            # Exchange() is constructed INSIDE the thread closure below — not on
+            # the event loop — because the Hyperliquid SDK may call requests.get()
+            # in Exchange.__init__ (to fetch coin metadata), which would block the
+            # event loop.  Keeping all SDK calls inside asyncio.to_thread also
+            # ensures Python 3.11's asyncio.wait_for bug (where a non-cancellable
+            # concurrent.futures.Future causes wait_for to await the thread instead
+            # of raising TimeoutError immediately) resolves within _EXCHANGE_CALL_TIMEOUT_S
+            # because the thread's own requests.post() has the same timeout.
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(
-                account,
-                constants.MAINNET_API_URL,
-                account_address=master_address,
-                perp_dexs=dex_list if dex_list else None,
-                timeout=_EXCHANGE_CALL_TIMEOUT_S,
-            )
 
             if order_type == "market":
                 slippage = 0.05
                 raw_price = price * (1 + slippage) if is_buy else price * (1 - slippage)
                 limit_price = _round_price(raw_price)
+                def _do_market_order():
+                    exch = Exchange(
+                        account, constants.MAINNET_API_URL,
+                        account_address=master_address,
+                        perp_dexs=dex_list if dex_list else None,
+                        timeout=_EXCHANGE_CALL_TIMEOUT_S,
+                    )
+                    return exch.order(coin, is_buy, size, limit_price, {"limit": {"tif": "Ioc"}})
                 try:
                     order_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            exchange.order,
-                            coin, is_buy, size, limit_price,
-                            {"limit": {"tif": "Ioc"}},
-                        ),
+                        asyncio.to_thread(_do_market_order),
                         timeout=_EXCHANGE_CALL_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
@@ -742,13 +747,17 @@ class HyperliquidService:
                     )
             else:
                 rounded_price = _round_price(price)
+                def _do_limit_order():
+                    exch = Exchange(
+                        account, constants.MAINNET_API_URL,
+                        account_address=master_address,
+                        perp_dexs=dex_list if dex_list else None,
+                        timeout=_EXCHANGE_CALL_TIMEOUT_S,
+                    )
+                    return exch.order(coin, is_buy, size, rounded_price, {"limit": {"tif": "Gtc"}})
                 try:
                     order_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            exchange.order,
-                            coin, is_buy, size, rounded_price,
-                            {"limit": {"tif": "Gtc"}},
-                        ),
+                        asyncio.to_thread(_do_limit_order),
                         timeout=_EXCHANGE_CALL_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
@@ -794,10 +803,12 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+            def _do_cancel():
+                exch = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+                return exch.cancel(coin, order_id)
             try:
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(exchange.cancel, coin, order_id),
+                    asyncio.to_thread(_do_cancel),
                     timeout=_EXCHANGE_CALL_TIMEOUT_S,
                 )
             except asyncio.TimeoutError:
@@ -855,16 +866,12 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
-
+            def _do_modify():
+                exch = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+                return exch.modify_order(oid, coin, is_buy, rounded_sz, px, {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": tpsl}}, True)
             try:
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        exchange.modify_order,
-                        oid, coin, is_buy, rounded_sz, px,
-                        {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": tpsl}},
-                        True,  # reduce_only
-                    ),
+                    asyncio.to_thread(_do_modify),
                     timeout=_EXCHANGE_CALL_TIMEOUT_S,
                 )
             except asyncio.TimeoutError:
@@ -907,12 +914,6 @@ class HyperliquidService:
 
         account = eth_account.Account.from_key(private_key)
         dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(
-            account, constants.MAINNET_API_URL,
-            account_address=master_address,
-            perp_dexs=dex_list if dex_list else None,
-            timeout=_EXCHANGE_CALL_TIMEOUT_S,
-        )
 
         # Price rounding — consistent with existing modify_order logic
         if new_price >= 1000:
@@ -932,12 +933,17 @@ class HyperliquidService:
             order_type_dict = {"trigger": {"triggerPx": px, "isMarket": True, "tpsl": "sl"}}
             reduce_only = True
 
+        def _do_modify_price():
+            exch = Exchange(
+                account, constants.MAINNET_API_URL,
+                account_address=master_address,
+                perp_dexs=dex_list if dex_list else None,
+                timeout=_EXCHANGE_CALL_TIMEOUT_S,
+            )
+            return exch.modify_order(oid, coin, is_buy, rounded_sz, px, order_type_dict, reduce_only)
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    exchange.modify_order,
-                    oid, coin, is_buy, rounded_sz, px, order_type_dict, reduce_only,
-                ),
+                asyncio.to_thread(_do_modify_price),
                 timeout=_EXCHANGE_CALL_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
@@ -978,7 +984,6 @@ class HyperliquidService:
         # coin has already been stripped to short name at this point
         # We need the original coin passed to the method — use the dex extracted before stripping
         dex_list = [dex_name] if dex_name else []
-        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
 
         # Close = opposite side, IOC market order with 5% slippage
         is_close_buy = not is_long
@@ -992,13 +997,12 @@ class HyperliquidService:
         else:
             limit_price = round(raw_price, 2)     # 2 decimals for low-price assets
 
+        def _do_close():
+            exch = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+            return exch.order(coin, is_close_buy, close_size, limit_price, {"limit": {"tif": "Ioc"}})
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    exchange.order,
-                    coin, is_close_buy, close_size, limit_price,
-                    {"limit": {"tif": "Ioc"}},
-                ),
+                asyncio.to_thread(_do_close),
                 timeout=_EXCHANGE_CALL_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
@@ -1041,16 +1045,12 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
-
+            def _do_set_leverage():
+                exch = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+                return exch.update_leverage(leverage, coin, is_cross)
             try:
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        exchange.update_leverage,
-                        leverage,
-                        coin,
-                        is_cross,
-                    ),
+                    asyncio.to_thread(_do_set_leverage),
                     timeout=_EXCHANGE_CALL_TIMEOUT_S,
                 )
             except asyncio.TimeoutError:
@@ -1107,18 +1107,15 @@ class HyperliquidService:
         try:
             account = eth_account.Account.from_key(private_key)
             dex_list = [dex_name] if dex_name else []
-            exchange = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
 
             if tp_price is not None and tp_price > 0:
                 tp_px = round(tp_price) if tp_price >= 1000 else round(tp_price, 1) if tp_price >= 10 else round(tp_price, 2)
+                def _do_tp():
+                    exch = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+                    return exch.order(coin, is_close_buy, rounded_size, tp_px, {"trigger": {"triggerPx": tp_px, "isMarket": True, "tpsl": "tp"}}, True)
                 try:
                     tp_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            exchange.order,
-                            coin, is_close_buy, rounded_size, tp_px,
-                            {"trigger": {"triggerPx": tp_px, "isMarket": True, "tpsl": "tp"}},
-                            True,  # reduce_only
-                        ),
+                        asyncio.to_thread(_do_tp),
                         timeout=_EXCHANGE_CALL_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
@@ -1134,14 +1131,12 @@ class HyperliquidService:
 
             if sl_price is not None and sl_price > 0:
                 sl_px = round(sl_price) if sl_price >= 1000 else round(sl_price, 1) if sl_price >= 10 else round(sl_price, 2)
+                def _do_sl():
+                    exch = Exchange(account, constants.MAINNET_API_URL, account_address=master_address, perp_dexs=dex_list if dex_list else None, timeout=_EXCHANGE_CALL_TIMEOUT_S)
+                    return exch.order(coin, is_close_buy, rounded_size, sl_px, {"trigger": {"triggerPx": sl_px, "isMarket": True, "tpsl": "sl"}}, True)
                 try:
                     sl_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            exchange.order,
-                            coin, is_close_buy, rounded_size, sl_px,
-                            {"trigger": {"triggerPx": sl_px, "isMarket": True, "tpsl": "sl"}},
-                            True,  # reduce_only
-                        ),
+                        asyncio.to_thread(_do_sl),
                         timeout=_EXCHANGE_CALL_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
