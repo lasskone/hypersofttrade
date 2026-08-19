@@ -84,10 +84,6 @@ _FILL_WAIT_S: float = 2.0
 # ATR look-back for position management (same as scanner default).
 _ATR_PERIOD: int = 14
 
-# Break-even buffer above/below entry to cover fees (0.05 % expressed as a
-# fraction so we can multiply directly by the entry price).
-_BREAKEVEN_FEE_BUFFER: float = 0.0005   # 0.05 %
-
 # Candles needed for position-management ATR recomputation.
 # ATR(14) on M1 needs at least 15 bars; fetch 60 to be safe.
 _ATR_CANDLE_LIMIT: int = 60
@@ -236,14 +232,16 @@ class MomentumScalperBot:
 
         # Position direction and tracking
         self._is_long:        bool  = False
-        self._position_size:  float = 0.0   # base-asset units held
-        self._entry_price:    float = 0.0   # confirmed fill price from clearinghouse
-        self._entry_atr:      float = 0.0   # ATR (in price units) at entry time
+        self._position_size:  float = 0.0   # base-asset units held (synced from clearinghouse)
+        self._entry_price:    float = 0.0   # VWAP entry across all martingale fills
+        self._entry_atr:      float = 0.0   # ATR (price units) captured at initial entry — fixed
+        self._initial_entry_price: float = 0.0  # price of level-0 fill (never changes)
+        self._initial_entry_size:  float = 0.0  # size of level-0 fill (basis for martingale sizing)
 
-        # Resting order IDs
+        # Resting order IDs — NO SL order is ever placed in martingale mode.
         self._entry_oid: int | None = None
         self._tp_oid:    int | None = None
-        self._sl_oid:    int | None = None
+        self._sl_oid:    int | None = None   # always None; kept for _cancel_all_resting compatibility
 
         # Unix timestamp (ms) when the entry order was placed — used to filter
         # post-entry fills from get_user_fills() in _on_close().
@@ -252,7 +250,28 @@ class MomentumScalperBot:
         # Supabase position_group UUID
         self._position_group_id: str | None = None
 
-        # Breakeven tracking
+        # ── Martingale state ───────────────────────────────────────────────────
+        # No SL is placed. Instead, if price moves adversely from the ORIGINAL
+        # entry price by multiples of sl_atr_multiplier×ATR, up to 3 reinforcement
+        # (martingale) layers are added to lower the VWAP and push the TP closer.
+        #
+        # Trigger distances from _initial_entry_price (using _entry_atr fixed at L0):
+        #   Level 1: 1 × sl_atr_multiplier × ATR adverse
+        #   Level 2: 2 × sl_atr_multiplier × ATR adverse
+        #   Level 3: 3 × sl_atr_multiplier × ATR adverse
+        #
+        # Sizing (Fibonacci-like progression, multiples of _initial_entry_size):
+        #   Level 1: 1.000 × initial size
+        #   Level 2: 1.618 × initial size
+        #   Level 3: 2.618 × initial size
+        #
+        # WARNING: No further protection after level 3 — position is held until
+        # TP fills or the account is liquidated.  User has accepted this risk.
+        self._martingale_level:          int         = 0       # 0 = initial entry only
+        self._martingale_trigger_prices: list[float] = []      # [L1_px, L2_px, L3_px]
+
+        # Breakeven field kept to avoid AttributeError in any path that checks it,
+        # but the move-to-breakeven logic is removed — replaced by martingale.
         self._breakeven_triggered: bool = False
 
         # Cooldown expiry as a monotonic timestamp (time.monotonic())
@@ -518,33 +537,56 @@ class MomentumScalperBot:
             f"Fill confirmed: szi={szi} entryPx={entry_px:.4f}",
         )
 
-        # ── 4. Compute TP / SL anchored to confirmed entry price ───────────────
+        # ── 4. Compute TP anchored to confirmed entry price ────────────────────
         # Recompute atr_value using the confirmed entry price for accuracy.
+        # sl_atr_multiplier is repurposed here as the MARTINGALE LAYER DISTANCE
+        # (adverse ATR multiples that trigger each reinforcement layer).
+        # No SL order is placed — protection is via martingale reinforcement only.
         confirmed_atr = (ms.atr_pct / 100.0) * entry_px
 
         if is_long:
             tp_price = round_price(entry_px + self._tp_atr_multiplier * confirmed_atr)
-            sl_price = round_price(entry_px - self._sl_atr_multiplier * confirmed_atr)
         else:
             tp_price = round_price(entry_px - self._tp_atr_multiplier * confirmed_atr)
-            sl_price = round_price(entry_px + self._sl_atr_multiplier * confirmed_atr)
+
+        # Martingale trigger prices: measured from the ORIGINAL entry price using
+        # the ATR fixed at entry (deterministic across the trade's lifetime).
+        # sl_atr_multiplier controls the distance between levels.
+        layer_distance = self._sl_atr_multiplier * confirmed_atr
+        if is_long:
+            triggers = [
+                round_price(entry_px - 1 * layer_distance),
+                round_price(entry_px - 2 * layer_distance),
+                round_price(entry_px - 3 * layer_distance),
+            ]
+        else:
+            triggers = [
+                round_price(entry_px + 1 * layer_distance),
+                round_price(entry_px + 2 * layer_distance),
+                round_price(entry_px + 3 * layer_distance),
+            ]
 
         self._log(
             "info",
             f"TP={tp_price:.4f} ({self._tp_atr_multiplier}×ATR) | "
-            f"SL={sl_price:.4f} ({self._sl_atr_multiplier}×ATR) | "
+            f"NO SL — martingale layers at {triggers} "
+            f"(layer_dist={layer_distance:.4f} = {self._sl_atr_multiplier}×ATR) | "
             f"confirmed_atr={confirmed_atr:.4f}",
         )
 
         # ── 5. Populate state fields (before placing orders, so _cancel_all_resting works) ──
-        self._current_symbol      = symbol
-        self._current_coin        = coin
-        self._current_sz_decimals = sz_decimals
-        self._is_long             = is_long
-        self._position_size       = confirmed_size
-        self._entry_price         = entry_px
-        self._entry_atr           = confirmed_atr
-        self._breakeven_triggered = False
+        self._current_symbol           = symbol
+        self._current_coin             = coin
+        self._current_sz_decimals      = sz_decimals
+        self._is_long                  = is_long
+        self._position_size            = confirmed_size
+        self._entry_price              = entry_px
+        self._entry_atr                = confirmed_atr
+        self._initial_entry_price      = entry_px
+        self._initial_entry_size       = confirmed_size
+        self._martingale_level         = 0
+        self._martingale_trigger_prices = triggers
+        self._breakeven_triggered      = False
 
         # ── 6. Register position_group in Supabase ─────────────────────────────
         if self._db:
@@ -592,36 +634,34 @@ class MomentumScalperBot:
                 self._log("error", f"create_position_group() failed: {exc}")
                 # Non-fatal: we still hold the position, so continue.
 
-        # ── 7. Place TP and SL orders ─────────────────────────────────────────
-        await self._place_tp_sl(
+        # ── 7. Place TP order only — NO SL in martingale mode ────────────────
+        await self._place_tp_only(
             is_long     = is_long,
             coin        = coin,
             size        = confirmed_size,
             sz_decimals = sz_decimals,
             tp_price    = tp_price,
-            sl_price    = sl_price,
         )
 
         # ── 8. Transition to in_position ───────────────────────────────────────
         self._state = "in_position"
         self._log(
             "info",
-            f"Position open — symbol={symbol} direction={direction_label} "
+            f"Position open (martingale mode) — symbol={symbol} direction={direction_label} "
             f"size={confirmed_size} entry={entry_px:.4f} "
-            f"TP={tp_price:.4f} SL={sl_price:.4f} "
-            f"tp_oid={self._tp_oid} sl_oid={self._sl_oid}",
+            f"TP={tp_price:.4f} [NO SL] tp_oid={self._tp_oid} "
+            f"martingale_triggers={self._martingale_trigger_prices}",
         )
 
-    async def _place_tp_sl(
+    async def _place_tp_only(
         self,
         is_long: bool,
         coin: str,
         size: float,
         sz_decimals: int,
         tp_price: float,
-        sl_price: float,
     ) -> None:
-        """Place TP and SL trigger orders and record their oids."""
+        """Place a TP trigger order only — no SL is ever placed in martingale mode."""
         try:
             result = await hyperliquid_service.place_tp_sl(
                 private_key    = self._private_key,
@@ -631,42 +671,182 @@ class MomentumScalperBot:
                 size           = size,
                 sz_decimals    = sz_decimals,
                 tp_price       = tp_price,
-                sl_price       = sl_price,
+                sl_price       = None,   # NO SL — martingale mode, user accepts liquidation risk
             )
             self._tp_oid = _extract_oid(result.get("tp"))
-            self._sl_oid = _extract_oid(result.get("sl"))
-            self._log(
-                "info",
-                f"TP oid={self._tp_oid} @ {tp_price:.4f} | SL oid={self._sl_oid} @ {sl_price:.4f}",
-            )
+            self._sl_oid = None
+            self._log("info", f"TP oid={self._tp_oid} @ {tp_price:.4f} | NO SL (martingale mode)")
 
-            if self._db and self._position_group_id:
-                for oid, role in ((self._tp_oid, "tp"), (self._sl_oid, "sl")):
-                    if oid is not None:
-                        try:
-                            await record_position_order(
-                                db                = self._db,
-                                position_group_id = self._position_group_id,
-                                bot_id            = self._bot_id,
-                                oid               = oid,
-                                order_role        = role,
-                                coin              = coin,
-                            )
-                        except Exception as rec_exc:
-                            self._log("warning", f"record_position_order({role}) failed: {rec_exc}")
+            if self._db and self._position_group_id and self._tp_oid is not None:
+                try:
+                    await record_position_order(
+                        db                = self._db,
+                        position_group_id = self._position_group_id,
+                        bot_id            = self._bot_id,
+                        oid               = self._tp_oid,
+                        order_role        = "tp",
+                        coin              = coin,
+                    )
+                except Exception as rec_exc:
+                    self._log("warning", f"record_position_order(tp) failed: {rec_exc}")
         except Exception as exc:
-            self._log("error", f"place_tp_sl failed: {exc}")
+            self._log("error", f"_place_tp_only failed: {exc}")
+
+    async def _reprice_tp(self, coin: str, new_avg_entry: float) -> None:
+        """Cancel the existing TP and place a new one at new_avg_entry ± tp_atr_multiplier×ATR.
+
+        Called after each martingale layer fills to move TP to the new VWAP.
+        Uses _entry_atr (fixed at initial entry) for deterministic TP distance.
+        """
+        sz_dec = self._current_sz_decimals
+
+        # Cancel old TP.
+        await self._cancel_safe(coin, self._tp_oid)
+        self._tp_oid = None
+
+        if self._is_long:
+            new_tp = round_price(new_avg_entry + self._tp_atr_multiplier * self._entry_atr)
+        else:
+            new_tp = round_price(new_avg_entry - self._tp_atr_multiplier * self._entry_atr)
+
+        self._log(
+            "info",
+            f"Repricing TP after martingale L{self._martingale_level}: "
+            f"new_avg_entry={new_avg_entry:.4f} → new_TP={new_tp:.4f} "
+            f"({self._tp_atr_multiplier}×ATR={self._entry_atr:.4f})",
+        )
+
+        # Place new TP for the full (enlarged) position size.
+        await self._place_tp_only(
+            is_long     = self._is_long,
+            coin        = coin,
+            size        = self._position_size,
+            sz_decimals = sz_dec,
+            tp_price    = new_tp,
+        )
+
+    async def _trigger_martingale_layer(self, level: int, coin: str, short_coin: str) -> None:
+        """Place the martingale reinforcement order for the given level (1, 2, or 3).
+
+        Fibonacci-like size multiples of the initial entry size:
+            Level 1: 1.000 × initial size
+            Level 2: 1.618 × initial size
+            Level 3: 2.618 × initial size
+
+        After fill is confirmed, recomputes VWAP entry from live clearinghouse data
+        and reprices the TP accordingly.
+        """
+        # Fibonacci-like multipliers (golden ratio progression).
+        _FIB_MULTIPLIERS = {1: 1.000, 2: 1.618, 3: 2.618}
+        multiplier  = _FIB_MULTIPLIERS[level]
+        sz_dec      = self._current_sz_decimals
+        raw_size    = self._initial_entry_size * multiplier
+        layer_size  = round_size(raw_size, sz_dec)
+        # Apply min-notional bump in case size rounds to 0 or below $10.
+        try:
+            mids = await hyperliquid_service.get_all_mids()
+            mark = float(mids.get(short_coin, 0))
+        except Exception as exc:
+            self._log("error", f"get_all_mids() for martingale L{level} sizing failed: {exc}")
+            return
+        if mark <= 0:
+            self._log("error", f"Invalid mark price for martingale L{level} sizing: {mark}")
+            return
+
+        layer_size = self._ensure_min_notional(layer_size, mark, sz_dec)
+
+        self._log(
+            "info",
+            f"Martingale L{level} triggered — placing reinforcement order: "
+            f"size={layer_size} ({multiplier}× initial {self._initial_entry_size}) "
+            f"@ ~{mark:.4f} trigger_px={self._martingale_trigger_prices[level-1]:.4f}",
+        )
+
+        # Place market IOC reinforcement order.
+        try:
+            result = await hyperliquid_service.place_order(
+                private_key    = self._private_key,
+                master_address = self._master_address,
+                coin           = coin,
+                is_buy         = self._is_long,
+                size           = layer_size,
+                price          = mark,
+                order_type     = "market",
+                leverage       = self._leverage,
+                sz_decimals    = sz_dec,
+            )
+            self._log("info", f"[diag] martingale L{level} place_order result: {result}")
+            layer_oid = _extract_oid(result)
+            try:
+                for s in (result or {}).get("response", {}).get("data", {}).get("statuses", []):
+                    if "error" in s:
+                        self._log("error", f"Martingale L{level} REJECTED: {s['error']}")
+                        return
+            except Exception:
+                pass
+        except Exception as exc:
+            self._log("error", f"Martingale L{level} order failed: {exc}")
+            return
+
+        # Wait for fill propagation (same pattern as initial entry).
+        self._log("info", f"Waiting {_FILL_WAIT_S:.0f}s for martingale L{level} fill…")
+        await asyncio.sleep(_FILL_WAIT_S)
+
+        # Confirm fill via clearinghouse — get updated VWAP entry.
+        szi, new_avg_entry = await self._get_position(coin, short_coin)
+        new_size = abs(szi)
+        if new_size <= self._position_size:
+            self._log(
+                "warning",
+                f"Martingale L{level} fill NOT confirmed — position size unchanged "
+                f"({new_size} vs {self._position_size}). Skipping VWAP/TP reprice.",
+            )
+            return
+
+        # Advance martingale state.
+        self._martingale_level = level
+        self._position_size    = new_size
+        # _entry_price tracks current VWAP (updated from clearinghouse).
+        self._entry_price      = new_avg_entry if new_avg_entry > 0 else self._entry_price
+
+        self._log(
+            "info",
+            f"Martingale L{level} fill confirmed: new_size={new_size:.6f} "
+            f"vwap_entry={self._entry_price:.4f}",
+        )
+
+        # Record in position_orders.
+        if self._db and self._position_group_id and layer_oid is not None:
+            try:
+                await record_position_order(
+                    db                = self._db,
+                    position_group_id = self._position_group_id,
+                    bot_id            = self._bot_id,
+                    oid               = layer_oid,
+                    order_role        = f"martingale_{level}",
+                    coin              = coin,
+                )
+            except Exception as rec_exc:
+                self._log("warning", f"record_position_order(martingale_{level}) failed: {rec_exc}")
+
+        # Cancel old TP and reprice to new VWAP.
+        await self._reprice_tp(coin, self._entry_price)
 
     # ── Position management tick ──────────────────────────────────────────────
 
     async def _tick_in_position(self) -> None:
-        """Poll position state, check for close, optionally move breakeven SL."""
+        """Poll position state; trigger martingale layers if price hits trigger levels.
+
+        No breakeven SL or move-to-breakeven logic — replaced entirely by martingale
+        reinforcement.  If all 3 layers are exhausted, the position is held until TP
+        fills or the account is liquidated.
+        """
         coin       = self._current_coin
         short_coin = coin.split(":")[-1] if ":" in coin else coin
         sz_dec     = self._current_sz_decimals
 
         # ── 1. Flat-position detection ─────────────────────────────────────────
-        szi, current_entry_px = await self._get_position(coin, short_coin)
+        szi, _ = await self._get_position(coin, short_coin)
 
         if abs(szi) < 10 ** (-sz_dec):
             # Position is flat — determine outcome from which order is still live.
@@ -677,83 +857,53 @@ class MomentumScalperBot:
         # Sync position size from exchange on every poll.
         self._position_size = abs(szi)
 
-        # ── 2. Breakeven SL management ─────────────────────────────────────────
-        if (
-            not self._breakeven_triggered
-            and self._breakeven_atr_trigger is not None
-            and self._entry_atr > 0
-        ):
-            try:
-                mids       = await hyperliquid_service.get_all_mids()
-                mark_price = float(mids.get(short_coin, 0))
-            except Exception as exc:
-                self._log("warning", f"get_all_mids for breakeven check failed: {exc}")
-                mark_price = 0.0
+        # ── 2. Martingale trigger check ────────────────────────────────────────
+        if self._martingale_level >= 3:
+            # All three reinforcement layers are exhausted.  No further action —
+            # hold the position until TP fills or the account is liquidated.
+            self._log(
+                "info",
+                "Martingale exhausted (3/3 levels) — holding position, no further protection",
+            )
+            return
 
-            if mark_price > 0:
-                if self._is_long:
-                    favourable_move = mark_price - self._entry_price
-                else:
-                    favourable_move = self._entry_price - mark_price
+        # Fetch mark price to compare against the next trigger.
+        try:
+            mids       = await hyperliquid_service.get_all_mids()
+            mark_price = float(mids.get(short_coin, 0))
+        except Exception as exc:
+            self._log("warning", f"get_all_mids() for martingale check failed: {exc}")
+            return
 
-                trigger_distance = self._breakeven_atr_trigger * self._entry_atr
+        if mark_price <= 0:
+            self._log("warning", f"Invalid mark price ({mark_price}) — skipping martingale check")
+            return
 
-                if favourable_move >= trigger_distance:
-                    await self._move_to_breakeven(coin, short_coin)
+        next_level = self._martingale_level + 1
+        trigger_px = self._martingale_trigger_prices[next_level - 1]
 
-    async def _move_to_breakeven(self, coin: str, short_coin: str) -> None:
-        """Move SL to entry ± fee_buffer and record the new oid.
-
-        The fee buffer (0.05 %) ensures we do not lock in a loss after fees
-        if the price reverses sharply back through entry.
-        """
-        fee_buffer = self._entry_price * _BREAKEVEN_FEE_BUFFER
-
-        if self._is_long:
-            be_sl_price = round_price(self._entry_price + fee_buffer)
-        else:
-            be_sl_price = round_price(self._entry_price - fee_buffer)
-
-        self._log(
-            "info",
-            f"Breakeven trigger hit — moving SL to {be_sl_price:.4f} "
-            f"(entry={self._entry_price:.4f} buffer={fee_buffer:.4f})",
+        # Long: price falls AT OR BELOW trigger → add long.
+        # Short: price rises AT OR ABOVE trigger → add short.
+        triggered = (
+            (self._is_long     and mark_price <= trigger_px) or
+            (not self._is_long and mark_price >= trigger_px)
         )
 
-        # Cancel the existing SL.
-        await self._cancel_safe(coin, self._sl_oid)
-        self._sl_oid = None
-
-        # Place a new SL-only order (TP stays in place).
-        try:
-            result = await hyperliquid_service.place_tp_sl(
-                private_key    = self._private_key,
-                master_address = self._master_address,
-                coin           = coin,
-                is_long        = self._is_long,
-                size           = self._position_size,
-                sz_decimals    = self._current_sz_decimals,
-                tp_price       = None,    # TP already resting — do not replace
-                sl_price       = be_sl_price,
+        if triggered:
+            self._log(
+                "info",
+                f"Martingale L{next_level} trigger hit: "
+                f"mark={mark_price:.4f} {'<=' if self._is_long else '>='} "
+                f"trigger={trigger_px:.4f} — adding reinforcement layer",
             )
-            self._sl_oid = _extract_oid(result.get("sl"))
-            self._breakeven_triggered = True
-            self._log("info", f"Breakeven SL placed: oid={self._sl_oid} @ {be_sl_price:.4f}")
-
-            if self._db and self._position_group_id and self._sl_oid is not None:
-                try:
-                    await record_position_order(
-                        db                = self._db,
-                        position_group_id = self._position_group_id,
-                        bot_id            = self._bot_id,
-                        oid               = self._sl_oid,
-                        order_role        = "sl_breakeven",
-                        coin              = coin,
-                    )
-                except Exception as rec_exc:
-                    self._log("warning", f"record_position_order(sl_breakeven) failed: {rec_exc}")
-        except Exception as exc:
-            self._log("error", f"Breakeven SL placement failed: {exc}")
+            await self._trigger_martingale_layer(next_level, coin, short_coin)
+        else:
+            self._log(
+                "info",
+                f"In position (L{self._martingale_level}): mark={mark_price:.4f} | "
+                f"next martingale trigger L{next_level} @ {trigger_px:.4f} "
+                f"({'need ≤' if self._is_long else 'need ≥'} {trigger_px:.4f})",
+            )
 
     async def _on_close(self, live_oids: set[int]) -> None:
         """Handle position close: compute PnL, record risk result, cancel orders,
@@ -788,25 +938,20 @@ class MomentumScalperBot:
         )
 
         tp_alive = self._tp_oid is not None and self._tp_oid in live_oids
-        sl_alive = self._sl_oid is not None and self._sl_oid in live_oids
 
-        # oid-liveness heuristic — used as fallback when fills are unavailable.
-        if sl_alive and not tp_alive:
+        # oid-liveness heuristic (martingale mode — no SL order is ever placed).
+        # TP consumed → TP hit.  TP still live → closed before TP (liquidation / manual).
+        if not tp_alive:
             oid_outcome  = "TP_HIT"
             oid_cooldown = self._cooldown_after_trade_s
-        elif tp_alive and not sl_alive:
-            oid_outcome  = "SL_HIT"
-            oid_cooldown = self._cooldown_after_loss_s
         else:
-            # Both gone (auto-cancel race, manual close, liquidation) or both
-            # still live — treat conservatively.
             oid_outcome  = "CLOSED_UNKNOWN"
             oid_cooldown = self._cooldown_after_loss_s
 
         self._log(
             "info",
             f"Position closed — oid_heuristic={oid_outcome} "
-            f"(tp_alive={tp_alive} sl_alive={sl_alive}) | "
+            f"(tp_alive={tp_alive}) | "
             f"entry={snap_entry_price:.4f} size={snap_position_size:.4f}",
         )
 
