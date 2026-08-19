@@ -139,11 +139,12 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
     return () => clearInterval(id)
   }, [data?.bot?.status, fetchDetails])
 
-  const bot    = data?.bot
-  const stats  = data?.stats  ?? {}
-  const fills: any[] = data?.fills ?? []
-  const logs:  any[] = data?.logs  ?? []
-  const config = bot?.config ?? {}
+  const bot       = data?.bot
+  const stats     = data?.stats      ?? {}
+  const fills: any[] = data?.fills   ?? []
+  const logs:  any[] = data?.logs    ?? []
+  const config    = bot?.config      ?? {}
+  const riskState = data?.risk_state ?? null
   const typeColor = BOT_TYPE_COLORS[bot?.bot_type] ?? '#00d4aa'
 
   return (
@@ -265,6 +266,88 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
               />
             </div>
           </div>
+
+          {/* ── Risk Manager ─────────────────────────────────────────────── */}
+          {riskState && (() => {
+            const halted        = riskState.trading_halted as boolean
+            const cooldownUntil = riskState.cooldown_until as string | null
+            const consec        = riskState.consecutive_losses as number
+            const maxConsec     = (config.max_consecutive_losses as number) ?? 3
+            const equity        = riskState.equity        as number
+            const hwm           = riskState.high_water_mark as number
+            const drawdown      = riskState.drawdown_pct  as number
+            const dailyLoss     = riskState.daily_loss_usd as number
+            const dailyLossPct  = equity > 0 ? (dailyLoss / equity) * 100 : 0
+            const allocated     = (config.allocated_usdc as number) ?? (bot?.allocated_usdc as number) ?? equity
+
+            // Status badge
+            let badgeText  = 'Active'
+            let badgeColor = '#10b981'
+            let badgeBg    = '#10b98118'
+            let badgeBorder= '#10b98144'
+            if (halted) {
+              badgeText   = `HALTED: ${riskState.halt_reason ?? 'unknown reason'}`
+              badgeColor  = '#ef4444'
+              badgeBg     = '#ef444418'
+              badgeBorder = '#ef444444'
+            } else if (cooldownUntil && new Date(cooldownUntil) > new Date()) {
+              const until = new Date(cooldownUntil).toLocaleTimeString('en-US', {
+                hour: '2-digit', minute: '2-digit',
+              })
+              badgeText   = `Cooldown until ${until}`
+              badgeColor  = '#f59e0b'
+              badgeBg     = '#f59e0b18'
+              badgeBorder = '#f59e0b44'
+            }
+
+            const drawdownColor = drawdown >= 10 ? '#ef4444' : drawdown >= 5 ? '#f59e0b' : '#10b981'
+
+            return (
+              <div style={{
+                backgroundColor: '#0d0d14', border: `1px solid ${halted ? '#ef444444' : '#1a1a2e'}`,
+                borderRadius: 12, padding: '20px 24px', marginBottom: 20,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                  <p style={{
+                    fontSize: 11, fontWeight: 700, color: '#6b7280',
+                    textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0,
+                  }}>
+                    Risk Manager
+                  </p>
+                  <span style={{
+                    fontSize: 11, padding: '3px 10px', borderRadius: 6, fontWeight: 700,
+                    backgroundColor: badgeBg, color: badgeColor, border: `1px solid ${badgeBorder}`,
+                    maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {badgeText}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                  <StatCard label="Equity"          value={`$${equity.toFixed(2)}`} />
+                  <StatCard label="High Water Mark" value={`$${hwm.toFixed(2)}`} />
+                  <StatCard
+                    label="Drawdown"
+                    value={`${drawdown.toFixed(2)}%`}
+                    color={drawdownColor}
+                  />
+                  <StatCard
+                    label="Daily Loss"
+                    value={`$${dailyLoss.toFixed(2)} (${dailyLossPct.toFixed(1)}%)`}
+                    color={dailyLoss > 0 ? '#ef4444' : '#9ca3af'}
+                  />
+                  <StatCard
+                    label="Consec. Losses"
+                    value={`${consec} / ${maxConsec}`}
+                    color={consec >= maxConsec ? '#ef4444' : consec > 0 ? '#f59e0b' : '#9ca3af'}
+                  />
+                  <StatCard
+                    label="Allocated"
+                    value={`$${Number(allocated).toFixed(2)}`}
+                  />
+                </div>
+              </div>
+            )
+          })()}
 
           {/* ── Configuration ────────────────────────────────────────────── */}
           <div style={{

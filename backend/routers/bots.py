@@ -221,6 +221,27 @@ async def get_bot_details(bot_id: str, wallet_address: str):
         raise HTTPException(status_code=404, detail="Bot not found")
     bot = bot_res.data[0]
 
+    # ── Risk Manager state (momentum_scalper / momentum_fade_scalper only) ─────
+    risk_state: dict | None = None
+    if bot.get("bot_type") in ("momentum_scalper", "momentum_fade_scalper"):
+        rs_res = db.table("bot_risk_state").select("*").eq("bot_id", bot_id).limit(1).execute()
+        if rs_res.data:
+            rs = rs_res.data[0]
+            equity = float(rs.get("equity") or 0)
+            hwm    = float(rs.get("high_water_mark") or 0)
+            drawdown_pct = ((hwm - equity) / hwm * 100) if hwm > 0 else 0.0
+            risk_state = {
+                "equity":             round(equity, 2),
+                "high_water_mark":    round(hwm, 2),
+                "drawdown_pct":       round(drawdown_pct, 2),
+                "daily_loss_usd":     round(float(rs.get("daily_loss_usd") or 0), 2),
+                "daily_loss_date":    rs.get("daily_loss_date"),
+                "consecutive_losses": int(rs.get("consecutive_losses") or 0),
+                "trading_halted":     bool(rs.get("trading_halted")),
+                "halt_reason":        rs.get("halt_reason"),
+                "cooldown_until":     rs.get("cooldown_until"),
+            }
+
     # Logs (last 500, most recent first)
     logs_res = db.table("bot_logs").select("*").eq("bot_id", bot_id).order("created_at", desc=True).limit(500).execute()
     logs: list[dict] = logs_res.data or []
@@ -298,4 +319,4 @@ async def get_bot_details(bot_id: str, wallet_address: str):
     except Exception as e:
         logger.error(f"Failed to fetch Hyperliquid fills for bot {bot_id}: {e}")
 
-    return {"bot": bot, "logs": logs, "fills": fills, "stats": stats}
+    return {"bot": bot, "logs": logs, "fills": fills, "stats": stats, "risk_state": risk_state}
