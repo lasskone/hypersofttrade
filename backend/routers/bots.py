@@ -189,6 +189,18 @@ async def update_bot(bot_id: str, body: dict):
     new_name = body.get("name")
     if new_name:
         update_data["name"] = new_name
+
+    # Keep top-level columns in sync with config so the two never diverge.
+    # allocated_usdc: written by both single-symbol and multi-symbol bot types.
+    if new_config.get("allocated_usdc") is not None:
+        update_data["allocated_usdc"] = float(new_config["allocated_usdc"])
+    # symbol: momentum_scalper / fade_scalper use config.symbols (array);
+    # rsi_dca and others use config.symbol (single string).
+    if new_config.get("symbols"):
+        update_data["symbol"] = ",".join(str(s) for s in new_config["symbols"])
+    elif new_config.get("symbol"):
+        update_data["symbol"] = str(new_config["symbol"])
+
     result = db.table("bots").update(update_data).eq("id", bot_id).execute()
     return result.data[0] if result.data else {"success": True}
 
