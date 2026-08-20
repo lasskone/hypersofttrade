@@ -4,6 +4,7 @@ Each bot runs as an asyncio Task inside the FastAPI process.
 """
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import uuid
 from typing import Dict, Any
@@ -11,8 +12,43 @@ from datetime import datetime, timezone
 
 from supabase import create_client
 
+from services.db_utils import _run_db_call, _SUPABASE_CALL_TIMEOUT_S
+
+logger = logging.getLogger(__name__)
+
+
 def _supabase():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+
+
+async def _write_log(bot_id: str, level: str, message: str) -> None:
+    """Async helper that performs the actual bot_logs insert.
+
+    Always runs as a fire-and-forget asyncio Task (scheduled by _add_log).
+    Fully silent on failure: a slow or broken bot_logs write must NEVER
+    propagate into the trading path or stall the event loop.
+    """
+    try:
+        db = _supabase()
+        await _run_db_call(
+            lambda: db.table("bot_logs").insert({
+                "id":         str(uuid.uuid4()),
+                "bot_id":     bot_id,
+                "level":      level,
+                "message":    message,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[bot_manager] _add_log timed out after %.0fs (non-fatal) — bot_id=%s",
+            _SUPABASE_CALL_TIMEOUT_S, bot_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[bot_manager] _add_log failed (non-fatal) — bot_id=%s: %s",
+            bot_id, exc,
+        )
 
 
 class BotManager:
@@ -25,8 +61,26 @@ class BotManager:
         task = asyncio.create_task(self._run_bot(bot_id, config, wallet_address))
         self._tasks[bot_id] = task
         task.add_done_callback(lambda t: self._on_task_done(bot_id, t))
-        db = _supabase()
-        db.table("bots").update({"status": "running", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
+        try:
+            db = _supabase()
+            await _run_db_call(
+                lambda: db.table("bots").update({
+                    "status":     "running",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", bot_id).execute()
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[bot_manager] start: bots status update timed out after %.0fs "
+                "(non-fatal) — bot_id=%s",
+                _SUPABASE_CALL_TIMEOUT_S, bot_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[bot_manager] start: bots status update failed (non-fatal) — "
+                "bot_id=%s: %s",
+                bot_id, exc,
+            )
 
     async def stop(self, bot_id: str) -> None:
         _STOP_TIMEOUT_S = 20.0
@@ -47,8 +101,26 @@ class BotManager:
                     f"{_STOP_TIMEOUT_S}s — the worker event loop may be frozen; "
                     "manual worker restart may be required",
                 )
-        db = _supabase()
-        db.table("bots").update({"status": "stopped", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", bot_id).execute()
+        try:
+            db = _supabase()
+            await _run_db_call(
+                lambda: db.table("bots").update({
+                    "status":     "stopped",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", bot_id).execute()
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[bot_manager] stop: bots status update timed out after %.0fs "
+                "(non-fatal) — bot_id=%s",
+                _SUPABASE_CALL_TIMEOUT_S, bot_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[bot_manager] stop: bots status update failed (non-fatal) — "
+                "bot_id=%s: %s",
+                bot_id, exc,
+            )
 
     def list_running(self) -> list[str]:
         return list(self._tasks.keys())
@@ -62,46 +134,89 @@ class BotManager:
             return
         exc = task.exception()
         if exc:
-            db = _supabase()
-            # IMPORTANT: also set desired_status='stopped' so the worker's
-            # reconcile_loop does NOT restart this bot automatically.
-            # Without this, the worker sees desired_status='running' + no local
-            # task → Case 1 → restarts → crashes again → infinite crash loop.
-            # The user must click Start explicitly to retry after a crash.
-            db.table("bots").update({
-                "status": "error",
-                "desired_status": "stopped",
-                "error_message": str(exc),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("id", bot_id).execute()
+            # _on_task_done is a sync done-callback — cannot await directly.
+            # Schedule the DB update as a fire-and-forget async task so the
+            # event loop is never stalled by a blocking .execute() here.
+            async def _update_error_status() -> None:
+                try:
+                    db = _supabase()
+                    # IMPORTANT: also set desired_status='stopped' so the worker's
+                    # reconcile_loop does NOT restart this bot automatically.
+                    # Without this, the worker sees desired_status='running' + no local
+                    # task → Case 1 → restarts → crashes again → infinite crash loop.
+                    # The user must click Start explicitly to retry after a crash.
+                    await _run_db_call(
+                        lambda: db.table("bots").update({
+                            "status":         "error",
+                            "desired_status": "stopped",
+                            "error_message":  str(exc),
+                            "updated_at":     datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", bot_id).execute()
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[bot_manager] _on_task_done: status update timed out after "
+                        "%.0fs (non-fatal) — bot_id=%s",
+                        _SUPABASE_CALL_TIMEOUT_S, bot_id,
+                    )
+                except Exception as db_exc:
+                    logger.warning(
+                        "[bot_manager] _on_task_done: status update failed "
+                        "(non-fatal) — bot_id=%s: %s",
+                        bot_id, db_exc,
+                    )
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_update_error_status())
+            except RuntimeError:
+                pass  # no running loop — silently discard
+
             self._add_log(bot_id, "error", f"Bot crashed: {exc}")
 
     def _add_log(self, bot_id: str, level: str, message: str) -> None:
+        """Schedule a fire-and-forget bot_logs write and return immediately.
+
+        Never blocks the event loop, never raises. A slow or broken bot_logs
+        insert is silently swallowed inside _write_log so it can NEVER freeze
+        the trading path — this was the confirmed root cause of four freeze
+        incidents where a synchronous .execute() stalled the entire event loop.
+        """
         try:
-            db = _supabase()
-            db.table("bot_logs").insert({
-                "id": str(uuid.uuid4()),
-                "bot_id": bot_id,
-                "level": level,
-                "message": message,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }).execute()
-        except Exception:
-            pass
+            loop = asyncio.get_running_loop()
+            loop.create_task(_write_log(bot_id, level, message))
+        except RuntimeError:
+            pass  # no running loop (e.g. called during shutdown) — silently discard
 
     async def _run_bot(self, bot_id: str, config: dict, wallet_address: str) -> None:
         from cryptography.fernet import Fernet
         bot_type = config.get("bot_type")
         if not bot_type:
             self._add_log(bot_id, "error", f"Bot {bot_id} has no bot_type in its config — refusing to start to avoid running the wrong strategy. Config keys: {list(config.keys())}")
-            db = _supabase()
-            db.table("bots").update({"status": "error", "desired_status": "stopped"}).eq("id", bot_id).execute()
+            try:
+                db = _supabase()
+                await _run_db_call(
+                    lambda: db.table("bots").update({
+                        "status": "error", "desired_status": "stopped",
+                    }).eq("id", bot_id).execute()
+                )
+            except (asyncio.TimeoutError, Exception) as exc:
+                logger.warning(
+                    "[bot_manager] _run_bot: status update failed (non-fatal) — "
+                    "bot_id=%s: %s", bot_id, exc,
+                )
             return
         self._add_log(bot_id, "info", f"Bot {bot_id} starting — type={bot_type} symbol={config.get('symbol')}")
 
         # Get user API key
         db = _supabase()
-        result = db.table("users").select("hyperliquid_api_key_encrypted, api_wallet_address").ilike("wallet_address", wallet_address).limit(1).execute()
+        result = await _run_db_call(
+            lambda: db.table("users")
+                .select("hyperliquid_api_key_encrypted, api_wallet_address")
+                .ilike("wallet_address", wallet_address)
+                .limit(1)
+                .execute()
+        )
         if not result.data:
             raise ValueError("No API key found for user")
         encrypted = result.data[0]["hyperliquid_api_key_encrypted"]
@@ -119,8 +234,18 @@ class BotManager:
             await self._run_fade_scalper_bot(bot_id, config, wallet_address, private_key, api_wallet)
         else:
             self._add_log(bot_id, "error", f"Unknown bot_type '{bot_type}' — no strategy registered for this type")
-            db = _supabase()
-            db.table("bots").update({"status": "error", "desired_status": "stopped"}).eq("id", bot_id).execute()
+            try:
+                db = _supabase()
+                await _run_db_call(
+                    lambda: db.table("bots").update({
+                        "status": "error", "desired_status": "stopped",
+                    }).eq("id", bot_id).execute()
+                )
+            except (asyncio.TimeoutError, Exception) as exc:
+                logger.warning(
+                    "[bot_manager] _run_bot: unknown bot_type status update failed "
+                    "(non-fatal) — bot_id=%s: %s", bot_id, exc,
+                )
             raise ValueError(f"Unknown bot type: {bot_type}")
 
     async def _run_rsi_dca_bot(self, bot_id: str, config: dict, master_address: str, private_key: str, api_wallet: str) -> None:
