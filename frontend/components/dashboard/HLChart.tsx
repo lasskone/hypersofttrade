@@ -741,9 +741,20 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
       }
     })
 
+    // Build set of oids already drawn from positions' tp_orders/sl_orders so we
+    // can deduplicate below. Hyperliquid returns isPositionTpsl=false for bot-placed
+    // TP/SL orders, so the isPositionTpsl guard alone is not sufficient.
+    const drawnOids = new Set<number | string>()
+    positions.forEach(pos => {
+      if (!matches(pos.symbol)) return
+      for (const o of (pos as any).tp_orders ?? []) if (o.oid != null) drawnOids.add(o.oid)
+      for (const o of (pos as any).sl_orders ?? []) if (o.oid != null) drawnOids.add(o.oid)
+    })
+
     // Resting limit orders + manual TP/SL trigger orders
     openOrders.forEach(o => {
       if (!matches(o.coin)) return
+      if (o.order_id != null && drawnOids.has(o.order_id)) return  // already drawn from positions.tp_price/sl_price
       if (o.is_position_tpsl || (o as any).isPositionTpsl) return  // skip position-attached TP/SL only
       const isTriggerOrder = o.is_trigger || o.isTrigger
       const price = isTriggerOrder
