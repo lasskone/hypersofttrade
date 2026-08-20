@@ -12,17 +12,43 @@ MomentumScalperBot is a multi-symbol, trend-following scalper that:
   2. Enters the highest-scoring symbol when its score ≥ ``min_score`` and the
      bot is idle and not in cooldown.
   3. Places a market IOC entry, waits 2 s for fill confirmation, then registers
-     a position_group in Supabase and immediately sets a TP and SL anchored to
-     the confirmed entry price in ATR units.
+     a position_group in Supabase and immediately places a TP order anchored to
+     the confirmed entry price in ATR units.  No SL is ever placed.
   4. Polls every ``scan_interval_seconds`` while in_position to:
        a. Detect a flat position → _on_close().
-       b. Optionally move SL to breakeven once the price has moved
-          ``breakeven_atr_trigger × ATR`` in the trade's favour (if configured).
+       b. Check whether price has crossed the next martingale trigger and, if so,
+          add a reinforcement layer at the Fibonacci-sized quantity.
   5. After close, enters a time-based cooldown before accepting the next entry.
 
 State machine
 -------------
     idle → in_position → cooldown → idle
+
+Martingale reinforcement (no SL — margin-bounded, unlimited levels)
+--------------------------------------------------------------------
+No stop-loss order is ever placed.  Instead, if price moves adversely from the
+ORIGINAL entry price, reinforcement (martingale) layers are added on demand:
+
+    Trigger distance for level N:
+        N × sl_atr_multiplier × ATR  adverse from _initial_entry_price
+
+    Layer size for level N (golden-ratio Fibonacci):
+        φ^(N-1) × _initial_entry_size
+        φ = (1 + √5) / 2 ≈ 1.6180339887
+        N=1: 1.000×, N=2: 1.618×, N=3: 2.618×, N=4: 4.236×, …
+
+There is NO cap on the number of levels.  Layers continue to be added as long
+as the account has sufficient margin.  An "Insufficient margin" rejection from
+the exchange is logged as a warning, the level counter is NOT incremented (same
+level is retried on the next tick), and execution returns cleanly — the
+scan_interval_seconds sleep provides natural backoff.
+
+After each confirmed fill the VWAP entry is updated from the clearinghouse and
+the TP is repriced to new_vwap ± tp_atr_multiplier × entry_atr (entry_atr is
+fixed at the initial fill and never changes across the trade's lifetime).
+
+WARNING: This design accepts unlimited drawdown risk up to full liquidation.
+The user has explicitly confirmed this behaviour.
 
 Sizing (ATR-risk-based) — IMPORTANT: read all comments before changing
 ----------------------------------------------------------------------
@@ -32,22 +58,10 @@ The formula used is:
     stop_distance = atr_value × sl_atr_multiplier  # in price units (e.g. USD)
     raw_size      = (risk_capital / stop_distance) × leverage
 
-CAUTION: the *actual* dollar loss at SL equals:
-    raw_size × stop_distance = risk_capital × leverage
-    = allocated_usdc × 0.02 × leverage
-
-At 5× leverage and 2 % risk_capital this is 10 % of allocated_usdc per losing
-trade — not 2 %.  This is intentionally aggressive for a scalper; review before
-increasing leverage.
-
 Safety cap (guards against vanishingly small ATR producing enormous size):
     margin_required = (raw_size × entry_price) / leverage
     if margin_required > allocated_usdc:
         raw_size = (allocated_usdc × leverage) / entry_price
-
-In practice the safety cap is only triggered when ATR is extremely low relative
-to the sl_atr_multiplier (i.e. in near-zero-volatility conditions), which the
-scanner's volatility score already penalises.
 """
 from __future__ import annotations
 
@@ -87,6 +101,15 @@ _ATR_PERIOD: int = 14
 # Candles needed for position-management ATR recomputation.
 # ATR(14) on M1 needs at least 15 bars; fetch 60 to be safe.
 _ATR_CANDLE_LIMIT: int = 60
+
+# Golden ratio — base of the Fibonacci-like martingale size progression.
+# Level N size = φ^(N-1) × initial_size: 1.000×, 1.618×, 2.618×, 4.236×, …
+_PHI: float = (1 + 5 ** 0.5) / 2   # ≈ 1.6180339887
+
+# Seconds to wait after sending a TP cancel before placing the replacement TP.
+# Gives the exchange time to process the cancel, preventing duplicate TP orders
+# when the cancel ACK races against the new placement.
+_CANCEL_SETTLE_S: float = 0.3
 
 
 # ── SDK response helpers ──────────────────────────────────────────────────────
@@ -251,24 +274,16 @@ class MomentumScalperBot:
         self._position_group_id: str | None = None
 
         # ── Martingale state ───────────────────────────────────────────────────
-        # No SL is placed. Instead, if price moves adversely from the ORIGINAL
-        # entry price by multiples of sl_atr_multiplier×ATR, up to 3 reinforcement
-        # (martingale) layers are added to lower the VWAP and push the TP closer.
+        # No SL is placed.  If price moves adversely, reinforcement layers are
+        # added indefinitely (bounded only by available account margin).
         #
-        # Trigger distances from _initial_entry_price (using _entry_atr fixed at L0):
-        #   Level 1: 1 × sl_atr_multiplier × ATR adverse
-        #   Level 2: 2 × sl_atr_multiplier × ATR adverse
-        #   Level 3: 3 × sl_atr_multiplier × ATR adverse
+        # Trigger for level N: N × sl_atr_multiplier × _entry_atr adverse from
+        # _initial_entry_price.  Computed on demand each tick — no pre-built list.
         #
-        # Sizing (Fibonacci-like progression, multiples of _initial_entry_size):
-        #   Level 1: 1.000 × initial size
-        #   Level 2: 1.618 × initial size
-        #   Level 3: 2.618 × initial size
+        # Size for level N: φ^(N-1) × _initial_entry_size  (golden ratio series).
         #
-        # WARNING: No further protection after level 3 — position is held until
-        # TP fills or the account is liquidated.  User has accepted this risk.
-        self._martingale_level:          int         = 0       # 0 = initial entry only
-        self._martingale_trigger_prices: list[float] = []      # [L1_px, L2_px, L3_px]
+        # WARNING: unlimited drawdown risk up to liquidation.  User confirmed.
+        self._martingale_level: int = 0   # 0 = only initial entry filled so far
 
         # Breakeven field kept to avoid AttributeError in any path that checks it,
         # but the move-to-breakeven logic is removed — replaced by martingale.
@@ -354,6 +369,23 @@ class MomentumScalperBot:
             size += increment
             size  = round_size(size, sz_decimals)
         return size
+
+    # ── Martingale helpers ────────────────────────────────────────────────────
+
+    def _compute_next_trigger(self, level: int) -> float:
+        """Return the mark price that should trigger martingale layer *level*.
+
+        Measured from ``_initial_entry_price`` using ``_entry_atr`` (both fixed
+        at the initial fill and never updated).
+
+        Level N triggers when price moves N × sl_atr_multiplier × ATR adverse:
+            Long:  trigger = initial_entry_price − N × sl_atr_multiplier × ATR
+            Short: trigger = initial_entry_price + N × sl_atr_multiplier × ATR
+        """
+        distance = level * self._sl_atr_multiplier * self._entry_atr
+        if self._is_long:
+            return round_price(self._initial_entry_price - distance)
+        return round_price(self._initial_entry_price + distance)
 
     # ── Market data ───────────────────────────────────────────────────────────
 
@@ -549,28 +581,20 @@ class MomentumScalperBot:
         else:
             tp_price = round_price(entry_px - self._tp_atr_multiplier * confirmed_atr)
 
-        # Martingale trigger prices: measured from the ORIGINAL entry price using
-        # the ATR fixed at entry (deterministic across the trade's lifetime).
-        # sl_atr_multiplier controls the distance between levels.
+        # Martingale layer distance: sl_atr_multiplier × ATR adverse per level.
+        # Triggers are computed on demand each tick via _compute_next_trigger() —
+        # no pre-built list; number of levels is unlimited (margin-bounded).
         layer_distance = self._sl_atr_multiplier * confirmed_atr
-        if is_long:
-            triggers = [
-                round_price(entry_px - 1 * layer_distance),
-                round_price(entry_px - 2 * layer_distance),
-                round_price(entry_px - 3 * layer_distance),
-            ]
-        else:
-            triggers = [
-                round_price(entry_px + 1 * layer_distance),
-                round_price(entry_px + 2 * layer_distance),
-                round_price(entry_px + 3 * layer_distance),
-            ]
+        # First trigger preview (L1) for the entry log — purely informational.
+        l1_trigger = round_price(
+            entry_px - layer_distance if is_long else entry_px + layer_distance
+        )
 
         self._log(
             "info",
             f"TP={tp_price:.4f} ({self._tp_atr_multiplier}×ATR) | "
-            f"NO SL — martingale layers at {triggers} "
-            f"(layer_dist={layer_distance:.4f} = {self._sl_atr_multiplier}×ATR) | "
+            f"NO SL — martingale L1 trigger @ {l1_trigger:.4f} "
+            f"(layer_dist={layer_distance:.4f} = {self._sl_atr_multiplier}×ATR, unlimited levels) | "
             f"confirmed_atr={confirmed_atr:.4f}",
         )
 
@@ -584,9 +608,8 @@ class MomentumScalperBot:
         self._entry_atr                = confirmed_atr
         self._initial_entry_price      = entry_px
         self._initial_entry_size       = confirmed_size
-        self._martingale_level         = 0
-        self._martingale_trigger_prices = triggers
-        self._breakeven_triggered      = False
+        self._martingale_level    = 0
+        self._breakeven_triggered = False
 
         # ── 6. Register position_group in Supabase ─────────────────────────────
         if self._db:
@@ -650,7 +673,7 @@ class MomentumScalperBot:
             f"Position open (martingale mode) — symbol={symbol} direction={direction_label} "
             f"size={confirmed_size} entry={entry_px:.4f} "
             f"TP={tp_price:.4f} [NO SL] tp_oid={self._tp_oid} "
-            f"martingale_triggers={self._martingale_trigger_prices}",
+            f"martingale_L1_trigger={self._compute_next_trigger(1):.4f} (unlimited levels)",
         )
 
     async def _place_tp_only(
@@ -698,11 +721,18 @@ class MomentumScalperBot:
         Called after each martingale layer fills to move TP to the new VWAP.
         Uses _entry_atr (fixed at initial entry) for deterministic TP distance.
         """
-        sz_dec = self._current_sz_decimals
+        sz_dec     = self._current_sz_decimals
+        old_tp_oid = self._tp_oid   # snapshot before nulling, for diagnostic log
 
-        # Cancel old TP.
-        await self._cancel_safe(coin, self._tp_oid)
+        # Cancel old TP FIRST — must fire before new TP is placed so the exchange
+        # never sees two reduce-only TP orders simultaneously.
+        await self._cancel_safe(coin, old_tp_oid)
         self._tp_oid = None
+
+        # Brief settle: give the exchange time to ACK the cancel before we submit
+        # the replacement.  _cancel_safe swallows errors, so without this pause a
+        # failed cancel could leave the old TP alive alongside the new one.
+        await asyncio.sleep(_CANCEL_SETTLE_S)
 
         if self._is_long:
             new_tp = round_price(new_avg_entry + self._tp_atr_multiplier * self._entry_atr)
@@ -712,6 +742,7 @@ class MomentumScalperBot:
         self._log(
             "info",
             f"Repricing TP after martingale L{self._martingale_level}: "
+            f"cancelled old_tp_oid={old_tp_oid} | "
             f"new_avg_entry={new_avg_entry:.4f} → new_TP={new_tp:.4f} "
             f"({self._tp_atr_multiplier}×ATR={self._entry_atr:.4f})",
         )
@@ -726,22 +757,26 @@ class MomentumScalperBot:
         )
 
     async def _trigger_martingale_layer(self, level: int, coin: str, short_coin: str) -> None:
-        """Place the martingale reinforcement order for the given level (1, 2, or 3).
+        """Place the martingale reinforcement order for the given level.
 
-        Fibonacci-like size multiples of the initial entry size:
-            Level 1: 1.000 × initial size
-            Level 2: 1.618 × initial size
-            Level 3: 2.618 × initial size
+        Size = φ^(level-1) × _initial_entry_size  (golden-ratio Fibonacci):
+            Level 1: 1.000×, Level 2: 1.618×, Level 3: 2.618×, Level 4: 4.236×, …
 
         After fill is confirmed, recomputes VWAP entry from live clearinghouse data
         and reprices the TP accordingly.
+
+        Insufficient margin: if the exchange rejects the order with an
+        "Insufficient margin" error, the method logs a warning and returns WITHOUT
+        incrementing _martingale_level, so the same level is retried on the next
+        tick.  The scan_interval_seconds sleep provides natural backoff — no
+        tight-loop retry that could freeze the event loop.
         """
-        # Fibonacci-like multipliers (golden ratio progression).
-        _FIB_MULTIPLIERS = {1: 1.000, 2: 1.618, 3: 2.618}
-        multiplier  = _FIB_MULTIPLIERS[level]
-        sz_dec      = self._current_sz_decimals
-        raw_size    = self._initial_entry_size * multiplier
-        layer_size  = round_size(raw_size, sz_dec)
+        # Golden-ratio Fibonacci progression — unbounded, formula-driven.
+        multiplier = _PHI ** (level - 1)
+        sz_dec     = self._current_sz_decimals
+        raw_size   = self._initial_entry_size * multiplier
+        layer_size = round_size(raw_size, sz_dec)
+
         # Apply min-notional bump in case size rounds to 0 or below $10.
         try:
             mids = await hyperliquid_service.get_all_mids()
@@ -753,13 +788,14 @@ class MomentumScalperBot:
             self._log("error", f"Invalid mark price for martingale L{level} sizing: {mark}")
             return
 
-        layer_size = self._ensure_min_notional(layer_size, mark, sz_dec)
+        layer_size  = self._ensure_min_notional(layer_size, mark, sz_dec)
+        trigger_px  = self._compute_next_trigger(level)
 
         self._log(
             "info",
             f"Martingale L{level} triggered — placing reinforcement order: "
-            f"size={layer_size} ({multiplier}× initial {self._initial_entry_size}) "
-            f"@ ~{mark:.4f} trigger_px={self._martingale_trigger_prices[level-1]:.4f}",
+            f"size={layer_size} ({multiplier:.4f}× initial {self._initial_entry_size}) "
+            f"@ ~{mark:.4f} trigger_px={trigger_px:.4f}",
         )
 
         # Place market IOC reinforcement order.
@@ -780,7 +816,18 @@ class MomentumScalperBot:
             try:
                 for s in (result or {}).get("response", {}).get("data", {}).get("statuses", []):
                     if "error" in s:
-                        self._log("error", f"Martingale L{level} REJECTED: {s['error']}")
+                        err_str = s["error"]
+                        # Insufficient margin: log as WARNING, do NOT advance level.
+                        # The next tick will retry naturally after scan_interval_seconds.
+                        if "Insufficient margin" in err_str or "insufficient margin" in err_str:
+                            self._log(
+                                "warning",
+                                f"Martingale L{level} skipped — Insufficient margin "
+                                f"(size={layer_size} @ {mark:.4f}): {err_str}. "
+                                f"Will retry next tick.",
+                            )
+                            return
+                        self._log("error", f"Martingale L{level} REJECTED: {err_str}")
                         return
             except Exception:
                 pass
@@ -837,9 +884,9 @@ class MomentumScalperBot:
     async def _tick_in_position(self) -> None:
         """Poll position state; trigger martingale layers if price hits trigger levels.
 
-        No breakeven SL or move-to-breakeven logic — replaced entirely by martingale
-        reinforcement.  If all 3 layers are exhausted, the position is held until TP
-        fills or the account is liquidated.
+        No SL, no level cap.  Layers are added indefinitely as long as the account
+        has sufficient margin.  An Insufficient margin rejection is handled inside
+        _trigger_martingale_layer() and results in a clean return (retried next tick).
         """
         coin       = self._current_coin
         short_coin = coin.split(":")[-1] if ":" in coin else coin
@@ -858,16 +905,8 @@ class MomentumScalperBot:
         self._position_size = abs(szi)
 
         # ── 2. Martingale trigger check ────────────────────────────────────────
-        if self._martingale_level >= 3:
-            # All three reinforcement layers are exhausted.  No further action —
-            # hold the position until TP fills or the account is liquidated.
-            self._log(
-                "info",
-                "Martingale exhausted (3/3 levels) — holding position, no further protection",
-            )
-            return
-
-        # Fetch mark price to compare against the next trigger.
+        # No level cap — layers are added as long as the account has margin.
+        # Fetch mark price to compare against the next computed trigger.
         try:
             mids       = await hyperliquid_service.get_all_mids()
             mark_price = float(mids.get(short_coin, 0))
@@ -880,7 +919,7 @@ class MomentumScalperBot:
             return
 
         next_level = self._martingale_level + 1
-        trigger_px = self._martingale_trigger_prices[next_level - 1]
+        trigger_px = self._compute_next_trigger(next_level)
 
         # Long: price falls AT OR BELOW trigger → add long.
         # Short: price rises AT OR ABOVE trigger → add short.
