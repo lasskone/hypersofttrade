@@ -46,6 +46,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from services.db_utils import _run_db_call, _SUPABASE_CALL_TIMEOUT_S
+from services.position_groups import record_equity_point
 
 logger = logging.getLogger(__name__)
 
@@ -542,6 +543,18 @@ class RiskManager:
         )
 
         await self._persist()
+
+        # Append one equity data-point for the live PnL curve.
+        # Fire-and-forget — errors are caught inside record_equity_point and
+        # logged as warnings; they must never propagate to the strategy loop.
+        if self._db and self._bot_id:
+            await record_equity_point(
+                db             = self._db,
+                bot_id         = self._bot_id,
+                equity         = self.equity,
+                pnl_usd        = pnl_usd,
+                allocated_usdc = self._allocated_usdc,
+            )
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

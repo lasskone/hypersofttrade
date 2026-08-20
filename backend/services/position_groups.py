@@ -377,3 +377,54 @@ async def update_trade_signal_outcome(
             "position_group_id=%s outcome=%s pnl_usd=%s: %s",
             position_group_id, outcome, pnl_usd, exc,
         )
+
+
+async def record_equity_point(
+    db,
+    bot_id: str,
+    equity: float,
+    pnl_usd: float,
+    allocated_usdc: float,
+) -> None:
+    """Insert one row into bot_equity_history after a closed trade.
+
+    Fire-and-forget: wrapped in try/except so a DB failure never affects the
+    trading decision path.  Called exclusively from RiskManager.record_trade_result()
+    which covers BOTH momentum_scalper and momentum_fade_scalper (shared class).
+
+    Parameters
+    ----------
+    db:
+        Active Supabase client.
+    bot_id:
+        UUID of the bot whose equity is being recorded.
+    equity:
+        Post-trade equity value (in USD), already updated by record_trade_result.
+    pnl_usd:
+        Realised PnL for this single trade (positive = profit, negative = loss).
+    allocated_usdc:
+        Starting capital for this bot — used to compute cumulative_pnl.
+    """
+    cumulative_pnl = equity - allocated_usdc
+    try:
+        await _run_db_call(
+            lambda: db.table("bot_equity_history").insert({
+                "bot_id":         bot_id,
+                "equity":         round(float(equity),         4),
+                "pnl_usd":        round(float(pnl_usd),        4),
+                "cumulative_pnl": round(float(cumulative_pnl), 4),
+                "recorded_at":    datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[position_groups] record_equity_point timed out after %.0fs "
+            "(non-fatal) — bot_id=%s equity=%.2f pnl_usd=%.2f",
+            _SUPABASE_CALL_TIMEOUT_S, bot_id, equity, pnl_usd,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[position_groups] record_equity_point failed (non-fatal) — "
+            "bot_id=%s equity=%.2f pnl_usd=%.2f: %s",
+            bot_id, equity, pnl_usd, exc,
+        )
