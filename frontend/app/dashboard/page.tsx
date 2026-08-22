@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ApiKeyModal } from '@/components/onboarding/ApiKeyModal';
@@ -26,6 +26,9 @@ async function fetchStatus(address: string): Promise<{ is_affiliated: boolean; h
   return res.json();
 }
 
+const PORTFOLIO_POLL_INITIAL_MS = 10_000
+const PORTFOLIO_POLL_MAX_MS     = 40_000
+
 // ─── Dashboard layout (reused as background in api_setup) ─────────────────────
 function DashboardLayout({
   address,
@@ -43,12 +46,17 @@ function DashboardLayout({
   const [recentTrades, setRecentTrades] = useState<any[]>([])
   const [pendingMarket, setPendingMarket] = useState<{ symbol: string, dex: string, interval?: string } | null>(null)
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null)
+  const [isPortfolioStale, setIsPortfolioStale] = useState(false)
+  const portfolioPollDelayRef = useRef<number>(PORTFOLIO_POLL_INITIAL_MS)
+  const portfolioPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Kept as a stable callback so it can be passed as onRefresh to TradePanel.
+  // On success it also clears stale state and resets backoff delay.
   const fetchPositions = useCallback(async () => {
     if (!address) return
     try {
       const res = await fetch(`${API_URL}/account/${address}/portfolio`)
-      if (!res.ok) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         console.warn('[fetchPositions] unexpected response shape:', data)
@@ -58,21 +66,71 @@ function DashboardLayout({
       setOpenOrders(Array.isArray(data.open_orders) ? data.open_orders : [])
       setSpotBalances(Array.isArray(data.spot_balances) ? data.spot_balances : [])
       setRecentTrades(Array.isArray(data.recent_fills) ? data.recent_fills : [])
+      setIsPortfolioStale(false)
+      portfolioPollDelayRef.current = PORTFOLIO_POLL_INITIAL_MS
     } catch {}
   }, [address])
 
+  // Initial load.
   useEffect(() => {
     if (!address) return
     fetchPositions()
-    const interval = setInterval(fetchPositions, 10000)
-    return () => clearInterval(interval)
   }, [address, fetchPositions])
+
+  // Background poll with exponential backoff.
+  // Failure: preserve last good state, show stale indicator, back off.
+  // First success after failure: reset delay to base immediately.
+  useEffect(() => {
+    if (!address) return
+    portfolioPollDelayRef.current = PORTFOLIO_POLL_INITIAL_MS
+    let cancelled = false
+
+    const pollOnce = async () => {
+      try {
+        const res = await fetch(`${API_URL}/account/${address}/portfolio`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (cancelled) return
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return
+        setOpenPositions(Array.isArray(data.open_positions) ? data.open_positions : [])
+        setOpenOrders(Array.isArray(data.open_orders) ? data.open_orders : [])
+        setSpotBalances(Array.isArray(data.spot_balances) ? data.spot_balances : [])
+        setRecentTrades(Array.isArray(data.recent_fills) ? data.recent_fills : [])
+        setIsPortfolioStale(false)
+        portfolioPollDelayRef.current = PORTFOLIO_POLL_INITIAL_MS
+      } catch {
+        if (cancelled) return
+        setIsPortfolioStale(true)
+        portfolioPollDelayRef.current = Math.min(portfolioPollDelayRef.current * 2, PORTFOLIO_POLL_MAX_MS)
+      }
+    }
+
+    const schedule = () => {
+      portfolioPollTimerRef.current = setTimeout(async () => {
+        if (cancelled) return
+        await pollOnce()
+        if (!cancelled) schedule()
+      }, portfolioPollDelayRef.current)
+    }
+
+    schedule()
+
+    return () => {
+      cancelled = true
+      if (portfolioPollTimerRef.current !== null) clearTimeout(portfolioPollTimerRef.current)
+    }
+  }, [address])
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: '#0a0a0f' }}>
       <Sidebar active={section} onNavigate={onNavigate} walletAddress={address} />
       <div className="flex flex-col flex-1" style={{ marginLeft: 240 }}>
         <TopBar section={section} />
+        {isPortfolioStale && (
+          <div style={{ padding: '4px 16px', background: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 500 }}>↻ Portfolio data reconnecting…</span>
+          </div>
+        )}
         <main className="flex-1">
           {section === 'overview' && <OverviewPanel walletAddress={address} onNavigate={onNavigate} onSelectMarket={(symbol, dex, interval) => setPendingMarket({ symbol, dex, interval })} />}
           {section === 'trade' && <TradePanel walletAddress={address} openPositions={openPositions} openOrders={openOrders} spotBalances={spotBalances} recentTrades={recentTrades} initialMarket={pendingMarket} initialInterval={pendingMarket?.interval ?? '15m'} onMarketConsumed={() => setPendingMarket(null)} onRefresh={fetchPositions} />}

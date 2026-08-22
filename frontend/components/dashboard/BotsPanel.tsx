@@ -9,6 +9,9 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
+const BOTS_POLL_INITIAL_MS = 5_000
+const BOTS_POLL_MAX_MS     = 30_000
+
 const BOT_TYPES: Record<string, {
   name: string; emoji: string; tagline: string; description: string;
   howItWorks: string[]; bestFor: string; risk: string; riskColor: string;
@@ -137,6 +140,9 @@ export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
   const [confirmAction, setConfirmAction] = useState<{ message: string, onConfirm: () => void } | null>(null)
   const [orderErrorAlert, setOrderErrorAlert] = useState<{ botName: string, message: string } | null>(null)
   const seenErrorIdsRef = useRef<Set<string>>(new Set())
+  const [botsStale, setBotsStale] = useState(false)
+  const botsPollDelayRef = useRef<number>(BOTS_POLL_INITIAL_MS)
+  const botsPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -154,13 +160,45 @@ export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
   // Initial load (non-silent so the user sees an error if the API is unreachable).
   useEffect(() => { fetchBots() }, [walletAddress]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll every 5 s — matches the Worker's POLL_INTERVAL so transitional states
-  // ("Starting…" / "Stopping…") resolve automatically in at most one cycle,
-  // without requiring a manual page refresh.
+  // Background poll with exponential backoff — matches the Worker's POLL_INTERVAL
+  // so transitional states ("Starting…" / "Stopping…") resolve automatically.
+  // On failure: preserve last good bot list, show stale indicator, back off.
+  // On first success after failure: reset delay to base immediately.
   useEffect(() => {
     if (!walletAddress) return
-    const id = setInterval(() => fetchBots(true), 5000)
-    return () => clearInterval(id)
+    botsPollDelayRef.current = BOTS_POLL_INITIAL_MS
+    let cancelled = false
+
+    const pollOnce = async () => {
+      try {
+        const res = await fetch(`${API_URL}/bots/?wallet_address=${walletAddress}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (cancelled) return
+        setBots(data.bots ?? [])
+        setBotsStale(false)
+        botsPollDelayRef.current = BOTS_POLL_INITIAL_MS
+      } catch {
+        if (cancelled) return
+        setBotsStale(true)
+        botsPollDelayRef.current = Math.min(botsPollDelayRef.current * 2, BOTS_POLL_MAX_MS)
+      }
+    }
+
+    const schedule = () => {
+      botsPollTimerRef.current = setTimeout(async () => {
+        if (cancelled) return
+        await pollOnce()
+        if (!cancelled) schedule()
+      }, botsPollDelayRef.current)
+    }
+
+    schedule()
+
+    return () => {
+      cancelled = true
+      if (botsPollTimerRef.current !== null) clearTimeout(botsPollTimerRef.current)
+    }
   }, [walletAddress]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -385,7 +423,14 @@ export default function BotsPanel({ walletAddress, onSelectBot }: Props) {
       </div>
 
       {/* My Bots */}
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">My Active Bots</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider" style={{ margin: 0 }}>My Active Bots</p>
+        {botsStale && (
+          <span style={{ fontSize: '9px', color: '#f59e0b', fontWeight: 500, letterSpacing: '0.2px' }}>
+            ↻ reconnecting
+          </span>
+        )}
+      </div>
       {bots.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: '8px 4px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: '#6b7280' }}>
