@@ -7,6 +7,7 @@ import asyncio
 import logging
 import math
 import os
+import time as _time_module
 from datetime import datetime, timezone
 
 import httpx
@@ -40,6 +41,163 @@ _EXCHANGE_CALL_TIMEOUT_S: float = 15.0
 # _EXCHANGE_CALL_TIMEOUT_S so a normal in-progress call is never interrupted
 # by a lock-wait timeout on a concurrent caller.
 _LOCK_ACQUIRE_TIMEOUT_S: float = 20.0
+
+# Maximum seconds to wait for a per-key cache lock before falling through to a
+# direct (uncached) HTTP call.  Intentionally matches the HTTP timeout so a
+# caller waiting on a slow lock-holder never experiences more total latency
+# than a real network round-trip would take.
+_CACHE_MISS_LOCK_TIMEOUT_S: float = _EXCHANGE_CALL_TIMEOUT_S  # 15.0
+
+
+class MarketDataCache:
+    """
+    Short-lived in-process cache for read-only Hyperliquid market data.
+
+    This class is instantiated once at module level (_market_cache) and shared
+    across every caller in the process — bots, /market/* API routes, worker.py.
+    All of them import from the same module object, so they share one cache dict.
+
+    TTLs
+    ----
+    allMids            1 s  — mid prices change tick-by-tick but 1 s staleness
+                              is imperceptible to trading decisions and the UI.
+    l2Book (orderbook) 1 s  — same rationale as allMids.
+    candleSnapshot    15 s  — 1 m candles update at most once per minute; 5 m
+                              candles even less often.  15 s captures multiple
+                              scan ticks while guaranteeing a fresh read within
+                              the current candle's lifetime.
+
+    Hot path (cache HIT)
+    --------------------
+    Reads a plain Python dict (self._store) with no lock and no coroutine
+    suspension.  This is strictly faster than any real HTTP call — it is a
+    dict lookup + monotonic clock read, both O(1) and non-blocking.
+
+    Cold path (cache MISS)
+    ----------------------
+    Acquires a per-key asyncio.Lock (timeout = _CACHE_MISS_LOCK_TIMEOUT_S = 15 s)
+    to prevent a "stampede" where N callers all fire duplicate HTTP requests for
+    the same key at the same instant.
+
+    Flow when multiple callers miss simultaneously:
+      1. All callers see a miss (no lock, instant _get check).
+      2. All race to acquire the per-key lock via asyncio.wait_for.
+      3. The event loop wakes exactly one coroutine (call it A); the others
+         suspend in the lock's wait queue.
+      4. A re-checks the cache (still cold), makes the real HTTP call, populates
+         the cache, releases the lock.
+      5. B, C, … wake in sequence, re-check → HIT — they return the value A
+         fetched without making any additional HTTP calls.
+      Total latency for B and C = A's HTTP call time + an in-memory dict read.
+      This is identical to what they would have experienced making their own
+      uncached call, with the bonus that only ONE HTTP call was made.
+
+    Lock timeout fall-through
+    -------------------------
+    If a caller waits _CACHE_MISS_LOCK_TIMEOUT_S and the lock is still held
+    (e.g. A's HTTP request is extremely slow or stalled), the waiting caller
+    logs a debug line and falls through to its own direct HTTP call — it is
+    NEVER blocked indefinitely and NEVER experiences more latency than a normal
+    network call would take.
+    """
+
+    TTL_ALL_MIDS:  float = 1.0   # seconds
+    TTL_ORDERBOOK: float = 1.0   # seconds
+    TTL_CANDLES:   float = 15.0  # seconds
+
+    def __init__(self) -> None:
+        # {cache_key: (value, expires_at_monotonic)}
+        self._store: dict[str, tuple[object, float]] = {}
+        # Per-key asyncio.Lock — created lazily on first miss.
+        # Dict access is safe without a guard lock: the asyncio event loop is
+        # single-threaded, so no other coroutine can interleave between the
+        # existence-check and the assignment (there is no `await` between them).
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    # ------------------------------------------------------------------
+    # Internal helpers — no awaits, no side effects
+    # ------------------------------------------------------------------
+
+    def _get(self, key: str) -> tuple[bool, object]:
+        """Read the cache without any lock or coroutine suspension.
+
+        Returns (True, value) on a fresh hit, (False, None) on a miss or
+        an expired entry.
+        """
+        entry = self._store.get(key)
+        if entry is not None and _time_module.monotonic() < entry[1]:
+            return True, entry[0]
+        return False, None
+
+    def _set(self, key: str, value: object, ttl: float) -> None:
+        """Write to the cache.  Must only be called by the lock-holding coroutine."""
+        self._store[key] = (value, _time_module.monotonic() + ttl)
+
+    def _lock_for(self, key: str) -> asyncio.Lock:
+        """Return the per-key lock, creating it lazily if necessary.
+
+        No `await` between the existence-check and the assignment — safe on the
+        single-threaded asyncio event loop.
+        """
+        if key not in self._locks:
+            self._locks[key] = asyncio.Lock()
+        return self._locks[key]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def get_or_fetch(
+        self,
+        key: str,
+        ttl: float,
+        fetch_fn,   # async () -> value
+    ) -> object:
+        """Return a fresh cached value, or call fetch_fn() and cache the result.
+
+        Cache hit  → plain dict lookup, returns instantly, zero coroutine switches.
+        Cache miss → per-key lock, single HTTP call, result shared with waiters.
+        Lock timeout → direct uncached HTTP call, no indefinite blocking.
+        """
+        # ── Hot path: cache hit — no lock, no suspension ──────────────────────
+        hit, cached = self._get(key)
+        if hit:
+            logger.debug("[cache] HIT  %s", key)
+            return cached
+
+        # ── Cold path: cache miss — acquire per-key lock ──────────────────────
+        lock = self._lock_for(key)
+        try:
+            # asyncio.wait_for cancels lock.acquire() cleanly on timeout:
+            # the coroutine is removed from the lock's wait queue and the lock
+            # remains unacquired, so no release is needed in the except branch.
+            await asyncio.wait_for(lock.acquire(), timeout=_CACHE_MISS_LOCK_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            # The lock-holding caller is taking very long (stalled HTTP request).
+            # Fall through to our own direct call rather than blocking the bot.
+            logger.debug("[cache] LOCK_TIMEOUT %s — falling through to direct fetch", key)
+            return await fetch_fn()
+
+        try:
+            # Re-check: another coroutine may have populated the cache while we
+            # waited to acquire the lock — avoid a redundant HTTP call.
+            hit, cached = self._get(key)
+            if hit:
+                logger.debug("[cache] HIT_AFTER_LOCK %s", key)
+                return cached
+
+            # We hold the lock and the cache is still cold.  Make the real call.
+            logger.debug("[cache] MISS %s — fetching from Hyperliquid", key)
+            result = await fetch_fn()
+            self._set(key, result, ttl)
+            return result
+        finally:
+            lock.release()
+
+
+# Module-level singleton — shared by every caller (bots, routers, worker.py)
+# because Python's import system returns the same module object to all importers.
+_market_cache = MarketDataCache()
 
 
 def _round_price(price: float) -> float:
@@ -76,31 +234,42 @@ class HyperliquidService:
 
     async def get_all_mids(self) -> dict:
         """Return a dict of symbol -> mid price for all assets."""
-        try:
-            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
-                resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"})
-                resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logger.error(f"[get_all_mids] failed: {e}")
-            return {}
+        async def _fetch() -> dict:
+            try:
+                async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
+                    resp = await client.post(INFO_ENDPOINT, json={"type": "allMids"})
+                    resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                logger.error(f"[get_all_mids] failed: {e}")
+                return {}
+        return await _market_cache.get_or_fetch(
+            "allMids", _market_cache.TTL_ALL_MIDS, _fetch
+        )
 
     async def get_orderbook(self, symbol: str) -> dict:
         """Return top-of-book bids and asks for *symbol*."""
-        try:
-            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
-                resp = await client.post(
-                    INFO_ENDPOINT, json={"type": "l2Book", "coin": symbol}
-                )
-                resp.raise_for_status()
-            data = resp.json()
-            levels = data.get("levels", [[], []])
-            bids = levels[0] if len(levels) > 0 else []
-            asks = levels[1] if len(levels) > 1 else []
-            return {"bids": bids, "asks": asks}
-        except Exception as e:
-            logger.error(f"[get_orderbook] {symbol} failed: {e}")
-            return {"bids": [], "asks": []}
+        cache_key = f"orderbook:{symbol}"
+
+        async def _fetch() -> dict:
+            try:
+                async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
+                    resp = await client.post(
+                        INFO_ENDPOINT, json={"type": "l2Book", "coin": symbol}
+                    )
+                    resp.raise_for_status()
+                data = resp.json()
+                levels = data.get("levels", [[], []])
+                bids = levels[0] if len(levels) > 0 else []
+                asks = levels[1] if len(levels) > 1 else []
+                return {"bids": bids, "asks": asks}
+            except Exception as e:
+                logger.error(f"[get_orderbook] {symbol} failed: {e}")
+                return {"bids": [], "asks": []}
+
+        return await _market_cache.get_or_fetch(
+            cache_key, _market_cache.TTL_ORDERBOOK, _fetch
+        )
 
     # ------------------------------------------------------------------
     # Per-DEX account queries
@@ -1287,67 +1456,74 @@ async def get_candles(coin: str, interval: str, limit: int = 500) -> list:
     coin:     full name e.g. "BTC" or "xyz:XYZ100"
     interval: "1m","3m","5m","15m","30m","1h","2h","4h","8h","12h","1d","1w"
     """
-    try:
-        import time as _time
-        end_time = int(_time.time() * 1000)
+    # Cache key encodes every parameter that affects the result.
+    cache_key = f"candles:{coin}:{interval}:{limit}"
 
-        interval_ms = {
-            "1m":  60_000,
-            "3m":  180_000,
-            "5m":  300_000,
-            "15m": 900_000,
-            "30m": 1_800_000,
-            "1h":  3_600_000,
-            "2h":  7_200_000,
-            "4h":  14_400_000,
-            "8h":  28_800_000,
-            "12h": 43_200_000,
-            "1d":  86_400_000,
-            "3d":  259_200_000,
-            "1w":  604_800_000,
-        }
-        ms = interval_ms.get(interval, 900_000)
-        start_time = end_time - ms * limit
+    async def _fetch() -> list:
+        try:
+            end_time = int(_time_module.time() * 1000)
 
-        async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
-            response = await client.post(
-                INFO_ENDPOINT,
-                json={
-                    "type": "candleSnapshot",
-                    "req": {
-                        "coin": coin,
-                        "interval": interval,
-                        "startTime": start_time,
-                        "endTime": end_time,
+            interval_ms = {
+                "1m":  60_000,
+                "3m":  180_000,
+                "5m":  300_000,
+                "15m": 900_000,
+                "30m": 1_800_000,
+                "1h":  3_600_000,
+                "2h":  7_200_000,
+                "4h":  14_400_000,
+                "8h":  28_800_000,
+                "12h": 43_200_000,
+                "1d":  86_400_000,
+                "3d":  259_200_000,
+                "1w":  604_800_000,
+            }
+            ms = interval_ms.get(interval, 900_000)
+            start_time = end_time - ms * limit
+
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json={
+                        "type": "candleSnapshot",
+                        "req": {
+                            "coin": coin,
+                            "interval": interval,
+                            "startTime": start_time,
+                            "endTime": end_time,
+                        },
                     },
-                },
-                headers={"Content-Type": "application/json"},
-            )
-            candles = response.json()
+                    headers={"Content-Type": "application/json"},
+                )
+                candles = response.json()
 
-        # Explicit type guard: Hyperliquid occasionally returns JSON null (None)
-        # instead of an empty list for unknown/delisted coins or during transient
-        # outages.  Without this check the for-loop below would raise
-        # TypeError: 'NoneType' object is not iterable, which the outer except
-        # would catch and log — but the explicit check gives a cleaner warning.
-        if not isinstance(candles, list):
-            logger.warning(
-                "[get_candles] %s/%s: API returned non-list (%s: %r) — returning empty",
-                coin, interval, type(candles).__name__, candles,
-            )
+            # Explicit type guard: Hyperliquid occasionally returns JSON null (None)
+            # instead of an empty list for unknown/delisted coins or during transient
+            # outages.  Without this check the for-loop below would raise
+            # TypeError: 'NoneType' object is not iterable, which the outer except
+            # would catch and log — but the explicit check gives a cleaner warning.
+            if not isinstance(candles, list):
+                logger.warning(
+                    "[get_candles] %s/%s: API returned non-list (%s: %r) — returning empty",
+                    coin, interval, type(candles).__name__, candles,
+                )
+                return []
+
+            result = []
+            for c in candles:
+                result.append({
+                    "time":   int(c["t"]) // 1000,  # ms → seconds for lightweight-charts
+                    "open":   float(c["o"]),
+                    "high":   float(c["h"]),
+                    "low":    float(c["l"]),
+                    "close":  float(c["c"]),
+                    "volume": float(c["v"]),
+                })
+            return result
+        except Exception as e:
+            logger.error(f"[get_candles] {coin}/{interval} failed: {e}")
             return []
 
-        result = []
-        for c in candles:
-            result.append({
-                "time":   int(c["t"]) // 1000,  # ms → seconds for lightweight-charts
-                "open":   float(c["o"]),
-                "high":   float(c["h"]),
-                "low":    float(c["l"]),
-                "close":  float(c["c"]),
-                "volume": float(c["v"]),
-            })
-        return result
-    except Exception as e:
-        logger.error(f"[get_candles] {coin}/{interval} failed: {e}")
-        return []
+    return await _market_cache.get_or_fetch(
+        cache_key, _market_cache.TTL_CANDLES, _fetch
+    )
