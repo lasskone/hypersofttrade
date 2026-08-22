@@ -82,6 +82,10 @@ const fmtHLPrice = (price: number): string => {
 
 const LEVERAGE_TICKS = [1, 5, 10, 25, 50]
 
+// Polling constants for the orderbook / mark-price loop
+const POLL_INITIAL_MS = 3_000   // normal cadence
+const POLL_MAX_MS     = 30_000  // backoff ceiling
+
 // ── Table helpers ─────────────────────────────────────────────────────────────
 function TH({ children }: { children?: React.ReactNode }) {
   return <th className="px-5 py-3 text-left font-medium text-xs text-gray-500">{children}</th>
@@ -162,6 +166,7 @@ export function TradePanel({
   const [orderbook, setOrderbook] = useState<{ bids: string[][]; asks: string[][] }>({ bids: [], asks: [] })
   const [markPrice, setMarkPrice] = useState(0)
   const [prevMarkPrice, setPrevMarkPrice] = useState(0)
+  const [isStale, setIsStale] = useState(false)
 
   // UI state
   const [obCollapsed, setObCollapsed] = useState(false)
@@ -186,6 +191,11 @@ export function TradePanel({
     startY: number
     startVal: number
   }>({ type: null, startX: 0, startY: 0, startVal: 0 })
+  // Tracks the current backoff delay (ms) between polls — useRef so updates
+  // don't trigger re-renders and don't interfere with the scheduling loop.
+  const pollDelayRef = useRef<number>(POLL_INITIAL_MS)
+  // Handle of the pending setTimeout so we can cancel on unmount / market change.
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Load saved sizes on mount ────────────────────────────────────────────────
   useEffect(() => {
@@ -293,17 +303,36 @@ export function TradePanel({
     loadMarkets()
   }, [])
 
-  // Poll orderbook + mark price every 3 seconds
+  // Poll orderbook + mark price with exponential backoff on failure.
+  //
+  // Normal cadence: POLL_INITIAL_MS (3 s).
+  // On any failure (non-2xx response OR network error):
+  //   - last known orderbook and markPrice are preserved (NOT reset to blank)
+  //   - isStale is set → UI shows a subtle "↻ reconnecting" indicator
+  //   - next poll delay doubles: 3 s → 6 s → 12 s → 24 s → capped at 30 s
+  // On first success after a backoff: isStale cleared, delay resets to 3 s.
   useEffect(() => {
     if (!selectedMarket) return
+
+    // Reset backoff each time the selected market changes so a fresh symbol
+    // always starts at the normal 3 s interval.
+    pollDelayRef.current = POLL_INITIAL_MS
+    let cancelled = false
+
     const poll = async () => {
       try {
         const [obRes, pricesRes] = await Promise.all([
           fetch(`${API_URL}/market/orderbook/${encodeURIComponent(selectedMarket.name)}`),
           fetch(`${API_URL}/market/prices`),
         ])
+        // Treat non-2xx (503 rate-limit, 429, etc.) as a failure — do NOT
+        // blindly call .json() on an error response body.
+        if (!obRes.ok || !pricesRes.ok) {
+          throw new Error(`HTTP ${obRes.status}/${pricesRes.status}`)
+        }
         const ob = await obRes.json()
         const prices = await pricesRes.json()
+        if (cancelled) return
         setOrderbook(ob)
         let newPrice: string | undefined
         if (ob?.bids?.length && ob?.asks?.length) {
@@ -320,11 +349,34 @@ export function TradePanel({
             setMarkPrice(prev => { setPrevMarkPrice(prev || parsed); return parsed })
           }
         }
-      } catch { /* silent */ }
+        // Success: clear stale indicator and return to normal poll cadence
+        setIsStale(false)
+        pollDelayRef.current = POLL_INITIAL_MS
+      } catch {
+        if (cancelled) return
+        // Failure: preserve last good state, show reconnecting indicator, back off
+        setIsStale(true)
+        pollDelayRef.current = Math.min(pollDelayRef.current * 2, POLL_MAX_MS)
+      }
     }
-    poll()
-    const interval = setInterval(poll, 3000)
-    return () => clearInterval(interval)
+
+    // Self-scheduling loop: wait pollDelayRef.current ms (set by previous poll),
+    // run poll (which updates pollDelayRef.current), then schedule again.
+    const schedule = () => {
+      pollTimerRef.current = setTimeout(async () => {
+        if (cancelled) return
+        await poll()
+        if (!cancelled) schedule()
+      }, pollDelayRef.current)
+    }
+
+    // Fire immediately on mount / market change, then enter self-scheduling loop
+    poll().then(() => { if (!cancelled) schedule() })
+
+    return () => {
+      cancelled = true
+      if (pollTimerRef.current !== null) clearTimeout(pollTimerRef.current)
+    }
   }, [selectedMarket])
 
   // Derived values
@@ -591,8 +643,15 @@ export function TradePanel({
           </div>
           <div style={{ width: '1px', height: '28px', background: 'rgba(255,255,255,0.08)' }} />
           <div>
-            <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px' }}>Mark Price</div>
-            <div style={{ color: priceColor, fontWeight: '700', fontSize: '18px', fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              Mark Price
+              {isStale && (
+                <span style={{ fontSize: '9px', color: '#f59e0b', fontWeight: '500', letterSpacing: '0.2px' }}>
+                  ↻ reconnecting
+                </span>
+              )}
+            </div>
+            <div style={{ color: priceColor, fontWeight: '700', fontSize: '18px', fontVariantNumeric: 'tabular-nums', opacity: isStale ? 0.5 : 1, transition: 'opacity 0.3s' }}>
               ${markPrice > 0 ? fmtHLPrice(markPrice) : '—'}
             </div>
           </div>
