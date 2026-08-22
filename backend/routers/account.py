@@ -212,12 +212,24 @@ async def save_api_key(body: SaveApiKeyRequest):
     logger.info(f"POST /account/save-api-key wallet={body.wallet_address}")
     wallet = body.wallet_address
 
+    db = _supabase()
+
+    # Affiliation gate: reject wallets that are not in our DB as affiliated.
+    # Reuses _get_user() — the same helper used by /status and /portfolio —
+    # so no extra Hyperliquid call is made here. The is_affiliated flag was
+    # written by verify-affiliation earlier in the onboarding flow.
+    user = _get_user(db, wallet)
+    if not user or not bool(user.get("is_affiliated")):
+        raise HTTPException(
+            status_code=403,
+            detail="Wallet is not affiliated with HyperSoftTrade.",
+        )
+
     try:
         encrypted = encrypt(body.private_key)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    db = _supabase()
     db.table("users").upsert(
         {
             "wallet_address": wallet,
