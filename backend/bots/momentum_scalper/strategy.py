@@ -102,10 +102,6 @@ _ATR_PERIOD: int = 14
 # ATR(14) on M1 needs at least 15 bars; fetch 60 to be safe.
 _ATR_CANDLE_LIMIT: int = 60
 
-# Golden ratio — base of the Fibonacci-like martingale size progression.
-# Level N size = φ^(N-1) × initial_size: 1.000×, 1.618×, 2.618×, 4.236×, …
-_PHI: float = (1 + 5 ** 0.5) / 2   # ≈ 1.6180339887
-
 # Seconds to wait after sending a TP cancel before placing the replacement TP.
 # Gives the exchange time to process the cancel, preventing duplicate TP orders
 # when the cancel ACK races against the new placement.
@@ -154,6 +150,10 @@ class MomentumScalperBot:
         # ATR-based TP / SL
         tp_atr_multiplier: float = 1.0,
         sl_atr_multiplier: float = 1.67,
+        # Martingale size progression base — each reinforcement layer's size is
+        # multiplier^(level-1) × initial_entry_size.  Default 1.618 (golden ratio)
+        # preserves exact prior behavior for bots that don't have this key in config.
+        martingale_multiplier: float = (1 + 5 ** 0.5) / 2,
         # Breakeven SL: move SL to entry + fee_buffer after price moves
         # breakeven_atr_trigger × ATR in the trade's favour.
         # Set to None to disable.
@@ -199,9 +199,10 @@ class MomentumScalperBot:
         self._scanner_config = scanner_config if scanner_config is not None else dict(DEFAULT_SCANNER_CONFIG)
         self._min_score      = float(min_score)
 
-        # ── TP / SL ────────────────────────────────────────────────────────────
+        # ── TP / SL / Martingale ──────────────────────────────────────────────
         self._tp_atr_multiplier    = float(tp_atr_multiplier)
         self._sl_atr_multiplier    = float(sl_atr_multiplier)
+        self._martingale_multiplier = float(martingale_multiplier)
         self._breakeven_atr_trigger = (
             float(breakeven_atr_trigger) if breakeven_atr_trigger is not None else None
         )
@@ -771,8 +772,8 @@ class MomentumScalperBot:
         tick.  The scan_interval_seconds sleep provides natural backoff — no
         tight-loop retry that could freeze the event loop.
         """
-        # Golden-ratio Fibonacci progression — unbounded, formula-driven.
-        multiplier = _PHI ** (level - 1)
+        # Fibonacci-like progression — unbounded, formula-driven.
+        multiplier = self._martingale_multiplier ** (level - 1)
         sz_dec     = self._current_sz_decimals
         raw_size   = self._initial_entry_size * multiplier
         layer_size = round_size(raw_size, sz_dec)
