@@ -9,8 +9,10 @@ import '@rainbow-me/rainbowkit/styles.css';
 // getDefaultConfig provides the full RainbowKit wallet list (Rainbow, MetaMask,
 // Coinbase, WalletConnect, etc.). Direct RPC transports bypass eth.merkle.io.
 const config = getDefaultConfig({
-  appName: 'HyperSoftTrade',
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? 'YOUR_PROJECT_ID',
+  appName:        'HyperSoftTrade',
+  appDescription: 'Professional crypto trading terminal for Hyperliquid — automated bots, technical scanner, live trading',
+  appUrl:         'https://hypersofttrade.com',
+  projectId:      process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? 'YOUR_PROJECT_ID',
   chains: [arbitrum, mainnet],
   transports: {
     [arbitrum.id]: http('https://arb1.arbitrum.io/rpc'),
