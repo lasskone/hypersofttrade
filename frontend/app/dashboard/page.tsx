@@ -15,7 +15,7 @@ import ScannerPanel from '@/components/dashboard/ScannerPanel';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
-export const HST_WALLET_KEY = 'hst_wallet_address';
+const HST_WALLET_KEY = 'hst_wallet_address';
 
 type FlowStep = 'loading' | 'checking' | 'connect' | 'api_setup' | 'dashboard';
 
