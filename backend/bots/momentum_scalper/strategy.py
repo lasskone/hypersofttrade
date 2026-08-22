@@ -447,16 +447,37 @@ class MomentumScalperBot:
 
     # ── Order helpers ─────────────────────────────────────────────────────────
 
-    async def _cancel_safe(self, coin: str, oid: int | None) -> None:
-        """Cancel one order by oid; swallows errors (idempotent)."""
+    async def _cancel_safe(self, coin: str, oid: int | None) -> bool:
+        """Cancel one order by oid; swallows errors (idempotent).
+
+        Returns True if Hyperliquid confirmed the cancel with status "ok" and
+        statuses[0] == "success" — meaning the order is atomically gone from the
+        book.  Returns False on any exception or non-success response (e.g. order
+        already filled/cancelled before we got to it).  The caller can skip the
+        post-cancel settle sleep when True is returned, since HL's cancel is
+        synchronous: a success response guarantees the order is off the book.
+        """
         if oid is None:
-            return
+            return True   # nothing to cancel — treat as confirmed
         try:
-            await hyperliquid_service.cancel_order(
+            result = await hyperliquid_service.cancel_order(
                 self._private_key, self._master_address, coin, oid
             )
+            # HL cancel success shape:
+            # {"status": "ok", "response": {"type": "cancel", "data": {"statuses": ["success"]}}}
+            confirmed = (
+                isinstance(result, dict)
+                and result.get("status") == "ok"
+                and result.get("response", {}).get("data", {}).get("statuses", [None])[0] == "success"
+            )
+            if confirmed:
+                self._log("info", f"cancel oid={oid} confirmed by exchange (order removed from book)")
+            else:
+                self._log("warning", f"cancel oid={oid} response not clean-success — result={result}")
+            return confirmed
         except Exception as exc:
             self._log("warning", f"cancel oid={oid} failed (may already be gone): {exc}")
+            return False
 
     async def _cancel_all_resting(self) -> None:
         """Cancel TP + SL orders for the active position."""
@@ -686,6 +707,11 @@ class MomentumScalperBot:
         tp_price: float,
     ) -> None:
         """Place a TP trigger order only — no SL is ever placed in martingale mode."""
+        self._log(
+            "info",
+            f"_place_tp_only: placing TP @ {tp_price:.4f} size={size} coin={coin} "
+            f"({'long→sell' if is_long else 'short→buy'})",
+        )
         try:
             result = await hyperliquid_service.place_tp_sl(
                 private_key    = self._private_key,
@@ -699,7 +725,20 @@ class MomentumScalperBot:
             )
             self._tp_oid = _extract_oid(result.get("tp"))
             self._sl_oid = None
-            self._log("info", f"TP oid={self._tp_oid} @ {tp_price:.4f} | NO SL (martingale mode)")
+
+            if self._tp_oid is not None:
+                self._log(
+                    "info",
+                    f"_place_tp_only: TP placed successfully — oid={self._tp_oid} @ {tp_price:.4f} | NO SL (martingale mode)",
+                )
+            else:
+                # HL returned a response but no resting/filled oid could be extracted.
+                # This means the order was rejected or returned an unexpected shape.
+                self._log(
+                    "warning",
+                    f"_place_tp_only: TP placement got no valid oid — position is UNPROTECTED. "
+                    f"raw_result={result}",
+                )
 
             if self._db and self._position_group_id and self._tp_oid is not None:
                 try:
@@ -714,26 +753,53 @@ class MomentumScalperBot:
                 except Exception as rec_exc:
                     self._log("warning", f"record_position_order(tp) failed: {rec_exc}")
         except Exception as exc:
-            self._log("error", f"_place_tp_only failed: {exc}")
+            self._log(
+                "error",
+                f"_place_tp_only: FAILED — position is UNPROTECTED (no TP on exchange). "
+                f"coin={coin} tp_price={tp_price:.4f} error={exc}",
+            )
 
     async def _reprice_tp(self, coin: str, new_avg_entry: float) -> None:
         """Cancel the existing TP and place a new one at new_avg_entry ± tp_atr_multiplier×ATR.
 
         Called after each martingale layer fills to move TP to the new VWAP.
         Uses _entry_atr (fixed at initial entry) for deterministic TP distance.
+
+        Naked-window strategy:
+          - If _cancel_safe returns True (exchange confirmed the cancel), we skip
+            the settle sleep entirely — HL guarantees the order is off the book on
+            a success response, so no sleep is needed.
+          - If _cancel_safe returns False (exception, timeout, or non-success
+            response), we keep the original 0.3s sleep as a safety fallback.
+            This is no worse than the previous behaviour.
+        The elapsed time from cancel-fire to new-TP-confirmed is logged so we can
+        verify the actual improvement in Railway logs.
         """
+        import time as _time
         sz_dec     = self._current_sz_decimals
         old_tp_oid = self._tp_oid   # snapshot before nulling, for diagnostic log
 
         # Cancel old TP FIRST — must fire before new TP is placed so the exchange
         # never sees two reduce-only TP orders simultaneously.
-        await self._cancel_safe(coin, old_tp_oid)
+        t_cancel_start = _time.monotonic()
+        cancel_confirmed = await self._cancel_safe(coin, old_tp_oid)
         self._tp_oid = None
 
-        # Brief settle: give the exchange time to ACK the cancel before we submit
-        # the replacement.  _cancel_safe swallows errors, so without this pause a
-        # failed cancel could leave the old TP alive alongside the new one.
-        await asyncio.sleep(_CANCEL_SETTLE_S)
+        if cancel_confirmed:
+            # Exchange confirmed the order is gone — no sleep needed.
+            self._log(
+                "info",
+                f"_reprice_tp: cancel confirmed for oid={old_tp_oid} — skipping settle sleep "
+                f"(elapsed so far: {((_time.monotonic() - t_cancel_start) * 1000):.0f}ms)",
+            )
+        else:
+            # Cancel unconfirmed — sleep to reduce duplicate-TP risk.
+            self._log(
+                "warning",
+                f"_reprice_tp: cancel unconfirmed for oid={old_tp_oid} — "
+                f"sleeping {_CANCEL_SETTLE_S}s as fallback",
+            )
+            await asyncio.sleep(_CANCEL_SETTLE_S)
 
         if self._is_long:
             new_tp = round_price(new_avg_entry + self._tp_atr_multiplier * self._entry_atr)
@@ -755,6 +821,13 @@ class MomentumScalperBot:
             size        = self._position_size,
             sz_decimals = sz_dec,
             tp_price    = new_tp,
+        )
+
+        elapsed_ms = (_time.monotonic() - t_cancel_start) * 1000
+        self._log(
+            "info",
+            f"_reprice_tp complete: cancel→new_TP total elapsed={elapsed_ms:.0f}ms "
+            f"(cancel_confirmed={cancel_confirmed}, new_tp_oid={self._tp_oid})",
         )
 
     async def _trigger_martingale_layer(self, level: int, coin: str, short_coin: str) -> None:
