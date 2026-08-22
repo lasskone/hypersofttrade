@@ -113,6 +113,13 @@ class RiskManager:
         self.halt_reason:        Optional[str]  = None
         self.cooldown_until:     Optional[datetime] = None   # tz-aware UTC
 
+        # Tracks how many trade results have been recorded this session.
+        # Used by sync_allocation() to distinguish "no trades yet" (safe to
+        # rebaseline) from "profitable peak where equity == HWM" (must NOT
+        # rebaseline — the equity == HWM check alone is insufficient because
+        # record_trade_result always updates HWM to match equity after a win).
+        self._trades_recorded:   int            = 0
+
     # ── Startup ───────────────────────────────────────────────────────────────
 
     async def load_or_init(self) -> None:
@@ -165,30 +172,27 @@ class RiskManager:
                     )
                 else:
                     self.cooldown_until = None
+                # trades_recorded: default to 0 for pre-migration rows where
+                # the column is absent or NULL.
+                self._trades_recorded = int(row.get("trades_recorded") or 0)
 
                 logger.info(
                     "[RiskManager] Loaded existing state for bot_id=%s: "
                     "equity=%.2f hwm=%.2f daily_loss=%.2f consecutive_losses=%d "
-                    "halted=%s",
+                    "halted=%s trades_recorded=%d",
                     self._bot_id, self.equity, self.high_water_mark,
                     self.daily_loss_usd, self.consecutive_losses,
-                    self.trading_halted,
+                    self.trading_halted, self._trades_recorded,
                 )
 
-                # Re-baseline check: if no trades have been recorded yet (equity
-                # equals HWM, zero daily loss, zero consecutive losses) AND the
-                # stored equity differs from the current allocated_usdc, the user
-                # likely changed the allocation config before any live trades —
-                # safe to adopt the new baseline.  Once real trades exist, do NOT
-                # touch equity; the risk state reflects actual realised P&L.
-                no_trades = (
-                    self.equity == self.high_water_mark
-                    and self.daily_loss_usd == 0.0
-                    and self.consecutive_losses == 0
-                )
-                if no_trades and abs(self.equity - self._allocated_usdc) > 0.01:
+                # Re-baseline check: safe only when trades_recorded == 0, meaning
+                # no trade results have ever been persisted for this bot.
+                # The old heuristic (equity == HWM and zero losses) is unreliable:
+                # after an all-win session equity == HWM is true but real history
+                # exists.  trades_recorded is the authoritative signal.
+                if self._trades_recorded == 0 and abs(self.equity - self._allocated_usdc) > 0.01:
                     logger.info(
-                        "[RiskManager] No trades recorded yet — re-baselining equity "
+                        "[RiskManager] trades_recorded=0 — re-baselining equity "
                         "from %.2f to current allocated_usdc=%.2f (config was likely "
                         "changed since last run)",
                         self.equity, self._allocated_usdc,
@@ -196,13 +200,12 @@ class RiskManager:
                     self.equity          = self._allocated_usdc
                     self.high_water_mark = self._allocated_usdc
                     await self._persist()
-                elif not no_trades and abs(self.equity - self._allocated_usdc) > 0.01:
+                elif self._trades_recorded > 0 and abs(self.equity - self._allocated_usdc) > 0.01:
                     logger.info(
-                        "[RiskManager] Existing trade history found "
-                        "(equity=%.2f consecutive_losses=%d) — allocated_usdc "
-                        "change (%.2f) will not retroactively rebaseline equity. "
-                        "To fully reset risk state, manually update bot_risk_state.",
-                        self.equity, self.consecutive_losses, self._allocated_usdc,
+                        "[RiskManager] trades_recorded=%d — existing trade history "
+                        "(equity=%.2f) — ignoring allocated_usdc change (%.2f); "
+                        "manually update bot_risk_state to fully reset risk history.",
+                        self._trades_recorded, self.equity, self._allocated_usdc,
                     )
             else:
                 # First ever run for this bot — insert initial row.
@@ -247,21 +250,32 @@ class RiskManager:
         """Re-sync in-memory equity to the current allocated_usdc config value.
 
         Safe to call on every scan tick — it is a no-op unless equity differs
-        from allocated_usdc by more than $0.01.  Only rebaselines when no net
-        P&L has been recorded yet (equity == high_water_mark), because that is
-        the only state where the persisted equity is purely a config value
-        rather than a record of real trading history.
+        from allocated_usdc by more than $0.01.  Only rebaselines when
+        _trades_recorded == 0 (no trades have been processed this session),
+        which is the only reliable signal that the persisted equity is still
+        a pure config value rather than a record of real trading history.
 
-        If real trades have occurred (equity ≠ high_water_mark), the mismatch
-        is logged as info but equity is NOT touched — the user must manually
-        update bot_risk_state to fully reset the risk history.
+        The naive equity == high_water_mark check is NOT used here because
+        record_trade_result bumps both equity AND HWM simultaneously on every
+        winning trade — making them equal after any profit, indistinguishable
+        from the fresh-start state.
+
+        If real trades have occurred this session, the mismatch is logged as
+        info but equity is NOT touched — the user must manually update
+        bot_risk_state to fully reset the risk history.
         """
         if abs(self.equity - allocated_usdc) <= 0.01:
             return  # already in sync — fast path
 
-        if self.equity == self.high_water_mark:
+        # Only rebaseline when no trades have actually been recorded this
+        # session.  The naive check (equity == high_water_mark) is NOT safe
+        # here: record_trade_result always bumps both equity AND HWM together
+        # on a winning trade, so after any profit equity == HWM is True —
+        # identical to the fresh-start state.  Using _trades_recorded == 0
+        # is the only reliable "no trades yet" signal.
+        if self._trades_recorded == 0:
             logger.info(
-                "[RiskManager] sync_allocation: no net P&L recorded — "
+                "[RiskManager] sync_allocation: no trades recorded this session — "
                 "re-baselining equity %.2f → %.2f (allocated_usdc changed)",
                 self.equity, allocated_usdc,
             )
@@ -270,10 +284,10 @@ class RiskManager:
             await self._persist()
         else:
             logger.info(
-                "[RiskManager] sync_allocation: trade history present "
+                "[RiskManager] sync_allocation: %d trades recorded this session "
                 "(equity=%.2f hwm=%.2f) — ignoring allocated_usdc change to %.2f; "
                 "manually update bot_risk_state to fully reset risk history.",
-                self.equity, self.high_water_mark, allocated_usdc,
+                self._trades_recorded, self.equity, self.high_water_mark, allocated_usdc,
             )
 
     # ── Trading gate ──────────────────────────────────────────────────────────
@@ -487,6 +501,7 @@ class RiskManager:
         persistence failure must NOT crash the strategy loop, but it IS
         loud in logs because it degrades capital protection on the next restart.
         """
+        self._trades_recorded += 1
         self.equity += pnl_usd
 
         # High-water mark update.
@@ -607,6 +622,7 @@ class RiskManager:
                     self.cooldown_until.isoformat()
                     if self.cooldown_until is not None else None
                 ),
+                "trades_recorded":    self._trades_recorded,
                 "updated_at":         now,
             }
             await _run_db_call(
