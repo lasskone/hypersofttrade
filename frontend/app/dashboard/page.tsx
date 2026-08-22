@@ -1,8 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAccount } from 'wagmi';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ApiKeyModal } from '@/components/onboarding/ApiKeyModal';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { TopBar } from '@/components/dashboard/TopBar';
@@ -17,14 +15,9 @@ import ScannerPanel from '@/components/dashboard/ScannerPanel';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
 const REFERRAL_LINK = 'https://app.hyperliquid.xyz/join/KNS';
+export const HST_WALLET_KEY = 'hst_wallet_address';
 
 type FlowStep = 'loading' | 'checking' | 'connect' | 'api_setup' | 'dashboard';
-
-async function fetchStatus(address: string): Promise<{ is_affiliated: boolean; has_api_key: boolean }> {
-  const res = await fetch(`${API_URL}/account/${address}/status`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
 
 const PORTFOLIO_POLL_INITIAL_MS = 10_000
 const PORTFOLIO_POLL_MAX_MS     = 40_000
@@ -148,101 +141,90 @@ function DashboardLayout({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const { address, isConnected, status, isReconnecting } = useAccount();
-
+  const [walletAddress, setWalletAddress] = useState('');
+  const [walletInput, setWalletInput] = useState('');
   const [step, setStep] = useState<FlowStep>('loading');
   const [section, setSection] = useState<string>('overview');
   const [affiliationError, setAffiliationError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
   const [affiliateClicked, setAffiliateClicked] = useState(false);
-  const [connectAttempted, setConnectAttempted] = useState(false);
-  const [showConnectHint, setShowConnectHint] = useState(false);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  useEffect(() => {
-    // Wait until mounted and wagmi has finished rehydrating before making
-    // any routing decision. During this window step stays 'loading' and the
-    // branded loading screen is shown — never the connect screen.
-    if (!mounted || isReconnecting || status === 'connecting') return;
-
+  // Verify affiliation for a given address, then route to the appropriate step.
+  // On success (affiliated): writes address to localStorage and updates state.
+  // On failure (not affiliated): shows error, does NOT write to localStorage.
+  const checkStatus = useCallback(async (addr: string) => {
+    setIsChecking(true);
     setAffiliationError('');
+    setStep('checking');
+    try {
+      // Always call verify-affiliation first so the DB is refreshed from
+      // Hyperliquid on every connect — this ensures users who signed up
+      // after our link was shared (or are in the master referral list)
+      // are recognised without needing a separate manual verification step.
+      await fetch(`${API_URL}/account/verify-affiliation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: addr }),
+      });
 
-    // Wallet is truly disconnected (not just mid-rehydration)
-    if (!isConnected || !address) {
+      const res = await fetch(`${API_URL}/account/${addr}/status`);
+      const data = await res.json();
+
+      if (!data.is_affiliated) {
+        setAffiliationError(
+          'This wallet is not linked to HyperSoftTrade. ' +
+          'Please create an account via our link first.'
+        );
+        setStep('connect');
+      } else {
+        // Affiliated — persist address and unlock the app.
+        localStorage.setItem(HST_WALLET_KEY, addr);
+        setWalletAddress(addr);
+        if (!data.has_api_key) {
+          setStep('api_setup');
+        } else {
+          setStep('dashboard');
+        }
+      }
+    } catch {
+      // Network/fetch error — pre-fill the input with the attempted address so
+      // the user can retry without retyping, and show a transient-failure message
+      // distinct from the "not affiliated" rejection message.
+      setWalletInput(addr);
+      setAffiliationError('Connection issue — please try again.');
+      setStep('connect');
+    } finally {
+      setIsChecking(false);
+    }
+  }, []);
+
+  // On mount: read stored address from localStorage. If present, re-verify and
+  // route directly into the app. If absent, show the entry screen.
+  useEffect(() => {
+    if (!mounted) return;
+    const stored = localStorage.getItem(HST_WALLET_KEY);
+    if (!stored) {
       setStep('connect');
       return;
     }
+    checkStatus(stored);
+  }, [mounted, checkStatus]);
 
-    // Wallet connected — show 'checking' (same branded loading screen) while
-    // we hit the API. Small delay lets the RainbowKit modal close gracefully.
-    const capturedAddress = address;
-    setStep('checking');
-    const timer = setTimeout(() => {
-      const checkStatus = async () => {
-        setAffiliationError('');
-        setStep('checking');
-        setIsChecking(true);
-        try {
-          // Always call verify-affiliation first so the DB is refreshed from
-          // Hyperliquid on every connect — this ensures users who signed up
-          // after our link was shared (or are in the master referral list)
-          // are recognised without needing a separate manual verification step.
-          await fetch(`${API_URL}/account/verify-affiliation`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ wallet_address: capturedAddress }),
-          });
-
-          // Guard: if the wallet disconnected while the fetch was in flight,
-          // don't set step to 'dashboard' with a stale (now-undefined) address.
-          if (!isConnected) {
-            setStep('connect');
-            return;
-          }
-
-          const res = await fetch(`${API_URL}/account/${capturedAddress}/status`);
-          const data = await res.json();
-          if (!isConnected) {
-            setStep('connect');
-            return;
-          }
-          if (!data.is_affiliated) {
-            setAffiliationError(
-              'This wallet is not linked to HyperSoftTrade. ' +
-              'Please create an account via our link first.'
-            );
-            setStep('connect');
-          } else if (!data.has_api_key) {
-            setStep('api_setup');
-          } else {
-            setStep('dashboard');
-          }
-        } catch {
-          // Network error — fall back to connect screen
-          setStep('connect');
-        } finally {
-          setIsChecking(false);
-        }
-      };
-      checkStatus();
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [address, isConnected, mounted, isReconnecting, status]);
-
-  // Show hint 2 seconds after a connect attempt if still on connect screen
-  useEffect(() => {
-    if (!connectAttempted) return;
-    const t = setTimeout(() => setShowConnectHint(true), 2000);
-    return () => clearTimeout(t);
-  }, [connectAttempted]);
+  const handleConnect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const addr = walletInput.trim();
+    if (!addr) return;
+    await checkStatus(addr);
+  };
 
   const handleAffiliateClick = () => {
     setAffiliateClicked(true);
   };
 
-  // Branded loading screen — shown during initial mount, wagmi rehydration,
-  // and while the affiliation/API-key check is in flight.
+  // Branded loading screen — shown during initial mount and while the
+  // affiliation/API-key check is in flight.
   if (step === 'loading' || step === 'checking') {
     return (
       <div
@@ -289,55 +271,61 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <ConnectButton.Custom>
-              {({ openConnectModal }) => (
-                <div style={{ width: '100%' }}>
-                  <button
-                    onClick={() => { setConnectAttempted(true); openConnectModal(); }}
-                    style={{
-                      background: '#00d4aa',
-                      color: '#0a0a0f',
-                      border: 'none',
-                      padding: '14px',
-                      borderRadius: '8px',
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      width: '100%',
-                    }}
-                  >
-                    Connect your Account
-                  </button>
-                  <p style={{
-                    color: '#6b7280',
-                    fontSize: '12px',
-                    textAlign: 'center',
-                    marginTop: '8px',
-                  }}>
-                    Use your affiliated Hyperliquid wallet
-                  </p>
-                  {showConnectHint && (
-                    <p style={{ color: '#f59e0b', fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
-                      Having trouble? Try disabling browser extensions or use incognito mode.
-                    </p>
-                  )}
-                  {affiliationError && mounted && !isReconnecting && status === 'disconnected' && (
-                    <div style={{
-                      background: 'rgba(239,68,68,0.1)',
-                      border: '1px solid rgba(239,68,68,0.3)',
-                      borderRadius: '6px',
-                      padding: '10px',
-                      marginTop: '8px',
-                      color: '#ef4444',
-                      fontSize: '13px',
-                      textAlign: 'center',
-                    }}>
-                      {affiliationError}
-                    </div>
-                  )}
+            {/* Wallet address entry form */}
+            <form onSubmit={handleConnect} style={{ width: '100%' }}>
+              <input
+                type="text"
+                placeholder="0x… your affiliated Hyperliquid wallet"
+                value={walletInput}
+                onChange={e => setWalletInput(e.target.value)}
+                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none font-mono mb-3"
+                style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
+                onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="submit"
+                disabled={isChecking || !walletInput.trim()}
+                style={{
+                  background: '#00d4aa',
+                  color: '#0a0a0f',
+                  border: 'none',
+                  padding: '14px',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  width: '100%',
+                  opacity: isChecking || !walletInput.trim() ? 0.5 : 1,
+                }}
+              >
+                {isChecking ? 'Verifying…' : 'Connect your Account'}
+              </button>
+              <p style={{
+                color: '#6b7280',
+                fontSize: '12px',
+                textAlign: 'center',
+                marginTop: '8px',
+              }}>
+                Use your affiliated Hyperliquid wallet
+              </p>
+              {affiliationError && (
+                <div style={{
+                  background: 'rgba(239,68,68,0.1)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: '6px',
+                  padding: '10px',
+                  marginTop: '8px',
+                  color: '#ef4444',
+                  fontSize: '13px',
+                  textAlign: 'center',
+                }}>
+                  {affiliationError}
                 </div>
               )}
-            </ConnectButton.Custom>
+            </form>
 
             {/* Divider */}
             <div className="flex items-center gap-3 my-1">
@@ -357,7 +345,7 @@ export default function DashboardPage() {
                 style={{ border: '1px solid #00d4aa', color: '#00d4aa', display: 'block' }}
               >
                 {affiliateClicked
-                  ? "Waiting for your account… Click 'Connect' when done"
+                  ? "Waiting for your account… Enter your wallet above when done"
                   : 'Create your Account'}
               </a>
               <p className="text-xs text-center" style={{ color: '#6b7280' }}>
@@ -377,9 +365,7 @@ export default function DashboardPage() {
 
   // ── Step: api_setup ──────────────────────────────────────────────────────────
   if (step === 'api_setup') {
-    // Guard: address may briefly be undefined during the disconnect transition —
-    // avoid passing it to child components that call address.slice() for display.
-    if (!address) return null;
+    if (!walletAddress) return null;
     return (
       <>
         {/* Blurred dashboard in background */}
@@ -393,12 +379,12 @@ export default function DashboardPage() {
             overflow: 'hidden',
           }}
         >
-          <DashboardLayout address={address} section={section} onNavigate={setSection} />
+          <DashboardLayout address={walletAddress} section={section} onNavigate={setSection} />
         </div>
 
         {/* API key modal on top */}
         <ApiKeyModal
-          walletAddress={address}
+          walletAddress={walletAddress}
           onComplete={() => setStep('dashboard')}
         />
       </>
@@ -406,10 +392,8 @@ export default function DashboardPage() {
   }
 
   // ── Step: dashboard ──────────────────────────────────────────────────────────
-  // Guard: address may briefly be undefined during the disconnect transition —
-  // avoid passing it to child components that call address.slice() for display.
-  if (!address) return null;
+  if (!walletAddress) return null;
   return (
-    <DashboardLayout address={address} section={section} onNavigate={setSection} />
+    <DashboardLayout address={walletAddress} section={section} onNavigate={setSection} />
   );
 }

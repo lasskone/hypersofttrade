@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://hypersofttrade-backend-production.up.railway.app';
+const HST_WALLET_KEY = 'hst_wallet_address';
 
 interface Props {
   walletAddress: string;
@@ -16,11 +17,17 @@ function truncate(addr: string) {
 
 export function SettingsPanel({ walletAddress }: Props) {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [walletAddressInput, setWalletAddressInput] = useState(walletAddress);
   const [apiWalletAddress, setApiWalletAddress] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Keep wallet address input in sync if parent rerenders with a new address.
+  useEffect(() => {
+    setWalletAddressInput(walletAddress);
+  }, [walletAddress]);
 
   // Fetch current status on mount
   useEffect(() => {
@@ -39,16 +46,38 @@ export function SettingsPanel({ walletAddress }: Props) {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!apiWalletAddress.trim() || !privateKey.trim()) return;
+    const newWallet = walletAddressInput.trim();
+    if (!newWallet || !apiWalletAddress.trim() || !privateKey.trim()) return;
     setSaveStatus('saving');
     setErrorMsg('');
 
     try {
+      // Step 1: re-verify affiliation for the (possibly new) wallet address.
+      await fetch(`${API_URL}/account/verify-affiliation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: newWallet }),
+      });
+
+      const statusRes = await fetch(`${API_URL}/account/${newWallet}/status`);
+      if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
+      const statusData = await statusRes.json();
+
+      if (!statusData.is_affiliated) {
+        setErrorMsg(
+          'This wallet is not linked to HyperSoftTrade. ' +
+          'Please create an account via our affiliate link first.'
+        );
+        setSaveStatus('error');
+        return;
+      }
+
+      // Step 2: save the API key under the (possibly new) wallet address.
       const res = await fetch(`${API_URL}/account/save-api-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          wallet_address: walletAddress,
+          wallet_address: newWallet,
           api_wallet_address: apiWalletAddress,
           private_key: privateKey,
         }),
@@ -57,10 +86,18 @@ export function SettingsPanel({ walletAddress }: Props) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
+
+      // Step 3: persist the (possibly updated) wallet address.
+      localStorage.setItem(HST_WALLET_KEY, newWallet);
       setSaveStatus('success');
       setHasApiKey(true);
       setApiWalletAddress('');
       setPrivateKey('');
+
+      // Reload so the new wallet address propagates throughout the app.
+      if (newWallet !== walletAddress) {
+        setTimeout(() => window.location.reload(), 1500);
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unknown error');
       setSaveStatus('error');
@@ -111,6 +148,25 @@ export function SettingsPanel({ walletAddress }: Props) {
         </p>
 
         <form onSubmit={handleSave} className="flex flex-col gap-4">
+          {/* Affiliated Wallet Address */}
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5">
+              Wallet Address (Affiliated)
+            </label>
+            <input
+              type="text"
+              placeholder="0x… your affiliated Hyperliquid wallet"
+              value={walletAddressInput}
+              onChange={e => setWalletAddressInput(e.target.value)}
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none font-mono"
+              style={{ backgroundColor: '#0a0a0f', border: '1px solid #1a1a2e' }}
+              onFocus={e => (e.currentTarget.style.borderColor = '#00d4aa')}
+              onBlur={e => (e.currentTarget.style.borderColor = '#1a1a2e')}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+
           {/* API Wallet Address */}
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5">
@@ -155,7 +211,7 @@ export function SettingsPanel({ walletAddress }: Props) {
           </div>
 
           {saveStatus === 'success' && (
-            <p className="text-xs text-emerald-400">API key saved successfully.</p>
+            <p className="text-xs text-emerald-400">Settings saved successfully.</p>
           )}
           {saveStatus === 'error' && (
             <p className="text-xs text-red-400">{errorMsg}</p>
@@ -163,7 +219,12 @@ export function SettingsPanel({ walletAddress }: Props) {
 
           <button
             type="submit"
-            disabled={saveStatus === 'saving' || !apiWalletAddress.trim() || !privateKey.trim()}
+            disabled={
+              saveStatus === 'saving' ||
+              !walletAddressInput.trim() ||
+              !apiWalletAddress.trim() ||
+              !privateKey.trim()
+            }
             className="px-5 py-2.5 rounded-lg text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ backgroundColor: '#00d4aa', color: '#0a0a0f' }}
           >

@@ -1,7 +1,5 @@
 'use client';
 
-import { useDisconnect } from 'wagmi';
-
 interface Props {
   active: string;
   onNavigate: (s: string) => void;
@@ -23,7 +21,10 @@ function truncate(addr: string) {
 }
 
 export function Sidebar({ active, onNavigate, walletAddress }: Props) {
-  const { disconnect } = useDisconnect();
+  const handleLogout = () => {
+    localStorage.removeItem('hst_wallet_address');
+    window.location.reload();
+  };
 
   return (
     <aside
@@ -63,14 +64,14 @@ export function Sidebar({ active, onNavigate, walletAddress }: Props) {
         })}
       </nav>
 
-      {/* Wallet + disconnect */}
+      {/* Wallet + log out */}
       <div className="p-4 border-t" style={{ borderColor: '#1a1a2e' }}>
         <p className="text-xs text-gray-500 font-mono mb-2 truncate">{truncate(walletAddress)}</p>
         <button
-          onClick={() => disconnect()}
+          onClick={handleLogout}
           className="w-full text-xs text-gray-500 hover:text-red-400 transition-colors text-left"
         >
-          Disconnect
+          Log out
         </button>
       </div>
     </aside>
