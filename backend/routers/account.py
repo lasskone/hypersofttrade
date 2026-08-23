@@ -164,13 +164,67 @@ async def get_portfolio(wallet_address: str):
             hyperliquid_service.get_complete_portfolio(wallet_address),
             timeout=10.0,
         )
-        return data
     except asyncio.TimeoutError:
         logger.error(f"[portfolio] {wallet_address} timed out after 10s")
         raise HTTPException(status_code=503, detail="Portfolio fetch timed out — upstream Hyperliquid API too slow")
     except Exception as exc:
         logger.error(f"[portfolio] {wallet_address} ERROR: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # ── Martingale state injection (non-fatal) ────────────────────────────────
+    # Enrich open_positions with next_martingale_trigger_px / martingale_level
+    # sourced from bot_risk_state for any momentum_scalper bot owned by this user.
+    # Two synchronous Supabase queries (bots, then bot_risk_state) — not N+1.
+    # A failure here must never break the portfolio response.
+    try:
+        user_id = user["id"]
+        bots_res = (
+            db.table("bots")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("bot_type", "momentum_scalper")
+            .execute()
+        )
+        bot_ids = [row["id"] for row in (bots_res.data or [])]
+        if bot_ids:
+            rs_res = (
+                db.table("bot_risk_state")
+                .select("active_coin, martingale_level, next_martingale_trigger_px")
+                .in_("bot_id", bot_ids)
+                .execute()
+            )
+            # Build coin → martingale state map; index by both full coin name and
+            # short name (strips DEX prefix) so matching works for HIP-3 positions
+            # where pos["symbol"] may be "dex:COIN" but active_coin is "COIN".
+            mtg_by_coin: dict = {}
+            for rs in (rs_res.data or []):
+                active_coin = rs.get("active_coin")
+                if not active_coin:
+                    continue
+                state = {
+                    "martingale_level": int(rs.get("martingale_level") or 0),
+                    "next_martingale_trigger_px": (
+                        float(rs["next_martingale_trigger_px"])
+                        if rs.get("next_martingale_trigger_px") is not None
+                        else None
+                    ),
+                }
+                mtg_by_coin[active_coin] = state
+                short = active_coin.split(":")[-1] if ":" in active_coin else active_coin
+                if short != active_coin:
+                    mtg_by_coin[short] = state
+            if mtg_by_coin:
+                for pos in (data.get("open_positions") or []):
+                    sym = pos.get("symbol", "")
+                    sym_short = sym.split(":")[-1] if ":" in sym else sym
+                    matched = mtg_by_coin.get(sym) or mtg_by_coin.get(sym_short)
+                    if matched:
+                        pos["martingale_level"] = matched["martingale_level"]
+                        pos["next_martingale_trigger_px"] = matched["next_martingale_trigger_px"]
+    except Exception as _mtg_exc:
+        logger.warning(f"[portfolio] martingale state injection failed (non-fatal): {_mtg_exc}")
+
+    return data
 
 
 @router.get("/fills")
