@@ -46,6 +46,8 @@ interface Props {
     sl_price?: number
     tp_orders?: any[]
     sl_orders?: any[]
+    next_martingale_trigger_px?: number | null
+    martingale_level?: number
   }>
   openOrders?: Array<{
     coin: string
@@ -75,6 +77,7 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
   const candleDataRef   = useRef<any[]>([])
   const priceLineRefs      = useRef<any[]>([])
   const tpslOrderLinesRef  = useRef<any[]>([])
+  const martingaleLinesRef = useRef<any[]>([])
   const wsRef              = useRef<WebSocket | null>(null)
   const wsReconnectRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveDebounceRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -756,6 +759,10 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
     })
     tpslOrderLinesRef.current = []
     draggableLinesRef.current = []
+    martingaleLinesRef.current.forEach(pl => {
+      try { candleSeriesRef.current?.removePriceLine(pl) } catch {}
+    })
+    martingaleLinesRef.current = []
 
     const coinShort = (s: string) => s.split(':').pop() ?? s
     const matches = (coin: string) => {
@@ -802,6 +809,23 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
           })
         }
       }
+    })
+
+    // Martingale trigger line
+    positions.forEach(pos => {
+      if (!matches(pos.symbol)) return
+      const triggerPx = pos.next_martingale_trigger_px
+      const level = pos.martingale_level ?? 0
+      if (triggerPx == null || triggerPx <= 0) return
+      const pl = candleSeriesRef.current.createPriceLine({
+        price: triggerPx,
+        color: '#f59e0b',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: `MTG L${level + 1}`,
+      })
+      martingaleLinesRef.current.push(pl)
     })
 
     // Build set of oids already drawn from positions' tp_orders/sl_orders so we
