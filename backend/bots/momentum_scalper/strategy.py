@@ -416,6 +416,175 @@ class MomentumScalperBot:
         except Exception as exc:
             self._log("warning", f"_persist_martingale_state failed (non-fatal): {exc}")
 
+    async def _cold_start_restore(self) -> None:
+        """Detect and restore in-memory state after a Worker cold start.
+
+        Queries position_groups (by bot_id + status='open') and bot_risk_state
+        to reconstruct all position-tracking fields so the main loop re-enters
+        in_position mode for any open position that survived the restart.
+
+        Non-fatal: any unexpected failure leaves state as-is (idle) with an
+        error log.  CancelledError propagates so the task can be stopped cleanly.
+        """
+        if not self._db or not self._bot_id:
+            return
+
+        try:
+            # ── 1. Check for an open position_group owned by this bot ─────────
+            pg_res = await _run_db_call(
+                lambda: self._db.table("position_groups")
+                .select("id, coin, side, entry_price, created_at")
+                .eq("bot_id", self._bot_id)
+                .eq("status", "open")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if not pg_res.data:
+                self._log("info", "cold_start_restore: no open position_group — starting idle")
+                return
+
+            pg          = pg_res.data[0]
+            coin        = pg["coin"]   # e.g. "HYPE" or "dex:HYPE"
+            short_coin  = coin.split(":")[-1] if ":" in coin else coin
+            is_long     = pg["side"] == "long"
+            initial_px  = float(pg["entry_price"])
+            pg_id       = pg["id"]
+
+            try:
+                dt = datetime.fromisoformat(pg["created_at"].replace("Z", "+00:00"))
+                entry_time_ms = int(dt.timestamp() * 1000)
+            except Exception:
+                entry_time_ms = 0
+
+            self._log(
+                "info",
+                f"cold_start_restore: open position_group found — "
+                f"id={pg_id} coin={coin} side={pg['side']} "
+                f"initial_entry_price={initial_px}",
+            )
+
+            # ── 2. Verify the position is still live on the exchange ──────────
+            szi, vwap_entry = await self._get_position(coin, short_coin)
+            if abs(szi) < 1e-9:
+                self._log(
+                    "warning",
+                    f"cold_start_restore: position_group {pg_id} is open in DB but "
+                    f"clearinghouse shows no position for {short_coin} — leaving idle "
+                    f"(closed externally; will be reconciled on next tick)",
+                )
+                return
+
+            # ── 3. Load persisted entry constants from bot_risk_state ─────────
+            rs_res = await _run_db_call(
+                lambda: self._db.table("bot_risk_state")
+                .select("martingale_level, initial_entry_size, entry_atr")
+                .eq("bot_id", self._bot_id)
+                .execute()
+            )
+            rs = rs_res.data[0] if rs_res.data else {}
+
+            martingale_level      = int(rs.get("martingale_level") or 0)
+            initial_entry_size_db = rs.get("initial_entry_size")
+            entry_atr_db          = rs.get("entry_atr")
+
+            # ── 4. Resolve entry_atr (fixed at L0; fallback: recompute) ───────
+            if entry_atr_db is not None:
+                entry_atr = float(entry_atr_db)
+            else:
+                self._log(
+                    "warning",
+                    "cold_start_restore: entry_atr is NULL — recomputing from current candles",
+                )
+                entry_atr = await self._get_current_atr(coin)
+                if entry_atr is None or entry_atr <= 0.0:
+                    self._log(
+                        "error",
+                        "cold_start_restore: ATR fallback also failed — "
+                        "cannot safely restore state without ATR, leaving idle",
+                    )
+                    return
+
+            # ── 5. Resolve initial_entry_size (fallback: current full size) ───
+            if initial_entry_size_db is not None:
+                initial_entry_size = float(initial_entry_size_db)
+            else:
+                self._log(
+                    "warning",
+                    f"cold_start_restore: initial_entry_size is NULL — "
+                    f"approximating as current position size {abs(szi):.6f}",
+                )
+                initial_entry_size = abs(szi)
+
+            # ── 6. Find resting TP order on the exchange ──────────────────────
+            tp_oid: int | None = None
+            try:
+                orders = await hyperliquid_service.get_open_orders(
+                    self._master_address, self._dex
+                )
+                def _strip_dex(c: str) -> str:
+                    return c.split(":")[-1] if ":" in c else c
+
+                for o in (orders or []):
+                    if not isinstance(o, dict):
+                        continue
+                    if _strip_dex(o.get("coin", "")) != short_coin:
+                        continue
+                    if o.get("isTrigger") and o.get("reduceOnly"):
+                        tp_oid = int(o["oid"])
+                        break
+            except Exception as exc:
+                self._log(
+                    "warning",
+                    f"cold_start_restore: open-orders fetch failed (non-fatal): {exc}",
+                )
+
+            # ── 7. Restore all in-memory state fields ─────────────────────────
+            sz_decimals = self._sz_decimals_map.get(short_coin, 5)
+
+            self._current_symbol      = short_coin
+            self._current_coin        = coin
+            self._current_sz_decimals = sz_decimals
+            self._is_long             = is_long
+            self._position_size       = abs(szi)
+            self._entry_price         = vwap_entry
+            self._entry_atr           = entry_atr
+            self._initial_entry_price = initial_px
+            self._initial_entry_size  = initial_entry_size
+            self._martingale_level    = martingale_level
+            self._tp_oid              = tp_oid
+            self._sl_oid              = None
+            self._position_group_id   = pg_id
+            self._entry_time          = entry_time_ms
+            self._breakeven_triggered = False
+            self._state               = "in_position"
+
+            self._log(
+                "info",
+                f"cold_start_restore: state restored — "
+                f"coin={coin} {'LONG' if is_long else 'SHORT'} "
+                f"size={abs(szi):.6f} vwap_entry={vwap_entry:.4f} "
+                f"initial_entry_price={initial_px:.4f} entry_atr={entry_atr:.6f} "
+                f"martingale_level={martingale_level} "
+                f"initial_entry_size={initial_entry_size:.6f} "
+                f"tp_oid={tp_oid} position_group_id={pg_id}",
+            )
+
+            # ── 8. Refresh bot_risk_state.active_coin (may be NULL pre-deploy) ─
+            await self._persist_martingale_state(
+                active_coin=coin,
+                level=martingale_level,
+                trigger_px=self._compute_next_trigger(martingale_level + 1),
+            )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._log(
+                "error",
+                f"cold_start_restore: unexpected error — leaving idle: {exc}",
+            )
+
     def _compute_next_trigger(self, level: int) -> float:
         """Return the mark price that should trigger martingale layer *level*.
 
@@ -1345,6 +1514,11 @@ class MomentumScalperBot:
             f"breakeven_trigger={self._breakeven_atr_trigger}×ATR | "
             f"scan_interval={self._scan_interval_s}s",
         )
+
+        # Restore in-memory position state from DB + exchange if a position
+        # was open when the Worker was last restarted.  Must run before the
+        # main loop so the first tick enters _tick_in_position, not _tick_idle.
+        await self._cold_start_restore()
 
         while True:
             try:
