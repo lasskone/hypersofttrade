@@ -78,6 +78,7 @@ from bots.momentum_scalper.scanner import (
     scan_all,
 )
 from bots.shared_utils import atr, round_price, round_size
+from services.db_utils import _run_db_call
 from services.hyperliquid_service import get_candles, hyperliquid_service
 from services.position_groups import (
     close_position_group,
@@ -372,6 +373,37 @@ class MomentumScalperBot:
         return size
 
     # ── Martingale helpers ────────────────────────────────────────────────────
+
+    async def _persist_martingale_state(
+        self,
+        active_coin: str | None,
+        level: int,
+        trigger_px: float | None,
+    ) -> None:
+        """Write martingale chart state to bot_risk_state (non-fatal if it fails).
+
+        Called at three points: initial entry fill confirmed, each reinforcement
+        fill confirmed, and position close.  Errors are swallowed — a failed write
+        degrades the chart line only, never the trading path.
+        """
+        if not self._db or not self._bot_id:
+            return
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            await _run_db_call(
+                lambda: self._db.table("bot_risk_state").update(
+                    {
+                        "active_coin":                active_coin,
+                        "martingale_level":            level,
+                        "next_martingale_trigger_px":  trigger_px,
+                        "updated_at":                  now,
+                    }
+                ).eq("bot_id", self._bot_id).execute()
+            )
+        except asyncio.TimeoutError:
+            self._log("warning", "_persist_martingale_state timed out (non-fatal)")
+        except Exception as exc:
+            self._log("warning", f"_persist_martingale_state failed (non-fatal): {exc}")
 
     def _compute_next_trigger(self, level: int) -> float:
         """Return the mark price that should trigger martingale layer *level*.
@@ -690,6 +722,11 @@ class MomentumScalperBot:
 
         # ── 8. Transition to in_position ───────────────────────────────────────
         self._state = "in_position"
+        await self._persist_martingale_state(
+            active_coin=coin,
+            level=0,
+            trigger_px=self._compute_next_trigger(1),
+        )
         self._log(
             "info",
             f"Position open (martingale mode) — symbol={symbol} direction={direction_label} "
@@ -950,6 +987,12 @@ class MomentumScalperBot:
             except Exception as rec_exc:
                 self._log("warning", f"record_position_order(martingale_{level}) failed: {rec_exc}")
 
+        await self._persist_martingale_state(
+            active_coin=coin,
+            level=self._martingale_level,
+            trigger_px=self._compute_next_trigger(self._martingale_level + 1),
+        )
+
         # Cancel old TP and reprice to new VWAP.
         await self._reprice_tp(coin, self._entry_price)
 
@@ -1162,6 +1205,9 @@ class MomentumScalperBot:
                 )
             except Exception as sig_exc:
                 self._log("warning", f"update_trade_signal_outcome failed (non-fatal): {sig_exc}")
+
+        # Clear martingale chart state now that the position is closed.
+        await self._persist_martingale_state(active_coin=None, level=0, trigger_px=None)
 
         # Enter cooldown.
         self._reset_state()
