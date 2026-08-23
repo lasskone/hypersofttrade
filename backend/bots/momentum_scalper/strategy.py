@@ -379,26 +379,37 @@ class MomentumScalperBot:
         active_coin: str | None,
         level: int,
         trigger_px: float | None,
+        initial_entry_size: float | None = None,
+        entry_atr: float | None = None,
     ) -> None:
-        """Write martingale chart state to bot_risk_state (non-fatal if it fails).
+        """Write martingale state to bot_risk_state (non-fatal if it fails).
 
         Called at three points: initial entry fill confirmed, each reinforcement
         fill confirmed, and position close.  Errors are swallowed — a failed write
-        degrades the chart line only, never the trading path.
+        degrades restore accuracy only, never the trading path.
+
+        ``initial_entry_size`` and ``entry_atr`` are only passed at the initial
+        entry call site — they are fixed for the position lifetime and must not
+        be overwritten on reinforcement fills or close.  Passing None (the default)
+        leaves the existing column value untouched in the UPDATE.
         """
         if not self._db or not self._bot_id:
             return
         try:
             now = datetime.now(timezone.utc).isoformat()
+            row: dict = {
+                "active_coin":                active_coin,
+                "martingale_level":            level,
+                "next_martingale_trigger_px":  trigger_px,
+                "updated_at":                  now,
+            }
+            if initial_entry_size is not None:
+                row["initial_entry_size"] = initial_entry_size
+            if entry_atr is not None:
+                row["entry_atr"] = entry_atr
             await _run_db_call(
-                lambda: self._db.table("bot_risk_state").update(
-                    {
-                        "active_coin":                active_coin,
-                        "martingale_level":            level,
-                        "next_martingale_trigger_px":  trigger_px,
-                        "updated_at":                  now,
-                    }
-                ).eq("bot_id", self._bot_id).execute()
+                lambda: self._db.table("bot_risk_state").update(row)
+                .eq("bot_id", self._bot_id).execute()
             )
         except asyncio.TimeoutError:
             self._log("warning", "_persist_martingale_state timed out (non-fatal)")
@@ -726,6 +737,8 @@ class MomentumScalperBot:
             active_coin=coin,
             level=0,
             trigger_px=self._compute_next_trigger(1),
+            initial_entry_size=self._initial_entry_size,
+            entry_atr=self._entry_atr,
         )
         self._log(
             "info",
