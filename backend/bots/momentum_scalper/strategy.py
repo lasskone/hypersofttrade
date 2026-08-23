@@ -1503,6 +1503,44 @@ class MomentumScalperBot:
             f"Opportunity found: {best.symbol} {best.direction.upper()} "
             f"score={best.total_score:.1f} — opening position",
         )
+
+        # ── Exchange-state guard ──────────────────────────────────────────────
+        # Confirm the exchange is flat before opening.  If a live position
+        # exists while _state is "idle" (state desync, missed cold-start
+        # restore, manual position), abort and call _cold_start_restore() so
+        # the bot picks up management instead of stacking a second entry.
+        # One clearinghouse call covers all symbols; fires only on qualifying
+        # scanner matches (not every 5 s tick) — rate-limit impact negligible.
+        try:
+            cs = await asyncio.wait_for(
+                hyperliquid_service.get_clearinghouse_state(
+                    self._master_address, self._dex
+                ),
+                timeout=_EXCHANGE_CALL_TIMEOUT_S,
+            )
+            for ap in (cs or {}).get("assetPositions", []):
+                pos = ap.get("position", {})
+                coin = pos.get("coin", "")
+                short = coin.split(":")[-1] if ":" in coin else coin
+                szi = float(pos.get("szi", 0) or 0)
+                if abs(szi) > 1e-9 and (coin in self._symbols or short in self._symbols):
+                    self._log(
+                        "warning",
+                        f"[idle-guard] Live position detected: {coin} szi={szi:.6f} "
+                        f"while state=idle — aborting entry, running cold_start_restore",
+                    )
+                    await self._cold_start_restore()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._log(
+                "warning",
+                f"[idle-guard] Clearinghouse check failed ({exc}) — skipping entry attempt",
+            )
+            return
+        # ── End exchange-state guard ──────────────────────────────────────────
+
         await self._open_position(best)
 
     # ── Main run loop ─────────────────────────────────────────────────────────
