@@ -163,11 +163,22 @@ export default function DashboardPage() {
       // Hyperliquid on every connect — this ensures users who signed up
       // after our link was shared (or are in the master referral list)
       // are recognised without needing a separate manual verification step.
-      await fetch(`${API_URL}/account/verify-affiliation`, {
+      const verifyRes = await fetch(`${API_URL}/account/verify-affiliation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet_address: addr }),
       });
+
+      // Non-2xx means the backend couldn't complete the Hyperliquid check
+      // (503 = retries exhausted; DB was NOT updated). Do not proceed to /status
+      // — the DB value is stale/unknown. Show a transient-failure message so the
+      // user retries rather than seeing a false "wallet not linked" rejection.
+      if (!verifyRes.ok) {
+        setWalletInput(addr);
+        setAffiliationError('Connection issue — please try again.');
+        setStep('connect');
+        return;
+      }
 
       const res = await fetch(`${API_URL}/account/${addr}/status`);
       const data = await res.json();

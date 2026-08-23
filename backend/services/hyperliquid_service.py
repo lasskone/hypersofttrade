@@ -748,9 +748,9 @@ class HyperliquidService:
     # Affiliation
     # ------------------------------------------------------------------
 
-    async def check_affiliation(self, wallet_address: str, referral_code: str) -> bool:
+    async def check_affiliation(self, wallet_address: str, referral_code: str) -> bool | None:
         """
-        Two-step affiliation check:
+        Two-step affiliation check with retry.
 
         Step 1 — direct: fetch the user's own referredBy field. This works for
         wallets that signed up through our referral link.
@@ -760,57 +760,71 @@ class HyperliquidService:
         Hyperliquid account and were affiliated via other means (e.g. airdrop,
         direct referral by another user, etc.).
 
-        Returns True if either check passes.
+        Returns:
+            True  — Hyperliquid responded; wallet IS in referral data.
+            False — Hyperliquid responded; wallet is genuinely NOT in referral data.
+            None  — Transient API error; all retries exhausted. Caller must NOT
+                    overwrite the existing DB value — this is not a confirmed result.
         """
         from core.config import settings
 
-        try:
-            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
-                # Step 1: check user's own referredBy code
-                resp1 = await client.post(
-                    INFO_ENDPOINT,
-                    json={"type": "referral", "user": wallet_address},
-                    headers={"Content-Type": "application/json"},
-                )
-                data1 = resp1.json()
-                referred_by = data1.get("referredBy") or {}
-                code = referred_by.get("code", "")
-                if code.strip().upper() == referral_code.strip().upper():
-                    print(f"[affiliation] {wallet_address} directly referred by '{referral_code}' ✅")
-                    return True
+        _MAX_ATTEMPTS = 3
+        _RETRY_DELAYS = [0.5, 1.0]  # seconds before attempt 2 and 3
 
-                print(f"[affiliation] {wallet_address} referredBy='{code}' (expected '{referral_code}') — checking master list…")
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
+                    # Step 1: check user's own referredBy code
+                    resp1 = await client.post(
+                        INFO_ENDPOINT,
+                        json={"type": "referral", "user": wallet_address},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    data1 = resp1.json()
+                    referred_by = data1.get("referredBy") or {}
+                    code = referred_by.get("code", "")
+                    if code.strip().upper() == referral_code.strip().upper():
+                        print(f"[affiliation] {wallet_address} directly referred by '{referral_code}' ✅")
+                        return True
 
-                # Step 2: fetch master account's full referral list
-                master_address = settings.hyperliquid_master_address
-                if not master_address:
-                    print(f"[affiliation] HYPERLIQUID_MASTER_ADDRESS not set — skipping master list check")
+                    print(f"[affiliation] {wallet_address} referredBy='{code}' (expected '{referral_code}') — checking master list…")
+
+                    # Step 2: fetch master account's full referral list
+                    master_address = settings.hyperliquid_master_address
+                    if not master_address:
+                        print(f"[affiliation] HYPERLIQUID_MASTER_ADDRESS not set — skipping master list check")
+                        return False
+
+                    resp2 = await client.post(
+                        INFO_ENDPOINT,
+                        json={"type": "referral", "user": master_address},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    data2 = resp2.json()
+                    referrals = data2.get("referrals") or []
+                    referred_addresses = [
+                        r.get("referee", "").lower()
+                        for r in referrals
+                        if isinstance(r, dict)
+                    ]
+                    print(f"[affiliation] master list has {len(referred_addresses)} referee(s)")
+
+                    if wallet_address.lower() in referred_addresses:
+                        print(f"[affiliation] {wallet_address} found in master referral list ✅")
+                        return True
+
+                    # Hyperliquid responded cleanly — wallet genuinely not affiliated.
+                    # Do not retry: a successful response with no match is authoritative.
+                    print(f"[affiliation] {wallet_address} NOT found in any referral list ❌")
                     return False
 
-                resp2 = await client.post(
-                    INFO_ENDPOINT,
-                    json={"type": "referral", "user": master_address},
-                    headers={"Content-Type": "application/json"},
-                )
-                data2 = resp2.json()
-                referrals = data2.get("referrals") or []
-                referred_addresses = [
-                    r.get("referee", "").lower()
-                    for r in referrals
-                    if isinstance(r, dict)
-                ]
-                print(f"[affiliation] master list has {len(referred_addresses)} referee(s)")
+            except Exception as e:
+                print(f"[affiliation] attempt {attempt}/{_MAX_ATTEMPTS} ERROR type={type(e).__name__} msg={e}")
+                if attempt < _MAX_ATTEMPTS:
+                    await asyncio.sleep(_RETRY_DELAYS[attempt - 1])
 
-                if wallet_address.lower() in referred_addresses:
-                    print(f"[affiliation] {wallet_address} found in master referral list ✅")
-                    return True
-
-                print(f"[affiliation] {wallet_address} NOT found in any referral list ❌")
-                return False
-
-        except Exception as e:
-            print(f"[affiliation] ERROR type={type(e)} msg={e}")
-            return False
+        print(f"[affiliation] {wallet_address} — all {_MAX_ATTEMPTS} attempts failed (transient error)")
+        return None
 
     # ------------------------------------------------------------------
     # Legacy shims (kept for other routers)

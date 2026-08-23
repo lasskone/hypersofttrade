@@ -95,17 +95,29 @@ async def verify_affiliation(body: VerifyAffiliationRequest):
     wallet = body.wallet_address
     logger.info(f"POST /account/verify-affiliation wallet={wallet}")
     print(f"[verify] wallet={wallet}")
-    is_affiliated = await hyperliquid_service.check_affiliation(
+    result = await hyperliquid_service.check_affiliation(
         wallet, settings.hyperliquid_referral
     )
+
+    # None = transient Hyperliquid API error after all retries exhausted.
+    # Do NOT overwrite the existing is_affiliated value in the DB — this is not a
+    # confirmed result and writing False here would cause a false rejection.
+    # Return 503 so the frontend can distinguish a transient failure from a
+    # genuine "not affiliated" response and avoid showing a false rejection.
+    if result is None:
+        logger.warning(f"[verify-affiliation] {wallet} — Hyperliquid API unavailable after retries; DB not updated")
+        raise HTTPException(
+            status_code=503,
+            detail="affiliation_check_unavailable",
+        )
 
     now = _now()
     upsert_data: dict = {
         "wallet_address": wallet,
-        "is_affiliated": is_affiliated,
+        "is_affiliated": result,
         "updated_at": now,
     }
-    if is_affiliated:
+    if result:
         upsert_data["affiliated_at"] = now
 
     db = _supabase()
@@ -113,7 +125,7 @@ async def verify_affiliation(body: VerifyAffiliationRequest):
 
     return {
         "wallet_address": wallet,
-        "is_affiliated": is_affiliated,
+        "is_affiliated": result,
         "referral_link": REFERRAL_LINK,
     }
 
