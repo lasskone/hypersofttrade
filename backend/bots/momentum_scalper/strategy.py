@@ -1512,11 +1512,8 @@ class MomentumScalperBot:
         # One clearinghouse call covers all symbols; fires only on qualifying
         # scanner matches (not every 5 s tick) — rate-limit impact negligible.
         try:
-            cs = await asyncio.wait_for(
-                hyperliquid_service.get_clearinghouse_state(
-                    self._master_address, self._dex
-                ),
-                timeout=_EXCHANGE_CALL_TIMEOUT_S,
+            cs = await hyperliquid_service.get_clearinghouse_state(
+                self._master_address, self._dex
             )
             for ap in (cs or {}).get("assetPositions", []):
                 pos = ap.get("position", {})
