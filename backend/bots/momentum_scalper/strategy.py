@@ -1517,17 +1517,63 @@ class MomentumScalperBot:
             )
             for ap in (cs or {}).get("assetPositions", []):
                 pos = ap.get("position", {})
-                coin = pos.get("coin", "")
-                short = coin.split(":")[-1] if ":" in coin else coin
+                detected_coin  = pos.get("coin", "")
+                detected_short = detected_coin.split(":")[-1] if ":" in detected_coin else detected_coin
                 szi = float(pos.get("szi", 0) or 0)
-                if abs(szi) > 1e-9 and (coin in self._symbols or short in self._symbols):
+                if abs(szi) < 1e-9:
+                    continue
+                if detected_coin not in self._symbols and detected_short not in self._symbols:
+                    continue
+
+                # Live position on a symbol this bot trades.  Before treating it
+                # as a state desync, confirm this bot_id owns an open
+                # position_groups row for this coin.  On a shared wallet another
+                # bot instance or manual trade may hold positions on the same
+                # symbols — those are not this bot's concern and must not block
+                # its entries or trigger a spurious cold_start_restore loop.
+                coins_to_check = (
+                    [detected_coin]
+                    if detected_coin == detected_short
+                    else [detected_coin, detected_short]
+                )
+                owns_pg = True  # conservative default: assume ours if check fails
+                if self._db and self._bot_id:
+                    try:
+                        pg_check = await _run_db_call(
+                            lambda _c=coins_to_check: self._db.table("position_groups")
+                            .select("id")
+                            .eq("bot_id", self._bot_id)
+                            .in_("coin", _c)
+                            .eq("status", "open")
+                            .limit(1)
+                            .execute()
+                        )
+                        owns_pg = bool(pg_check.data)
+                    except Exception as pg_exc:
+                        self._log(
+                            "warning",
+                            f"[idle-guard] ownership check for {detected_coin} failed "
+                            f"({pg_exc}) — assuming ours, skipping entry attempt",
+                        )
+                        # owns_pg stays True — skip entry (conservative)
+
+                if not owns_pg:
                     self._log(
-                        "warning",
-                        f"[idle-guard] Live position detected: {coin} szi={szi:.6f} "
-                        f"while state=idle — aborting entry, running cold_start_restore",
+                        "info",
+                        f"[idle-guard] Live position on {detected_coin} szi={szi:.6f} — "
+                        f"no open position_groups row for this bot_id — "
+                        f"treating as foreign/manual position, not a desync",
                     )
-                    await self._cold_start_restore()
-                    return
+                    continue  # not this bot's position — keep scanning
+
+                self._log(
+                    "warning",
+                    f"[idle-guard] Live position detected: {detected_coin} szi={szi:.6f} "
+                    f"(bot owns open position_groups row) — aborting entry, "
+                    f"running cold_start_restore",
+                )
+                await self._cold_start_restore()
+                return
         except asyncio.CancelledError:
             raise
         except Exception as exc:
