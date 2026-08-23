@@ -684,6 +684,69 @@ export default function HLChart({ symbol, height = 420, initialInterval, walletA
     })
   }, [chartReady, positions, symbol])
 
+  // ── Fast entry-price refresh for open positions ─────────────────────────────
+  // Runs a dedicated 3 s poll against /portfolio only while a position is open
+  // on the currently-displayed symbol, updating the existing chart price line
+  // in-place (applyOptions) without removing/re-creating it — no flicker.
+  // When no matching position exists for the current symbol the interval is
+  // never created, so there are zero extra requests when no position is open.
+  useEffect(() => {
+    if (!chartReady || !walletAddress) return
+
+    const coinShort = (s: string) => s.split(':').pop() ?? s
+    const hasMatchingPosition = positions.some(p => {
+      const ps = String(p.symbol ?? '')
+      const cs = String(symbol ?? '')
+      return ps === cs || coinShort(ps) === cs || ps === coinShort(cs)
+    })
+
+    if (!hasMatchingPosition) return
+
+    let cancelled = false
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_URL}/account/${walletAddress}/portfolio`)
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        if (cancelled || !Array.isArray(data?.open_positions)) return
+
+        data.open_positions.forEach((pos: any) => {
+          const ps = String(pos.symbol ?? '')
+          const cs = String(symbol ?? '')
+          if (ps !== cs && coinShort(ps) !== cs && ps !== coinShort(cs)) return
+
+          const ep = parseFloat(String(pos.entry_price ?? 0))
+          if (!ep || ep <= 0) return
+
+          const pnl   = parseFloat(String(pos.unrealized_pnl ?? 0))
+          const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
+          const pnlColor = pnl >= 0 ? '#10b981' : '#ef4444'
+          const isLong = parseFloat(String(pos.size)) > 0
+
+          // Update every price line for this symbol in-place — priceLineRefs
+          // only holds lines for matching positions (see position lines effect).
+          priceLineRefs.current.forEach(pl => {
+            try {
+              pl.applyOptions({
+                price: ep,
+                color: pnlColor,
+                title: `${isLong ? '▲ LONG' : '▼ SHORT'} ${pnlStr}`,
+              })
+            } catch {}
+          })
+        })
+      } catch {}
+    }
+
+    poll() // immediate first fire so the line updates without waiting 3 s
+    const timer = setInterval(poll, 3_000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [chartReady, walletAddress, symbol, positions])
+
   // ── TP / SL / limit order lines ────────────────────────────────────────────
   useEffect(() => {
     if (!chartReady || !chartRef.current || !candleSeriesRef.current) return
