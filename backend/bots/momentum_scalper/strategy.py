@@ -286,6 +286,7 @@ class MomentumScalperBot:
         #
         # WARNING: unlimited drawdown risk up to liquidation.  User confirmed.
         self._martingale_level: int = 0   # 0 = only initial entry filled so far
+        self._martingale_level_unknown: bool = False  # True = level NULL at restore; reinforcement suspended
 
         # Breakeven field kept to avoid AttributeError in any path that checks it,
         # but the move-to-breakeven logic is removed — replaced by martingale.
@@ -484,9 +485,18 @@ class MomentumScalperBot:
             )
             rs = rs_res.data[0] if rs_res.data else {}
 
-            martingale_level      = int(rs.get("martingale_level") or 0)
+            raw_level             = rs.get("martingale_level")
             initial_entry_size_db = rs.get("initial_entry_size")
             entry_atr_db          = rs.get("entry_atr")
+
+            if raw_level is None:
+                # Level is genuinely unknown — cannot safely compute trigger distances.
+                # Bot will manage the existing TP but fire NO reinforcement orders.
+                martingale_level = 0
+                level_unknown    = True
+            else:
+                martingale_level = int(raw_level)
+                level_unknown    = False
 
             # ── 4. Resolve entry_atr (fixed at L0; fallback: recompute) ───────
             if entry_atr_db is not None:
@@ -551,13 +561,14 @@ class MomentumScalperBot:
             self._entry_atr           = entry_atr
             self._initial_entry_price = initial_px
             self._initial_entry_size  = initial_entry_size
-            self._martingale_level    = martingale_level
-            self._tp_oid              = tp_oid
-            self._sl_oid              = None
-            self._position_group_id   = pg_id
-            self._entry_time          = entry_time_ms
-            self._breakeven_triggered = False
-            self._state               = "in_position"
+            self._martingale_level         = martingale_level
+            self._martingale_level_unknown = level_unknown
+            self._tp_oid                   = tp_oid
+            self._sl_oid                   = None
+            self._position_group_id        = pg_id
+            self._entry_time               = entry_time_ms
+            self._breakeven_triggered      = False
+            self._state                    = "in_position"
 
             self._log(
                 "info",
@@ -565,10 +576,19 @@ class MomentumScalperBot:
                 f"coin={coin} {'LONG' if is_long else 'SHORT'} "
                 f"size={abs(szi):.6f} vwap_entry={vwap_entry:.4f} "
                 f"initial_entry_price={initial_px:.4f} entry_atr={entry_atr:.6f} "
-                f"martingale_level={martingale_level} "
+                f"martingale_level={martingale_level} level_unknown={level_unknown} "
                 f"initial_entry_size={initial_entry_size:.6f} "
                 f"tp_oid={tp_oid} position_group_id={pg_id}",
             )
+
+            if level_unknown:
+                self._log(
+                    "warning",
+                    f"cold_start_restore: martingale_level is NULL in bot_risk_state for {coin} — "
+                    f"entering TP-ONLY MODE. Reinforcement layers are DISABLED until the real "
+                    f"level is manually verified and the bot is redeployed with a known level. "
+                    f"TP monitoring and close detection are fully active.",
+                )
 
             # ── 8. Refresh bot_risk_state.active_coin (may be NULL pre-deploy) ─
             await self._persist_martingale_state(
@@ -1204,6 +1224,14 @@ class MomentumScalperBot:
         self._position_size = abs(szi)
 
         # ── 2. Martingale trigger check ────────────────────────────────────────
+        # Guard: if the level was unknown at cold-start restore, skip the entire
+        # trigger check.  TP monitoring (step 1 flat-position detection) already
+        # ran above — protection is intact.  Reinforcement is re-enabled only
+        # after the position closes (which resets _martingale_level_unknown via
+        # _reset_state) and a fresh entry sets a confirmed level of 0.
+        if self._martingale_level_unknown:
+            return
+
         # No level cap — layers are added as long as the account has margin.
         # Fetch mark price to compare against the next computed trigger.
         try:
