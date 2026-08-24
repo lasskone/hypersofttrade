@@ -118,6 +118,8 @@ class MarketDataCache:
     TTL_ORDERBOOK:     float = 1.0   # seconds
     TTL_CANDLES:       float = 15.0  # seconds
     TTL_CLEARINGHOUSE: float = 3.0   # seconds — display-only portfolio fan-out
+    TTL_SPOT_STATE:    float = 3.0   # seconds — display-only spot balances
+    TTL_PERP_DEXES:    float = 60.0  # seconds — DEX list changes at most a few times/month
 
     def __init__(self) -> None:
         # {cache_key: (value, expires_at_monotonic)} — short-TTL freshness store
@@ -332,7 +334,12 @@ class HyperliquidService:
     # ------------------------------------------------------------------
 
     async def get_all_perp_dexes(self) -> list[str]:
-        """Return all perp DEX identifiers: '' for main, name string for HIP-3."""
+        """Return all perp DEX identifiers: '' for main, name string for HIP-3.
+
+        NOTE: intentionally uncached — display-only callers use
+        get_all_perp_dexes_display() which wraps this with stale-while-error.
+        Returns [] (falsy) on error so the cache correctly triggers STALE_FALLBACK.
+        """
         try:
             async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
@@ -350,7 +357,28 @@ class HyperliquidService:
             return dex_names
         except Exception as e:
             logger.error(f"[get_all_perp_dexes] failed: {e}")
-            return [""]
+            return []  # empty list is falsy → stale-while-error triggers in caller
+
+    async def get_all_perp_dexes_display(self) -> list[str]:
+        """Cached wrapper around get_all_perp_dexes for display-only use.
+
+        Implements stale-while-error via MarketDataCache.get_or_fetch():
+          - Fresh TTL hit (60 s):   returns cached DEX list instantly           (HIT).
+          - TTL expired, HL OK:     fetches live, updates cache + LKG           (LIVE_SUCCESS).
+          - TTL expired, HL 429:    serves last-known-good from prior fetch      (STALE_FALLBACK).
+          - First-ever call fails:  no LKG yet; returns []                      (NO_LKG).
+
+        The DEX list changes at most a few times per month, so a 60 s TTL is
+        effectively invisible to users while slashing HL calls from ~6/min to 1/min.
+
+        NEVER called by bot execution paths.
+        """
+        result = await _market_cache.get_or_fetch(
+            "perp_dexes",
+            _market_cache.TTL_PERP_DEXES,
+            self.get_all_perp_dexes,
+        )
+        return result if isinstance(result, list) else []
 
     async def get_clearinghouse_state(self, wallet_address: str, dex: str = "") -> dict:
         """Return clearinghouse state for a specific DEX ('' = main).
@@ -399,7 +427,11 @@ class HyperliquidService:
         return result if isinstance(result, dict) else {}
 
     async def get_spot_state(self, wallet_address: str) -> dict:
-        """Return spot balances for *wallet_address*."""
+        """Return spot balances for *wallet_address*.
+
+        NOTE: intentionally uncached — display-only callers use
+        get_spot_state_display() which wraps this with stale-while-error.
+        """
         try:
             async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
@@ -411,6 +443,29 @@ class HyperliquidService:
         except Exception as e:
             logger.error(f"[get_spot_state] {wallet_address} failed: {e}")
             return {}
+
+    async def get_spot_state_display(self, wallet_address: str) -> dict:
+        """Cached wrapper around get_spot_state for display-only use.
+
+        Implements stale-while-error via MarketDataCache.get_or_fetch():
+          - Fresh TTL hit (3 s):    returns cached spot state instantly         (HIT).
+          - TTL expired, HL OK:     fetches live, updates cache + LKG           (LIVE_SUCCESS).
+          - TTL expired, HL 429:    serves last-known-good from prior fetch      (STALE_FALLBACK).
+          - First-ever call fails:  no LKG yet; returns {}                      (NO_LKG).
+
+        Cache key is per wallet_address so wallets are fully isolated.
+
+        NEVER called by bot execution paths.
+        """
+        cache_key = f"spot_state:{wallet_address}"
+        result = await _market_cache.get_or_fetch(
+            cache_key,
+            _market_cache.TTL_SPOT_STATE,
+            lambda: self.get_spot_state(wallet_address),
+        )
+        # get_or_fetch returns fetch_fn's raw result on NO_LKG, which may be None
+        # if HL sent a JSON null body.  Normalise so callers always receive a dict.
+        return result if isinstance(result, dict) else {}
 
     async def get_user_fills(self, wallet_address: str) -> list:
         """Return full trade history for *wallet_address*."""
@@ -499,7 +554,7 @@ class HyperliquidService:
         # Always guarantee the main DEX ("") is in the list — perpDexs may represent
         # it as None, as {}, or omit it entirely depending on API version.  Without it
         # the fan-out never fetches the main clearinghouseState and withdrawable = 0.
-        dex_names = await self.get_all_perp_dexes()
+        dex_names = await self.get_all_perp_dexes_display()
         if "" not in dex_names:
             dex_names.insert(0, "")
             print(f"[portfolio] Main DEX ('') missing from perpDexs — inserted at position 0")
@@ -508,10 +563,10 @@ class HyperliquidService:
         # Step 2: fan-out — all DEX states + spot + fills + per-DEX orders in parallel.
         # frontendOpenOrders is DEX-scoped: HIP-3 TP/SL orders only appear when the
         # matching dex param is sent.  We call it once per DEX and merge the results.
-        # Use the display-only cached variant (TTL 3 s) — absorbs duplicate polls
-        # from concurrent users without touching bot execution paths.
+        # All three display wrappers (clearinghouse, spot, perp_dexes) implement
+        # stale-while-error — transient HL 429s serve last-known-good instead of blank.
         tasks = [self.get_clearinghouse_state_display(wallet_address, dex) for dex in dex_names]
-        tasks.append(self.get_spot_state(wallet_address))
+        tasks.append(self.get_spot_state_display(wallet_address))
         tasks.append(self.get_user_fills(wallet_address))
         for dex in dex_names:
             tasks.append(self.get_open_orders(wallet_address, dex))
