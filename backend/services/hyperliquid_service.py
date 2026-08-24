@@ -326,13 +326,21 @@ class HyperliquidService:
         get_complete_portfolio() — never from bot execution paths — so short
         staleness is acceptable and absorbs duplicate polls from concurrent users.
         Cache key is (wallet_address, dex) so different wallets/DEXes are isolated.
+
+        IMPORTANT: uses a manual cache check rather than get_or_fetch() so that
+        error/null responses (None, {}) are never stored.  HL returns JSON null on
+        429s — response.json() returns None without raising, which would poison the
+        cache for the full TTL window if stored via get_or_fetch().
         """
         cache_key = f"clearinghouse:{wallet_address}:{dex}"
-        return await _market_cache.get_or_fetch(
-            cache_key,
-            _market_cache.TTL_CLEARINGHOUSE,
-            lambda: self.get_clearinghouse_state(wallet_address, dex),
-        )
+        hit, cached = _market_cache._get(cache_key)
+        if hit:
+            return cached
+        result = await self.get_clearinghouse_state(wallet_address, dex)
+        # Only cache a genuine populated response — never cache None or {}
+        if isinstance(result, dict) and result:
+            _market_cache._set(cache_key, result, _market_cache.TTL_CLEARINGHOUSE)
+        return result if isinstance(result, dict) else {}
 
     async def get_spot_state(self, wallet_address: str) -> dict:
         """Return spot balances for *wallet_address*."""
