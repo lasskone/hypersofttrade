@@ -737,6 +737,7 @@ function renderSchemaFields(
         <input
           style={inputStyle}
           type="number"
+          min={f.min}
           value={params[f.key] ?? f.default}
           onChange={e => setParams(p => ({ ...p, [f.key]: parseFloat(e.target.value) || 0 }))}
         />
@@ -759,6 +760,11 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
     isFadeScalper ? ['BTC', 'ETH', 'SOL'] : ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
   )
   const [symbolInput, setSymbolInput] = useState('')
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
+  const [symbolsLoading, setSymbolsLoading] = useState(isMultiSymbol)
+  const [symbolsError, setSymbolsError] = useState(false)
+  const [showSymbolDropdown, setShowSymbolDropdown] = useState(false)
+  const symbolDropdownRef = useRef<HTMLDivElement>(null)
   const [allocatedUsdc, setAllocatedUsdc] = useState('100')
   const [leverage, setLeverage] = useState(String(ip.leverage ?? typeDefaults.leverage ?? 1))
   const [params, setParams] = useState<Record<string, number>>({ ...typeDefaults, ...ip })
@@ -769,6 +775,20 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!isMultiSymbol) return
+    fetch(`${API_URL}/scanner/available-symbols`)
+      .then(r => r.json())
+      .then(data => {
+        setAvailableSymbols(data.symbols ?? [])
+        setSymbolsLoading(false)
+      })
+      .catch(() => {
+        setSymbolsLoading(false)
+        setSymbolsError(true)
+      })
+  }, [])
 
   useEffect(() => {
     fetch(`${API_URL}/market/all`)
@@ -786,6 +806,9 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
         setShowSearch(false)
         setMarketSearch('')
       }
+      if (symbolDropdownRef.current && !symbolDropdownRef.current.contains(e.target as Node)) {
+        setShowSymbolDropdown(false)
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -794,6 +817,15 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
   const handleCreate = async () => {
     setLoading(true)
     setError('')
+    // Validate min constraints defined in schema before sending to server.
+    const schemaFields = getSchemaFields(botType)
+    for (const f of schemaFields) {
+      if (f.min !== undefined && (params[f.key] ?? f.default) < f.min) {
+        setError(`${f.label} must be at least ${f.min}`)
+        setLoading(false)
+        return
+      }
+    }
     try {
       const res = await fetch(`${API_URL}/bots/`, {
         method: 'POST',
@@ -845,7 +877,7 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
             <label style={labelStyle}>Bot Name</label>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
-          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for multi-symbol bots */}
+          {/* Market picker — single symbol for RSI DCA; autocomplete multi-select for multi-symbol bots */}
           {isMultiSymbol ? (
             <div>
               <label style={labelStyle}>SYMBOLS TO SCAN</label>
@@ -864,35 +896,85 @@ export function CreateBotModal({ walletAddress, botType, onClose, onCreated, ini
                   </span>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  type="text" value={symbolInput}
-                  onChange={e => setSymbolInput(e.target.value.toUpperCase().replace(/[^A-Z0-9:]/g, ''))}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      const s = symbolInput.trim()
-                      if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
-                      setSymbolInput('')
-                    }
-                  }}
-                  placeholder="e.g. DOGE"
-                  style={{ ...inputStyle, flex: 1, textTransform: 'uppercase' as const }}
-                />
-                <button type="button"
-                  onClick={() => {
-                    const s = symbolInput.trim()
-                    if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
-                    setSymbolInput('')
-                  }}
-                  style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                    background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44` }}>
-                  Add
-                </button>
-              </div>
-              <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
-                Type any Hyperliquid perp symbol and press Enter or Add. Click × to remove. At least one required.
-              </p>
+              {symbolsError ? (
+                <>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="text" value={symbolInput}
+                      onChange={e => setSymbolInput(e.target.value.toUpperCase().replace(/[^A-Z0-9:]/g, ''))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const s = symbolInput.trim()
+                          if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                          setSymbolInput('')
+                        }
+                      }}
+                      placeholder="e.g. DOGE"
+                      style={{ ...inputStyle, flex: 1, textTransform: 'uppercase' as const }}
+                    />
+                    <button type="button"
+                      onClick={() => {
+                        const s = symbolInput.trim()
+                        if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                        setSymbolInput('')
+                      }}
+                      style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44` }}>
+                      Add
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 10, color: '#f59e0b', marginTop: 4 }}>
+                    Symbol list unavailable — type any Hyperliquid perp and press Enter or Add. Click × to remove. At least one required.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div ref={symbolDropdownRef} style={{ position: 'relative' }}>
+                    <input
+                      type="text" value={symbolInput}
+                      onChange={e => { setSymbolInput(e.target.value.toUpperCase()); setShowSymbolDropdown(true) }}
+                      onFocus={() => { if (symbolInput) setShowSymbolDropdown(true) }}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') { setShowSymbolDropdown(false); setSymbolInput(''); return }
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const q = symbolInput.toLowerCase()
+                          const filtered = availableSymbols.filter(s => s.toLowerCase().includes(q) && !selectedSymbols.includes(s))
+                          const match = (availableSymbols.includes(symbolInput) && !selectedSymbols.includes(symbolInput))
+                            ? symbolInput : filtered[0]
+                          if (match) { setSelectedSymbols(prev => [...prev, match]); setSymbolInput(''); setShowSymbolDropdown(false) }
+                        }
+                      }}
+                      placeholder={symbolsLoading ? 'Loading symbols…' : 'Search symbols…'}
+                      disabled={symbolsLoading}
+                      style={{ ...inputStyle, textTransform: 'uppercase' as const, cursor: symbolsLoading ? 'wait' : 'text' }}
+                    />
+                    {showSymbolDropdown && symbolInput.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 200, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
+                        {(() => {
+                          const q = symbolInput.toLowerCase()
+                          const matches = availableSymbols.filter(s => s.toLowerCase().includes(q) && !selectedSymbols.includes(s)).slice(0, 40)
+                          return matches.length > 0
+                            ? matches.map(s => (
+                              <div key={s}
+                                onMouseDown={e => { e.preventDefault(); setSelectedSymbols(prev => [...prev, s]); setSymbolInput(''); setShowSymbolDropdown(false) }}
+                                style={{ padding: '8px 12px', cursor: 'pointer', color: 'white', fontSize: 13, background: 'transparent' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                                {s}
+                              </div>
+                            ))
+                            : <div style={{ padding: 16, textAlign: 'center' as const, color: '#6b7280', fontSize: 13 }}>No matches</div>
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
+                    Search and select Hyperliquid perp symbols. Click × to remove. At least one required.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div>
@@ -1028,6 +1110,11 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
     isFadeScalper ? ['BTC', 'ETH', 'SOL'] : ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE']
   )
   const [symbolInput, setSymbolInput] = useState('')
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
+  const [symbolsLoading, setSymbolsLoading] = useState(isMultiSymbol)
+  const [symbolsError, setSymbolsError] = useState(false)
+  const [showSymbolDropdown, setShowSymbolDropdown] = useState(false)
+  const symbolDropdownRef = useRef<HTMLDivElement>(null)
   const [allocatedUsdc, setAllocatedUsdc] = useState(String(cfg.allocated_usdc ?? bot.allocated_usdc ?? '100'))
   const [leverage, setLeverage] = useState(String(cfg.leverage ?? def.leverage ?? 1))
   // Initialise strategy params from saved config, filling gaps with schema defaults
@@ -1049,6 +1136,20 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (!isMultiSymbol) return
+    fetch(`${API_URL}/scanner/available-symbols`)
+      .then(r => r.json())
+      .then(data => {
+        setAvailableSymbols(data.symbols ?? [])
+        setSymbolsLoading(false)
+      })
+      .catch(() => {
+        setSymbolsLoading(false)
+        setSymbolsError(true)
+      })
+  }, [])
+
+  useEffect(() => {
     fetch(`${API_URL}/market/all`)
       .then(r => r.json())
       .then((data: Market[]) => {
@@ -1064,6 +1165,9 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
         setShowSearch(false)
         setMarketSearch('')
       }
+      if (symbolDropdownRef.current && !symbolDropdownRef.current.contains(e.target as Node)) {
+        setShowSymbolDropdown(false)
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -1075,6 +1179,15 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
   const handleUpdate = async () => {
     setSaving(true)
     setError('')
+    // Validate min constraints defined in schema before sending to server.
+    const schemaFields = getSchemaFields(bot.bot_type)
+    for (const f of schemaFields) {
+      if (f.min !== undefined && (params[f.key] ?? f.default) < f.min) {
+        setError(`${f.label} must be at least ${f.min}`)
+        setSaving(false)
+        return
+      }
+    }
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
       const finalConfig = {
@@ -1124,7 +1237,7 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
           </div>
 
-          {/* Market picker — single symbol for RSI DCA; dynamic chip multi-select for multi-symbol bots */}
+          {/* Market picker — single symbol for RSI DCA; autocomplete multi-select for multi-symbol bots */}
           {isMultiSymbol ? (
             <div>
               <label style={labelStyle}>SYMBOLS TO SCAN</label>
@@ -1143,35 +1256,85 @@ function EditBotModal({ bot, walletAddress, onClose, onUpdated }: { bot: any, wa
                   </span>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  type="text" value={symbolInput}
-                  onChange={e => setSymbolInput(e.target.value.toUpperCase().replace(/[^A-Z0-9:]/g, ''))}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      const s = symbolInput.trim()
-                      if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
-                      setSymbolInput('')
-                    }
-                  }}
-                  placeholder="e.g. DOGE"
-                  style={{ ...inputStyle, flex: 1, textTransform: 'uppercase' as const }}
-                />
-                <button type="button"
-                  onClick={() => {
-                    const s = symbolInput.trim()
-                    if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
-                    setSymbolInput('')
-                  }}
-                  style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                    background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44` }}>
-                  Add
-                </button>
-              </div>
-              <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
-                Type any Hyperliquid perp symbol and press Enter or Add. Click × to remove. At least one required.
-              </p>
+              {symbolsError ? (
+                <>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="text" value={symbolInput}
+                      onChange={e => setSymbolInput(e.target.value.toUpperCase().replace(/[^A-Z0-9:]/g, ''))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const s = symbolInput.trim()
+                          if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                          setSymbolInput('')
+                        }
+                      }}
+                      placeholder="e.g. DOGE"
+                      style={{ ...inputStyle, flex: 1, textTransform: 'uppercase' as const }}
+                    />
+                    <button type="button"
+                      onClick={() => {
+                        const s = symbolInput.trim()
+                        if (s && !selectedSymbols.includes(s)) setSelectedSymbols(prev => [...prev, s])
+                        setSymbolInput('')
+                      }}
+                      style={{ padding: '0 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        background: `${chipColor}18`, color: chipColor, border: `1px solid ${chipColor}44` }}>
+                      Add
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 10, color: '#f59e0b', marginTop: 4 }}>
+                    Symbol list unavailable — type any Hyperliquid perp and press Enter or Add. Click × to remove. At least one required.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div ref={symbolDropdownRef} style={{ position: 'relative' }}>
+                    <input
+                      type="text" value={symbolInput}
+                      onChange={e => { setSymbolInput(e.target.value.toUpperCase()); setShowSymbolDropdown(true) }}
+                      onFocus={() => { if (symbolInput) setShowSymbolDropdown(true) }}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') { setShowSymbolDropdown(false); setSymbolInput(''); return }
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const q = symbolInput.toLowerCase()
+                          const filtered = availableSymbols.filter(s => s.toLowerCase().includes(q) && !selectedSymbols.includes(s))
+                          const match = (availableSymbols.includes(symbolInput) && !selectedSymbols.includes(symbolInput))
+                            ? symbolInput : filtered[0]
+                          if (match) { setSelectedSymbols(prev => [...prev, match]); setSymbolInput(''); setShowSymbolDropdown(false) }
+                        }
+                      }}
+                      placeholder={symbolsLoading ? 'Loading symbols…' : 'Search symbols…'}
+                      disabled={symbolsLoading}
+                      style={{ ...inputStyle, textTransform: 'uppercase' as const, cursor: symbolsLoading ? 'wait' : 'text' }}
+                    />
+                    {showSymbolDropdown && symbolInput.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 6, maxHeight: 200, overflowY: 'auto', zIndex: 2000, marginTop: 4 }}>
+                        {(() => {
+                          const q = symbolInput.toLowerCase()
+                          const matches = availableSymbols.filter(s => s.toLowerCase().includes(q) && !selectedSymbols.includes(s)).slice(0, 40)
+                          return matches.length > 0
+                            ? matches.map(s => (
+                              <div key={s}
+                                onMouseDown={e => { e.preventDefault(); setSelectedSymbols(prev => [...prev, s]); setSymbolInput(''); setShowSymbolDropdown(false) }}
+                                style={{ padding: '8px 12px', cursor: 'pointer', color: 'white', fontSize: 13, background: 'transparent' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = '#1a1a2e')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                                {s}
+                              </div>
+                            ))
+                            : <div style={{ padding: 16, textAlign: 'center' as const, color: '#6b7280', fontSize: 13 }}>No matches</div>
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  <p style={{ fontSize: 10, color: '#4b5563', marginTop: 4 }}>
+                    Search and select Hyperliquid perp symbols. Click × to remove. At least one required.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div>
