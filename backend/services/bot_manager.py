@@ -335,6 +335,7 @@ class BotManager:
             "martingale_multiplier",
             "risk_per_trade", "max_daily_loss_pct",
             "min_profit_to_fee_ratio", "estimated_fee_pct",
+            "l0_entry_notional_usd",
         ]
         _int_keys = [
             "leverage",
@@ -344,7 +345,7 @@ class BotManager:
             "max_consecutive_losses", "consecutive_loss_cooldown_minutes",
             "window_start_utc_hour", "window_end_utc_hour",
         ]
-        _bool_keys = ["use_time_window"]
+        _bool_keys = ["use_time_window", "daily_loss_limit_enabled"]
 
         for k in _float_keys:
             if config.get(k) is not None:

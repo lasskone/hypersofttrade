@@ -88,6 +88,7 @@ class RiskManager:
         max_leverage: int = 5,
         min_profit_to_fee_ratio: float = 1.5,
         estimated_fee_pct: float = 0.07,
+        daily_loss_limit_enabled: bool = True,
     ) -> None:
         self._bot_id    = bot_id
         self._db        = db_client
@@ -101,6 +102,7 @@ class RiskManager:
         self._max_leverage                 = int(max_leverage)
         self._min_profit_to_fee_ratio      = float(min_profit_to_fee_ratio)
         self._estimated_fee_pct            = float(estimated_fee_pct)
+        self._daily_loss_limit_enabled     = bool(daily_loss_limit_enabled)
 
         # In-memory state — loaded from DB by load_or_init(), or initialised
         # to defaults if this is the first run for this bot_id.
@@ -326,16 +328,17 @@ class RiskManager:
             self.daily_loss_date = today_utc
             await self._persist()
 
-        # 3. Daily loss limit.
-        daily_limit = self.equity * self._max_daily_loss_pct
-        if self.daily_loss_usd >= daily_limit:
-            self.trading_halted = True
-            self.halt_reason    = (
-                f"daily_loss_limit: lost ${self.daily_loss_usd:.2f} "
-                f"(limit ${daily_limit:.2f})"
-            )
-            await self._persist()
-            return False, self.halt_reason
+        # 3. Daily loss limit (skipped when daily_loss_limit_enabled=False).
+        if self._daily_loss_limit_enabled:
+            daily_limit = self.equity * self._max_daily_loss_pct
+            if self.daily_loss_usd >= daily_limit:
+                self.trading_halted = True
+                self.halt_reason    = (
+                    f"daily_loss_limit: lost ${self.daily_loss_usd:.2f} "
+                    f"(limit ${daily_limit:.2f})"
+                )
+                await self._persist()
+                return False, self.halt_reason
 
         # 4. Consecutive-loss cooldown still active.
         if (
@@ -529,15 +532,16 @@ class RiskManager:
                 self.consecutive_losses, self.cooldown_until.isoformat(),
             )
 
-        # Daily loss halt check.
-        daily_limit = self.equity * self._max_daily_loss_pct
-        if not self.trading_halted and self.daily_loss_usd >= daily_limit:
-            self.trading_halted = True
-            self.halt_reason    = (
-                f"daily_loss_limit: lost ${self.daily_loss_usd:.2f} "
-                f"(limit ${daily_limit:.2f})"
-            )
-            logger.warning("[RiskManager] HALT — %s", self.halt_reason)
+        # Daily loss halt check (skipped when daily_loss_limit_enabled=False).
+        if self._daily_loss_limit_enabled:
+            daily_limit = self.equity * self._max_daily_loss_pct
+            if not self.trading_halted and self.daily_loss_usd >= daily_limit:
+                self.trading_halted = True
+                self.halt_reason    = (
+                    f"daily_loss_limit: lost ${self.daily_loss_usd:.2f} "
+                    f"(limit ${daily_limit:.2f})"
+                )
+                logger.warning("[RiskManager] HALT — %s", self.halt_reason)
 
         # Drawdown halt check.
         drawdown_pct = self._drawdown_pct()

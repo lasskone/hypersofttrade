@@ -52,10 +52,10 @@ The user has explicitly confirmed this behaviour.
 
 Sizing (fixed notional) — IMPORTANT: read all comments before changing
 ----------------------------------------------------------------------
-Every initial (L0) entry targets a fixed notional of $11 (see
-_L0_ENTRY_NOTIONAL_USD), regardless of ATR or equity:
+Every initial (L0) entry targets a fixed notional of $11 by default (see
+l0_entry_notional_usd constructor parameter), regardless of ATR or equity:
 
-    raw_size = (_L0_ENTRY_NOTIONAL_USD × leverage) / entry_price
+    raw_size = (l0_entry_notional_usd × leverage) / entry_price
 
 $11 is chosen to be just above Hyperliquid's $10 minimum notional.
 ATR-risk-based sizing was removed because collapsing ATR on low-volatility
@@ -100,15 +100,9 @@ logger = logging.getLogger(__name__)
 # Hyperliquid exchange minimum notional per order (USD).
 _HL_MIN_NOTIONAL: float = 10.0
 
-# Fixed notional for every initial (L0) entry, in USD.
-# Set to $11 — just above Hyperliquid's $10 minimum notional — so that
-# position sizing is predictable and independent of ATR.  ATR-based sizing
-# collapses to near-zero stop distances on low-volatility setups, which
-# produces enormous (margin-cap-limited) positions with no meaningful
-# risk-per-trade guarantee.  A fixed $11 base gives consistent exposure
-# across all symbols and market conditions.
-# Martingale layers still scale from this base via φ^(level-1).
-_L0_ENTRY_NOTIONAL_USD: float = 11.0
+# Hyperliquid minimum notional ($10) plus a small safety buffer.
+# Used as the lower clamp for l0_entry_notional_usd in the constructor.
+_L0_ENTRY_NOTIONAL_MIN: float = 10.5
 
 # After placing a market IOC, wait this long before querying clearinghouse.
 _FILL_WAIT_S: float = 2.0
@@ -191,6 +185,14 @@ class MomentumScalperBot:
         consecutive_loss_cooldown_minutes: int = 30,
         min_profit_to_fee_ratio: float = 1.5,
         estimated_fee_pct: float = 0.07,
+        # L0 entry notional — fixed USD size of every initial entry.
+        # Must be ≥ $10.50 (Hyperliquid rejects orders below the $10 minimum
+        # notional; the extra $0.50 provides a rounding buffer).
+        l0_entry_notional_usd: float = 11.0,
+        # Daily loss limit — set to False to disable the daily loss halt.
+        # When False the max_daily_loss_pct check is skipped in can_trade()
+        # and record_trade_result(); trading continues regardless of intraday P&L.
+        daily_loss_limit_enabled: bool = True,
         # Time window — restrict entries to a UTC hour range (London/NY overlap
         # default: 12–16 UTC, the highest-volatility window for momentum setups).
         # Set use_time_window=False to trade around the clock.
@@ -233,6 +235,19 @@ class MomentumScalperBot:
         self._cooldown_after_loss_s  = int(cooldown_after_loss_seconds)
         self._scan_interval_s        = int(scan_interval_seconds)
 
+        # ── L0 notional ────────────────────────────────────────────────────────
+        _clamped = max(float(l0_entry_notional_usd), _L0_ENTRY_NOTIONAL_MIN)
+        if _clamped != float(l0_entry_notional_usd):
+            logger.warning(
+                "[MomentumScalper] l0_entry_notional_usd=%.2f is below the minimum "
+                "%.2f — clamping to %.2f",
+                l0_entry_notional_usd, _L0_ENTRY_NOTIONAL_MIN, _clamped,
+            )
+        self._l0_entry_notional_usd = _clamped
+
+        # ── Daily loss limit toggle ────────────────────────────────────────────
+        self._daily_loss_limit_enabled = bool(daily_loss_limit_enabled)
+
         # ── Time window ────────────────────────────────────────────────────────
         self._use_time_window = bool(use_time_window)
         self._window_start    = int(window_start_utc_hour)
@@ -255,6 +270,7 @@ class MomentumScalperBot:
             max_leverage                    = leverage,
             min_profit_to_fee_ratio         = min_profit_to_fee_ratio,
             estimated_fee_pct               = estimated_fee_pct,
+            daily_loss_limit_enabled        = daily_loss_limit_enabled,
         )
 
         # ── State ──────────────────────────────────────────────────────────────
@@ -361,8 +377,8 @@ class MomentumScalperBot:
     ) -> float:
         """Return the base-asset size for the initial (L0) entry.
 
-        Sizing is fixed-notional: every entry targets _L0_ENTRY_NOTIONAL_USD
-        ($11) of margin at the effective leverage, regardless of ATR or
+        Sizing is fixed-notional: every entry targets self._l0_entry_notional_usd
+        (default $11) of margin at the effective leverage, regardless of ATR or
         equity.  This replaces the previous ATR-risk formula, which collapsed
         to near-zero stop distances on quiet setups and produced enormous,
         margin-cap-dominated positions.
@@ -385,7 +401,7 @@ class MomentumScalperBot:
             return 0.0
 
         eff_leverage = min(self._leverage, self._risk_manager._max_leverage)
-        raw_size     = (_L0_ENTRY_NOTIONAL_USD * eff_leverage) / entry_price
+        raw_size     = (self._l0_entry_notional_usd * eff_leverage) / entry_price
 
         # Margin safety cap (defense-in-depth — should not fire at $11 base).
         max_margin      = self._risk_manager.equity * _MARGIN_SAFETY_BUFFER
@@ -416,7 +432,7 @@ class MomentumScalperBot:
         logger.info(
             "[MomentumScalper] _compute_size: fixed notional=%.2f USD "
             "entry=%.4f leverage=%dx → raw_size=%.6f",
-            _L0_ENTRY_NOTIONAL_USD, entry_price, eff_leverage, raw_size,
+            self._l0_entry_notional_usd, entry_price, eff_leverage, raw_size,
         )
         return round_size(raw_size, sz_decimals)
 
