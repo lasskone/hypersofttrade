@@ -66,6 +66,9 @@ class MarketDataCache:
                               candles even less often.  15 s captures multiple
                               scan ticks while guaranteeing a fresh read within
                               the current candle's lifetime.
+    clearinghouse      3 s  — display-only portfolio fan-out; short enough to
+                              stay accurate, long enough to absorb duplicate polls
+                              from concurrent users.
 
     Hot path (cache HIT)
     --------------------
@@ -99,6 +102,16 @@ class MarketDataCache:
     logs a debug line and falls through to its own direct HTTP call — it is
     NEVER blocked indefinitely and NEVER experiences more latency than a normal
     network call would take.
+
+    Stale-while-error
+    -----------------
+    _stale mirrors _store but has no TTL — it holds the last successfully-fetched
+    value for each key indefinitely.  When a fetch returns empty/null (e.g. a HL
+    429 with a null JSON body), get_or_fetch() serves the stale value instead of
+    returning an empty result.  Display callers never go blank from a transient
+    error; the stale value is replaced the next time a real fetch succeeds.
+    Three Railway-visible log lines mark each case: HIT, LIVE_SUCCESS,
+    STALE_FALLBACK, NO_LKG.
     """
 
     TTL_ALL_MIDS:      float = 1.0   # seconds
@@ -107,8 +120,11 @@ class MarketDataCache:
     TTL_CLEARINGHOUSE: float = 3.0   # seconds — display-only portfolio fan-out
 
     def __init__(self) -> None:
-        # {cache_key: (value, expires_at_monotonic)}
+        # {cache_key: (value, expires_at_monotonic)} — short-TTL freshness store
         self._store: dict[str, tuple[object, float]] = {}
+        # {cache_key: value} — last-known-good; no expiry, overwritten only by a
+        # successful (non-empty) fetch.  Serves stale data during transient HL errors.
+        self._stale: dict[str, object] = {}
         # Per-key asyncio.Lock — created lazily on first miss.
         # Dict access is safe without a guard lock: the asyncio event loop is
         # single-threaded, so no other coroutine can interleave between the
@@ -131,8 +147,18 @@ class MarketDataCache:
         return False, None
 
     def _set(self, key: str, value: object, ttl: float) -> None:
-        """Write to the cache.  Must only be called by the lock-holding coroutine."""
+        """Write to the TTL store.  Must only be called by the lock-holding coroutine."""
         self._store[key] = (value, _time_module.monotonic() + ttl)
+
+    def _get_stale(self, key: str) -> tuple[bool, object]:
+        """Return (True, last-known-good) if any prior successful fetch exists."""
+        if key in self._stale:
+            return True, self._stale[key]
+        return False, None
+
+    def _set_stale(self, key: str, value: object) -> None:
+        """Record a successfully-fetched value as the new last-known-good."""
+        self._stale[key] = value
 
     def _lock_for(self, key: str) -> asyncio.Lock:
         """Return the per-key lock, creating it lazily if necessary.
@@ -156,14 +182,23 @@ class MarketDataCache:
     ) -> object:
         """Return a fresh cached value, or call fetch_fn() and cache the result.
 
-        Cache hit  → plain dict lookup, returns instantly, zero coroutine switches.
-        Cache miss → per-key lock, single HTTP call, result shared with waiters.
+        Logged cases (visible in Railway deploy logs):
+          HIT           — within TTL; returned from _store instantly.
+          LIVE_SUCCESS  — TTL expired, fetch returned a valid non-empty result;
+                          both _store (with TTL) and _stale (no expiry) updated.
+          STALE_FALLBACK — fetch returned empty/null (e.g. HL 429 null body);
+                          serving last-known-good from _stale so display stays live.
+          NO_LKG        — fetch failed and no prior success exists for this key;
+                          returning fetch_fn's type-appropriate empty fallback.
+
+        Cache hit   → plain dict lookup, returns instantly, zero coroutine switches.
+        Cache miss  → per-key lock, single HTTP call, result shared with waiters.
         Lock timeout → direct uncached HTTP call, no indefinite blocking.
         """
         # ── Hot path: cache hit — no lock, no suspension ──────────────────────
         hit, cached = self._get(key)
         if hit:
-            logger.debug("[cache] HIT  %s", key)
+            logger.debug("[cache] HIT %s", key)
             return cached
 
         # ── Cold path: cache miss — acquire per-key lock ──────────────────────
@@ -190,8 +225,28 @@ class MarketDataCache:
             # We hold the lock and the cache is still cold.  Make the real call.
             logger.debug("[cache] MISS %s — fetching from Hyperliquid", key)
             result = await fetch_fn()
-            self._set(key, result, ttl)
-            return result
+
+            if result:
+                # Valid non-empty response — refresh TTL store and last-known-good.
+                self._set(key, result, ttl)
+                self._set_stale(key, result)
+                logger.debug("[cache] LIVE_SUCCESS %s", key)
+                return result
+
+            # fetch_fn returned empty / None — transient HL error (e.g. 429 null body).
+            has_stale, stale_val = self._get_stale(key)
+            if has_stale:
+                logger.warning(
+                    "[cache] STALE_FALLBACK %s — HL returned empty/null, serving last known good",
+                    key,
+                )
+                return stale_val
+
+            logger.warning(
+                "[cache] NO_LKG %s — no prior successful fetch; returning empty fallback",
+                key,
+            )
+            return result  # fetch_fn already returns a type-appropriate empty value
         finally:
             lock.release()
 
@@ -266,7 +321,7 @@ class HyperliquidService:
                 return {"bids": bids, "asks": asks}
             except Exception as e:
                 logger.error(f"[get_orderbook] {symbol} failed: {e}")
-                return {"bids": [], "asks": []}
+                return {}  # empty dict so bool() == False → stale-while-error triggers
 
         return await _market_cache.get_or_fetch(
             cache_key, _market_cache.TTL_ORDERBOOK, _fetch
@@ -322,24 +377,25 @@ class HyperliquidService:
     async def get_clearinghouse_state_display(self, wallet_address: str, dex: str = "") -> dict:
         """Cached wrapper around get_clearinghouse_state for display-only use.
 
-        TTL = MarketDataCache.TTL_CLEARINGHOUSE (3 s).  Only called from
-        get_complete_portfolio() — never from bot execution paths — so short
-        staleness is acceptable and absorbs duplicate polls from concurrent users.
-        Cache key is (wallet_address, dex) so different wallets/DEXes are isolated.
+        Implements stale-while-error via MarketDataCache.get_or_fetch():
+          - Fresh TTL hit (3 s):    returns cached value instantly           (HIT).
+          - TTL expired, HL OK:     fetches live, updates cache + LKG       (LIVE_SUCCESS).
+          - TTL expired, HL 429:    serves last-known-good from prior fetch  (STALE_FALLBACK).
+          - First-ever call fails:  no LKG yet; returns {}                  (NO_LKG).
 
-        IMPORTANT: uses a manual cache check rather than get_or_fetch() so that
-        error/null responses (None, {}) are never stored.  HL returns JSON null on
-        429s — response.json() returns None without raising, which would poison the
-        cache for the full TTL window if stored via get_or_fetch().
+        Cache key is per (wallet_address, dex) so wallets/DEXes are fully isolated.
+
+        NEVER called by bot execution paths — get_clearinghouse_state() is called
+        directly by bots to guarantee live, uncached data on every trade decision.
         """
         cache_key = f"clearinghouse:{wallet_address}:{dex}"
-        hit, cached = _market_cache._get(cache_key)
-        if hit:
-            return cached
-        result = await self.get_clearinghouse_state(wallet_address, dex)
-        # Only cache a genuine populated response — never cache None or {}
-        if isinstance(result, dict) and result:
-            _market_cache._set(cache_key, result, _market_cache.TTL_CLEARINGHOUSE)
+        result = await _market_cache.get_or_fetch(
+            cache_key,
+            _market_cache.TTL_CLEARINGHOUSE,
+            lambda: self.get_clearinghouse_state(wallet_address, dex),
+        )
+        # get_or_fetch returns fetch_fn's raw result on NO_LKG, which may be None
+        # if HL sent a JSON null body.  Normalise so callers always receive a dict.
         return result if isinstance(result, dict) else {}
 
     async def get_spot_state(self, wallet_address: str) -> dict:
