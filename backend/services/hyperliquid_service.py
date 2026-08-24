@@ -101,9 +101,10 @@ class MarketDataCache:
     network call would take.
     """
 
-    TTL_ALL_MIDS:  float = 1.0   # seconds
-    TTL_ORDERBOOK: float = 1.0   # seconds
-    TTL_CANDLES:   float = 15.0  # seconds
+    TTL_ALL_MIDS:      float = 1.0   # seconds
+    TTL_ORDERBOOK:     float = 1.0   # seconds
+    TTL_CANDLES:       float = 15.0  # seconds
+    TTL_CLEARINGHOUSE: float = 3.0   # seconds — display-only portfolio fan-out
 
     def __init__(self) -> None:
         # {cache_key: (value, expires_at_monotonic)}
@@ -297,7 +298,12 @@ class HyperliquidService:
             return [""]
 
     async def get_clearinghouse_state(self, wallet_address: str, dex: str = "") -> dict:
-        """Return clearinghouse state for a specific DEX ('' = main)."""
+        """Return clearinghouse state for a specific DEX ('' = main).
+
+        NOTE: this method is intentionally uncached — bots call it directly for
+        real-time position/risk checks during trade execution.  Do NOT add caching
+        here.  For display-only fan-out use get_clearinghouse_state_display().
+        """
         try:
             payload: dict = {"type": "clearinghouseState", "user": wallet_address}
             if dex:
@@ -312,6 +318,21 @@ class HyperliquidService:
         except Exception as e:
             logger.error(f"[get_clearinghouse_state] {wallet_address} dex={dex!r} failed: {e}")
             return {}
+
+    async def get_clearinghouse_state_display(self, wallet_address: str, dex: str = "") -> dict:
+        """Cached wrapper around get_clearinghouse_state for display-only use.
+
+        TTL = MarketDataCache.TTL_CLEARINGHOUSE (3 s).  Only called from
+        get_complete_portfolio() — never from bot execution paths — so short
+        staleness is acceptable and absorbs duplicate polls from concurrent users.
+        Cache key is (wallet_address, dex) so different wallets/DEXes are isolated.
+        """
+        cache_key = f"clearinghouse:{wallet_address}:{dex}"
+        return await _market_cache.get_or_fetch(
+            cache_key,
+            _market_cache.TTL_CLEARINGHOUSE,
+            lambda: self.get_clearinghouse_state(wallet_address, dex),
+        )
 
     async def get_spot_state(self, wallet_address: str) -> dict:
         """Return spot balances for *wallet_address*."""
@@ -423,7 +444,9 @@ class HyperliquidService:
         # Step 2: fan-out — all DEX states + spot + fills + per-DEX orders in parallel.
         # frontendOpenOrders is DEX-scoped: HIP-3 TP/SL orders only appear when the
         # matching dex param is sent.  We call it once per DEX and merge the results.
-        tasks = [self.get_clearinghouse_state(wallet_address, dex) for dex in dex_names]
+        # Use the display-only cached variant (TTL 3 s) — absorbs duplicate polls
+        # from concurrent users without touching bot execution paths.
+        tasks = [self.get_clearinghouse_state_display(wallet_address, dex) for dex in dex_names]
         tasks.append(self.get_spot_state(wallet_address))
         tasks.append(self.get_user_fills(wallet_address))
         for dex in dex_names:
