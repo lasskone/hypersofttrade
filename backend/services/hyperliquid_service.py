@@ -120,6 +120,9 @@ class MarketDataCache:
     TTL_CLEARINGHOUSE: float = 3.0   # seconds — display-only portfolio fan-out
     TTL_SPOT_STATE:    float = 3.0   # seconds — display-only spot balances
     TTL_PERP_DEXES:    float = 60.0  # seconds — DEX list changes at most a few times/month
+    TTL_OPEN_ORDERS:   float = 3.0   # seconds — display-only open orders fan-out (11 DEXes × poll rate)
+    TTL_USER_FILLS:    float = 10.0  # seconds — display-only fills; updates at most once per trade close
+    TTL_PERP_METAS:    float = 60.0  # seconds — szDecimals/metadata; virtually static between listings
 
     def __init__(self) -> None:
         # {cache_key: (value, expires_at_monotonic)} — short-TTL freshness store
@@ -468,7 +471,12 @@ class HyperliquidService:
         return result if isinstance(result, dict) else {}
 
     async def get_user_fills(self, wallet_address: str) -> list:
-        """Return full trade history for *wallet_address*."""
+        """Return full trade history for *wallet_address*.
+
+        NOTE: intentionally uncached — display-only callers use
+        get_user_fills_display().  Bots call this directly for trade attribution
+        after close (momentum_scalper/strategy.py:1402, momentum_fade/strategy.py:929).
+        """
         try:
             async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
                 response = await client.post(
@@ -481,11 +489,38 @@ class HyperliquidService:
             logger.error(f"[get_user_fills] {wallet_address} failed: {e}")
             return []
 
+    async def get_user_fills_display(self, wallet_address: str) -> list:
+        """Cached wrapper around get_user_fills for display-only use.
+
+        Implements stale-while-error via MarketDataCache.get_or_fetch():
+          - Fresh TTL hit (10 s):   returns cached fills instantly              (HIT).
+          - TTL expired, HL OK:     fetches live, updates cache + LKG           (LIVE_SUCCESS).
+          - TTL expired, HL 429:    serves last-known-good from prior fetch      (STALE_FALLBACK).
+          - First-ever call fails:  no LKG yet; returns []                      (NO_LKG).
+
+        Cache key is per wallet_address.  10 s TTL matches real fill cadence
+        (fills update at most once per trade close, not tick-by-tick).
+
+        NEVER called by bot execution paths.
+        """
+        cache_key = f"user_fills:{wallet_address}"
+        result = await _market_cache.get_or_fetch(
+            cache_key,
+            _market_cache.TTL_USER_FILLS,
+            lambda: self.get_user_fills(wallet_address),
+        )
+        return result if isinstance(result, list) else []
+
     async def get_open_orders(self, wallet_address: str, dex: str = "") -> list:
         """Return all open orders for *wallet_address* on *dex* ('' = main).
 
         frontendOpenOrders is DEX-scoped: HIP-3 TP/SL orders are only returned
         when the matching dex name is included in the request body.
+
+        NOTE: intentionally uncached — display-only callers use
+        get_open_orders_display().  Bots call this directly for execution decisions
+        (rsi_dca/strategy.py:473, momentum_scalper/strategy.py:608/744,
+        momentum_fade_scalper/strategy.py:360).
         """
         try:
             payload: dict = {"type": "frontendOpenOrders", "user": wallet_address}
@@ -501,6 +536,30 @@ class HyperliquidService:
         except Exception as e:
             logger.error(f"[get_open_orders] {wallet_address} dex={dex!r} failed: {e}")
             return []
+
+    async def get_open_orders_display(self, wallet_address: str, dex: str = "") -> list:
+        """Cached wrapper around get_open_orders for display-only use.
+
+        Implements stale-while-error via MarketDataCache.get_or_fetch():
+          - Fresh TTL hit (3 s):    returns cached orders instantly             (HIT).
+          - TTL expired, HL OK:     fetches live, updates cache + LKG           (LIVE_SUCCESS).
+          - TTL expired, HL 429:    serves last-known-good from prior fetch      (STALE_FALLBACK).
+          - First-ever call fails:  no LKG yet; returns []                      (NO_LKG).
+
+        Cache key is per (wallet_address, dex).  The 11-DEX fan-out in
+        get_complete_portfolio() multiplies call count by 11 — this cache cuts
+        ~396 HL frontendOpenOrders calls/min (2 users × 3 pollers × 11 DEXes)
+        down to ~66/min.
+
+        NEVER called by bot execution paths.
+        """
+        cache_key = f"open_orders:{wallet_address}:{dex}"
+        result = await _market_cache.get_or_fetch(
+            cache_key,
+            _market_cache.TTL_OPEN_ORDERS,
+            lambda: self.get_open_orders(wallet_address, dex),
+        )
+        return result if isinstance(result, list) else []
 
     async def _sync_position_opens(self, wallet_address: str, current_coins: set[str]) -> dict[str, str]:
         """
@@ -544,6 +603,48 @@ class HyperliquidService:
             print(f"[position_opens] sync error: {e}")
             return {}
 
+    async def get_all_perp_metas(self) -> list:
+        """Return raw allPerpMetas list (per-DEX universe metadata: szDecimals, maxLeverage, etc.).
+
+        NOTE: intentionally uncached — display-only callers use
+        get_all_perp_metas_display().  Returns [] (falsy) on error so the cache
+        correctly triggers STALE_FALLBACK.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
+                response = await client.post(
+                    INFO_ENDPOINT,
+                    json={"type": "allPerpMetas"},
+                    headers={"Content-Type": "application/json"},
+                )
+                result = response.json()
+                return result if isinstance(result, list) else []
+        except Exception as e:
+            logger.error(f"[get_all_perp_metas] failed: {e}")
+            return []
+
+    async def get_all_perp_metas_display(self) -> list:
+        """Cached wrapper around get_all_perp_metas for display-only use.
+
+        Implements stale-while-error via MarketDataCache.get_or_fetch():
+          - Fresh TTL hit (60 s):   returns cached metadata instantly           (HIT).
+          - TTL expired, HL OK:     fetches live, updates cache + LKG           (LIVE_SUCCESS).
+          - TTL expired, HL 429:    serves last-known-good from prior fetch      (STALE_FALLBACK).
+          - First-ever call fails:  no LKG yet; returns []                      (NO_LKG).
+
+        Used by get_complete_portfolio() for position enrichment (szDecimals lookup).
+        Metadata is virtually static between new coin listings — 60 s TTL is
+        imperceptible while eliminating ~36 redundant HL calls/min.
+
+        NEVER called by bot execution paths (bots use hyperliquid_meta._get_universe()).
+        """
+        result = await _market_cache.get_or_fetch(
+            "all_perp_metas",
+            _market_cache.TTL_PERP_METAS,
+            self.get_all_perp_metas,
+        )
+        return result if isinstance(result, list) else []
+
     # ------------------------------------------------------------------
     # Complete portfolio aggregation
     # ------------------------------------------------------------------
@@ -567,9 +668,9 @@ class HyperliquidService:
         # stale-while-error — transient HL 429s serve last-known-good instead of blank.
         tasks = [self.get_clearinghouse_state_display(wallet_address, dex) for dex in dex_names]
         tasks.append(self.get_spot_state_display(wallet_address))
-        tasks.append(self.get_user_fills(wallet_address))
+        tasks.append(self.get_user_fills_display(wallet_address))
         for dex in dex_names:
-            tasks.append(self.get_open_orders(wallet_address, dex))
+            tasks.append(self.get_open_orders_display(wallet_address, dex))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -583,19 +684,17 @@ class HyperliquidService:
                 open_orders.extend(_res)
         print(f"[portfolio] open_orders merged count={len(open_orders)} from {len(dex_names)} DEX(es)")
 
-        # Fetch mark prices and sz_decimals for position enrichment
-        try:
-            async with httpx.AsyncClient(timeout=_EXCHANGE_CALL_TIMEOUT_S) as client:
-                mids_r, metas_r = await asyncio.gather(
-                    client.post(INFO_ENDPOINT, json={"type": "allMids"}, headers={"Content-Type": "application/json"}),
-                    client.post(INFO_ENDPOINT, json={"type": "allPerpMetas"}, headers={"Content-Type": "application/json"}),
-                )
-            mids_json = mids_r.json()
-            metas_json = metas_r.json()
-            all_mids = mids_json if isinstance(mids_json, dict) else {}
-            perp_metas_raw = metas_json if isinstance(metas_json, list) else []
-        except Exception:
+        # Fetch mark prices and sz_decimals for position enrichment.
+        # Both go through the cache: allMids (TTL 1 s) and allPerpMetas (TTL 60 s).
+        # Running them concurrently still benefits from parallelism on cache misses.
+        all_mids, perp_metas_raw = await asyncio.gather(
+            self.get_all_mids(),
+            self.get_all_perp_metas_display(),
+            return_exceptions=True,
+        )
+        if isinstance(all_mids, Exception):
             all_mids = {}
+        if isinstance(perp_metas_raw, Exception):
             perp_metas_raw = []
 
         # Build coin→sz_decimals lookup from allPerpMetas (flat list of dicts)

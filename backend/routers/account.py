@@ -245,7 +245,7 @@ async def get_fills(wallet_address: str):
     logger.info(f"GET /account/fills wallet={wallet_address}")
     try:
         raw: list = await asyncio.wait_for(
-            hyperliquid_service.get_user_fills(wallet_address),
+            hyperliquid_service.get_user_fills_display(wallet_address),
             timeout=15.0,
         )
     except asyncio.TimeoutError:
