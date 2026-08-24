@@ -50,18 +50,25 @@ fixed at the initial fill and never changes across the trade's lifetime).
 WARNING: This design accepts unlimited drawdown risk up to full liquidation.
 The user has explicitly confirmed this behaviour.
 
-Sizing (ATR-risk-based) — IMPORTANT: read all comments before changing
+Sizing (fixed notional) — IMPORTANT: read all comments before changing
 ----------------------------------------------------------------------
-The formula used is:
+Every initial (L0) entry targets a fixed notional of $11 (see
+_L0_ENTRY_NOTIONAL_USD), regardless of ATR or equity:
 
-    risk_capital  = allocated_usdc × 0.02          # 2 % of allocated capital
-    stop_distance = atr_value × sl_atr_multiplier  # in price units (e.g. USD)
-    raw_size      = (risk_capital / stop_distance) × leverage
+    raw_size = (_L0_ENTRY_NOTIONAL_USD × leverage) / entry_price
 
-Safety cap (guards against vanishingly small ATR producing enormous size):
+$11 is chosen to be just above Hyperliquid's $10 minimum notional.
+ATR-risk-based sizing was removed because collapsing ATR on low-volatility
+setups produced margin-cap-dominated positions with no meaningful risk
+guarantee.
+
+Safety cap (defense-in-depth — should never fire at $11 base):
     margin_required = (raw_size × entry_price) / leverage
-    if margin_required > allocated_usdc:
-        raw_size = (allocated_usdc × leverage) / entry_price
+    if margin_required > equity × 0.90:
+        raw_size = (equity × 0.90 × leverage) / entry_price
+
+Martingale layers still scale from the confirmed L0 fill size:
+    layer_N_size = initial_entry_size × martingale_multiplier^(level-1)
 """
 from __future__ import annotations
 
@@ -71,7 +78,7 @@ import time
 from datetime import datetime, timezone
 from typing import Callable
 
-from bots.momentum_scalper.risk_manager import RiskManager
+from bots.momentum_scalper.risk_manager import RiskManager, _MARGIN_SAFETY_BUFFER
 from bots.momentum_scalper.scanner import (
     DEFAULT_SCANNER_CONFIG,
     MarketScore,
@@ -92,6 +99,16 @@ logger = logging.getLogger(__name__)
 
 # Hyperliquid exchange minimum notional per order (USD).
 _HL_MIN_NOTIONAL: float = 10.0
+
+# Fixed notional for every initial (L0) entry, in USD.
+# Set to $11 — just above Hyperliquid's $10 minimum notional — so that
+# position sizing is predictable and independent of ATR.  ATR-based sizing
+# collapses to near-zero stop distances on low-volatility setups, which
+# produces enormous (margin-cap-limited) positions with no meaningful
+# risk-per-trade guarantee.  A fixed $11 base gives consistent exposure
+# across all symbols and market conditions.
+# Martingale layers still scale from this base via φ^(level-1).
+_L0_ENTRY_NOTIONAL_USD: float = 11.0
 
 # After placing a market IOC, wait this long before querying clearinghouse.
 _FILL_WAIT_S: float = 2.0
@@ -342,21 +359,64 @@ class MomentumScalperBot:
         atr_value: float,
         sz_decimals: int,
     ) -> float:
-        """Return the base-asset size for this trade.
+        """Return the base-asset size for the initial (L0) entry.
 
-        Delegates entirely to RiskManager.compute_position_size(), which
-        applies equity-based sizing with drawdown-tier scaling, a margin safety
-        cap, and a profitability filter (expected TP profit vs estimated fees).
-        Returns 0.0 when the setup cannot be made profitable — caller should
-        treat 0.0 as "do not enter".
+        Sizing is fixed-notional: every entry targets _L0_ENTRY_NOTIONAL_USD
+        ($11) of margin at the effective leverage, regardless of ATR or
+        equity.  This replaces the previous ATR-risk formula, which collapsed
+        to near-zero stop distances on quiet setups and produced enormous,
+        margin-cap-dominated positions.
+
+        Note: risk_per_trade is still wired through to RiskManager (and still
+        used by momentum_fade_scalper's compute_position_size), but no longer
+        influences momentum_scalper initial sizing.
+
+        Two gates are preserved from the old path:
+          1. Margin safety cap (90% of equity) — defense-in-depth; at $11
+             base this should never fire but remains for safety.
+          2. Profitability filter — skips the trade if TP profit/unit is less
+             than min_profit_to_fee_ratio × estimated fee/unit.  Size-
+             independent, so it applies equally at $11 as at any other size.
+
+        Returns 0.0 when the profitability filter rejects the setup — caller
+        should treat 0.0 as "do not enter".
         """
-        stop_distance = atr_value * self._sl_atr_multiplier
-        raw_size = self._risk_manager.compute_position_size(
-            entry_price       = entry_price,
-            stop_distance     = stop_distance,
-            leverage          = self._leverage,
-            tp_atr_multiplier = self._tp_atr_multiplier,
-            atr_value         = atr_value,
+        if entry_price <= 0:
+            return 0.0
+
+        eff_leverage = min(self._leverage, self._risk_manager._max_leverage)
+        raw_size     = (_L0_ENTRY_NOTIONAL_USD * eff_leverage) / entry_price
+
+        # Margin safety cap (defense-in-depth — should not fire at $11 base).
+        max_margin      = self._risk_manager.equity * _MARGIN_SAFETY_BUFFER
+        margin_required = (raw_size * entry_price) / eff_leverage
+        if margin_required > max_margin:
+            raw_size = (max_margin * eff_leverage) / entry_price
+            logger.warning(
+                "[MomentumScalper] _compute_size: margin cap fired "
+                "(equity=%.2f max_margin=%.2f required=%.2f) — capped raw_size=%.6f",
+                self._risk_manager.equity, max_margin, margin_required, raw_size,
+            )
+
+        # Profitability filter: TP profit/unit vs estimated round-trip fee/unit.
+        # Both scale linearly with size — no position size can rescue a setup
+        # that fails here.  Returns 0.0 to skip the trade cleanly.
+        tp_profit_per_unit = self._tp_atr_multiplier * atr_value
+        fee_per_unit       = entry_price * (self._risk_manager._estimated_fee_pct / 100.0)
+        min_profit_needed  = self._risk_manager._min_profit_to_fee_ratio * fee_per_unit
+        if tp_profit_per_unit < min_profit_needed:
+            logger.info(
+                "[MomentumScalper] Trade skipped — TP profit/unit (%.5f) < %.1f× "
+                "estimated fee/unit (%.5f): tp_mult=%.2f atr=%.4f entry=%.4f",
+                tp_profit_per_unit, self._risk_manager._min_profit_to_fee_ratio,
+                min_profit_needed, self._tp_atr_multiplier, atr_value, entry_price,
+            )
+            return 0.0
+
+        logger.info(
+            "[MomentumScalper] _compute_size: fixed notional=%.2f USD "
+            "entry=%.4f leverage=%dx → raw_size=%.6f",
+            _L0_ENTRY_NOTIONAL_USD, entry_price, eff_leverage, raw_size,
         )
         return round_size(raw_size, sz_decimals)
 
