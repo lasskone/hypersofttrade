@@ -726,10 +726,12 @@ export function OverviewPanel({
   walletAddress,
   onNavigate,
   onSelectMarket,
+  onSelectBot,
 }: {
   walletAddress: string;
   onNavigate?: (section: string) => void;
   onSelectMarket?: (symbol: string, dex: string, interval?: string) => void;
+  onSelectBot?: (botId: string) => void;
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [data, setData] = useState<any>(null);
@@ -1034,6 +1036,7 @@ export function OverviewPanel({
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
                   <TH>Bot</TH><TH>Symbol</TH><TH>Allocated</TH><TH>Leverage</TH>
                   <TH>Buying Power <Tooltip text="Allocated capital × leverage — the maximum position size this bot's allocation can theoretically open." /></TH>
+                  <TH>Net PnL <Tooltip text="Realised profit/loss minus fees across all closed trades attributed to this bot." /></TH>
                   <TH>Status</TH>
                 </tr>
               </thead>
@@ -1056,9 +1059,16 @@ export function OverviewPanel({
                   const isStopping = b.status === 'running' && b.desired_status === 'stopped';
                   const statusColor = isStopping ? '#f59e0b' : isRunning ? '#00d4aa' : '#f59e0b';
                   const statusText  = isStopping ? 'Stopping...' : isRunning ? 'Running' : 'Starting...';
+                  const netPnl = parseFloat(String(b.net_pnl ?? 0));
+                  const netPnlColor = netPnl > 0 ? '#10b981' : netPnl < 0 ? '#ef4444' : '#6b7280';
+                  const netPnlStr = (netPnl >= 0 ? '+' : '') + '$' + Math.abs(netPnl).toLocaleString('en-US', {
+                    minimumFractionDigits: 2, maximumFractionDigits: 2,
+                  });
                   return (
-                    <tr key={b.id} className="border-b last:border-0 hover:bg-white/5 transition-colors"
-                      style={{ borderColor: '#1a1a2e' }}>
+                    <tr key={b.id}
+                      className="border-b last:border-0 hover:bg-white/5 transition-colors"
+                      style={{ borderColor: '#1a1a2e', cursor: onSelectBot ? 'pointer' : undefined }}
+                      onClick={onSelectBot ? () => onSelectBot(b.id) : undefined}>
                       <td className="px-5 py-3">
                         <p className="text-sm font-semibold text-white">{b.name}</p>
                         <p className="text-xs text-gray-500">{b.bot_type}</p>
@@ -1067,6 +1077,7 @@ export function OverviewPanel({
                       <TD>${fmt(allocated)}</TD>
                       <TD>{`${fmt(leverage, 0)}x`}</TD>
                       <TD color={leverage > 1 ? '#00d4aa' : undefined}>${fmt(buyingPower)}</TD>
+                      <TD color={netPnlColor}>{netPnlStr}</TD>
                       <td className="px-5 py-3">
                         <span className="text-xs px-2 py-0.5 rounded font-medium"
                           style={{ backgroundColor: `${statusColor}18`, color: statusColor }}>

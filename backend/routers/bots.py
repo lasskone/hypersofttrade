@@ -36,11 +36,57 @@ class BotActionRequest(BaseModel):
 async def list_bots(wallet_address: str):
     logger.info(f"GET /bots/ wallet={wallet_address}")
     db = _supabase()
-    user = db.table("users").select("id").ilike("wallet_address", wallet_address).limit(1).execute()
+    # Resolve canonical wallet_address alongside user_id — needed to call the
+    # shared fill cache (get_user_fills_display) for net_pnl computation.
+    user = db.table("users").select("id, wallet_address").ilike("wallet_address", wallet_address).limit(1).execute()
     if not user.data:
         return {"bots": []}
-    user_id = user.data[0]["id"]
+    user_id     = user.data[0]["id"]
+    user_wallet = user.data[0]["wallet_address"]
+
     bots = db.table("bots").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+    if not bots.data:
+        return {"bots": []}
+
+    bot_ids = [b["id"] for b in bots.data]
+
+    # ── Batch net_pnl computation ─────────────────────────────────────────────
+    # Fetch every position_orders oid for all bots in one DB query so we can
+    # attribute fills to bots without making per-bot Hyperliquid calls.
+    po_res = db.table("position_orders").select("bot_id, oid").in_("bot_id", bot_ids).execute()
+
+    # Build per-bot oid sets.
+    bot_oid_map: dict[str, set[int]] = {bid: set() for bid in bot_ids}
+    for row in (po_res.data or []):
+        bid = row.get("bot_id")
+        if bid in bot_oid_map:
+            bot_oid_map[bid].add(int(row["oid"]))
+
+    # Fetch user fills once — routed through the 10 s display cache
+    # (get_user_fills_display), so this costs zero extra HL weight on a warm
+    # cache and is shared with any concurrent /portfolio polls.  Identical
+    # attribution logic to /bots/{id}/details: filter by bot_oids, then
+    # net_pnl = sum(closedPnl) - sum(fee).
+    from services.hyperliquid_service import hyperliquid_service
+    net_pnl_map: dict[str, float] = {}
+    try:
+        all_fills = await hyperliquid_service.get_user_fills_display(user_wallet)
+        if isinstance(all_fills, list):
+            for bid in bot_ids:
+                oids = bot_oid_map.get(bid, set())
+                if not oids:
+                    net_pnl_map[bid] = 0.0
+                    continue
+                bot_fills  = [
+                    f for f in all_fills
+                    if isinstance(f, dict) and int(f.get("oid", -1)) in oids
+                ]
+                total_pnl  = sum(float(f.get("closedPnl", 0) or 0) for f in bot_fills)
+                total_fees = sum(float(f.get("fee",       0) or 0) for f in bot_fills)
+                net_pnl_map[bid] = round(total_pnl - total_fees, 4)
+    except Exception as exc:
+        logger.warning(f"[list_bots] net_pnl computation failed (fills unavailable): {exc}")
+
     result = []
     for b in bots.data:
         # Derive is_running from the DB status field (written by the Worker).
@@ -48,6 +94,7 @@ async def list_bots(wallet_address: str):
         # separate processes, so the API's in-memory _tasks dict is always empty
         # for bots managed by the Worker, making that check permanently wrong.
         b["is_running"] = b.get("status") == "running"
+        b["net_pnl"]    = net_pnl_map.get(b["id"], 0.0)
         result.append(b)
     return {"bots": result}
 
