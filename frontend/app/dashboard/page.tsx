@@ -33,6 +33,7 @@ function DashboardLayout({
   onNavigate: (s: string) => void;
 }) {
   const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [openPositions, setOpenPositions] = useState<any[]>([])
   const [openOrders, setOpenOrders] = useState<any[]>([])
   const [spotBalances, setSpotBalances] = useState<any[]>([])
@@ -116,9 +117,22 @@ function DashboardLayout({
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: '#0a0a0f' }}>
-      <Sidebar active={section} onNavigate={onNavigate} walletAddress={address} />
-      <div className="flex flex-col flex-1" style={{ marginLeft: 240 }}>
-        <TopBar section={section} />
+      {/* Mobile backdrop — closes sidebar when tapped */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <Sidebar
+        active={section}
+        onNavigate={onNavigate}
+        walletAddress={address}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
+      <div className="flex flex-col flex-1 lg:ml-[240px]">
+        <TopBar section={section} onMenuClick={() => setSidebarOpen(true)} />
         {isPortfolioStale && (
           <div style={{ padding: '4px 16px', background: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 500 }}>↻ Portfolio data reconnecting…</span>

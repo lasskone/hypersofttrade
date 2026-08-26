@@ -14,9 +14,10 @@ const PAGE_TITLES: Record<string, string> = {
 
 interface Props {
   section: string;
+  onMenuClick?: () => void;
 }
 
-export function TopBar({ section }: Props) {
+export function TopBar({ section, onMenuClick }: Props) {
   const [btcPrice, setBtcPrice] = useState<number | null>(null);
   const [online, setOnline] = useState(true);
 
@@ -46,7 +47,20 @@ export function TopBar({ section }: Props) {
       className="flex items-center justify-between px-6 py-4 border-b"
       style={{ borderColor: '#1a1a2e', backgroundColor: '#0d0d14' }}
     >
-      <h1 className="text-sm font-semibold text-white">{PAGE_TITLES[section] ?? section}</h1>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onMenuClick}
+          className="lg:hidden text-gray-400 hover:text-white transition-colors"
+          aria-label="Open menu"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <line x1="3" y1="5" x2="17" y2="5" />
+            <line x1="3" y1="10" x2="17" y2="10" />
+            <line x1="3" y1="15" x2="17" y2="15" />
+          </svg>
+        </button>
+        <h1 className="text-sm font-semibold text-white">{PAGE_TITLES[section] ?? section}</h1>
+      </div>
 
       <div className="flex items-center gap-3">
         <span className="font-mono text-sm text-gray-300">

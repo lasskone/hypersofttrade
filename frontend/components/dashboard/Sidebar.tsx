@@ -4,6 +4,8 @@ interface Props {
   active: string;
   onNavigate: (s: string) => void;
   walletAddress: string;
+  open?: boolean;
+  onClose?: () => void;
 }
 
 const NAV: { id: string; label: string; icon: string }[] = [
@@ -20,7 +22,7 @@ function truncate(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-export function Sidebar({ active, onNavigate, walletAddress }: Props) {
+export function Sidebar({ active, onNavigate, walletAddress, open = false, onClose }: Props) {
   const handleLogout = () => {
     localStorage.removeItem('hst_wallet_address');
     window.location.reload();
@@ -28,10 +30,10 @@ export function Sidebar({ active, onNavigate, walletAddress }: Props) {
 
   return (
     <aside
-      className="fixed top-0 left-0 h-full flex flex-col z-40"
+      className={`fixed top-0 left-0 h-full flex flex-col z-40 transition-transform duration-300 lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}
       style={{ width: 240, backgroundColor: '#0d0d14', borderRight: '1px solid #1a1a2e' }}
     >
-      {/* Logo */}
+      {/* Logo + mobile close button */}
       <div className="flex items-center gap-2 px-5 py-5 border-b" style={{ borderColor: '#1a1a2e' }}>
         <div
           className="w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs flex-shrink-0"
@@ -39,7 +41,14 @@ export function Sidebar({ active, onNavigate, walletAddress }: Props) {
         >
           H
         </div>
-        <span className="font-bold text-sm text-white tracking-tight">HyperSoftTrade</span>
+        <span className="font-bold text-sm text-white tracking-tight flex-1">HyperSoftTrade</span>
+        <button
+          onClick={onClose}
+          className="lg:hidden text-gray-400 hover:text-white transition-colors p-1 -mr-1"
+          aria-label="Close menu"
+        >
+          ✕
+        </button>
       </div>
 
       {/* Nav */}
@@ -49,7 +58,7 @@ export function Sidebar({ active, onNavigate, walletAddress }: Props) {
           return (
             <button
               key={id}
-              onClick={() => onNavigate(id)}
+              onClick={() => { onNavigate(id); onClose?.(); }}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left w-full"
               style={{
                 backgroundColor: isActive ? '#00d4aa12' : 'transparent',
