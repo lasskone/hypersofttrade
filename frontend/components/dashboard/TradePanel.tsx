@@ -624,13 +624,15 @@ export function TradePanel({
           .tp-resize-v { display: none !important; }
           .tp-resize-h { display: none !important; }
           .tp-bottom-panel { max-height: none !important; flex: none !important; }
+          .tp-topbar { flex-wrap: wrap !important; gap: 12px !important; padding: 8px 12px !important; }
+          .tp-topbar-divider { display: none !important; }
         }
       `}</style>
 
       <div className="tp-wrapper">
 
         {/* ── TOP BAR ──────────────────────────────────────────────────────── */}
-        <div style={{ background: '#0d0d14', borderBottom: '1px solid rgba(255,255,255,0.08)',
+        <div className="tp-topbar" style={{ background: '#0d0d14', borderBottom: '1px solid rgba(255,255,255,0.08)',
           padding: '10px 20px', display: 'flex', alignItems: 'center', gap: '28px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ color: 'white', fontWeight: '700', fontSize: '16px' }}>{selectedMarket?.name || '—'}</span>
@@ -641,7 +643,7 @@ export function TradePanel({
               </span>
             )}
           </div>
-          <div style={{ width: '1px', height: '28px', background: 'rgba(255,255,255,0.08)' }} />
+          <div className="tp-topbar-divider" style={{ width: '1px', height: '28px', background: 'rgba(255,255,255,0.08)' }} />
           <div>
             <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '1px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               Mark Price
