@@ -45,6 +45,14 @@ function fmtPnl(n: number) {
   return { text: fmtAmt(n), color: n > 0 ? '#10b981' : n < 0 ? '#ef4444' : '#9ca3af' };
 }
 
+/** Abbreviated PnL for narrow mobile calendar cells: "+1.3k", "-342", "+0" */
+function fmtPnlShort(n: number): string {
+  const abs = Math.abs(n);
+  const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+  if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(1)}k`;
+  return `${sign}${Math.round(abs)}`;
+}
+
 function fmtTime(epochMs: number): string {
   if (!epochMs) return '—';
   return new Date(epochMs).toLocaleString('en-US', {
@@ -157,6 +165,16 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
   const todayStr = localDay(today.getTime());
 
   return (
+    <>
+    <style>{`
+      .hp-pnl-short { display: none; }
+      @media (max-width: 767px) {
+        .hp-pnl-full { display: none !important; }
+        .hp-pnl-short { display: inline !important; }
+        .hp-monthly-cell { padding-left: 8px !important; padding-right: 8px !important; }
+        .hp-monthly-val { font-size: 14px !important; }
+      }
+    `}</style>
     <div
       className="rounded-xl border overflow-hidden"
       style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
@@ -217,7 +235,7 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
         style={{ borderColor: '#1a1a2e' }}
       >
         {/* Monthly PnL */}
-        <div className="px-5 py-4 border-r" style={{ borderColor: '#1a1a2e' }}>
+        <div className="hp-monthly-cell px-5 py-4 border-r" style={{ borderColor: '#1a1a2e' }}>
           <div
             style={{
               fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
@@ -227,6 +245,7 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
             Monthly PnL
           </div>
           <div
+            className="hp-monthly-val"
             style={{
               fontSize: 18, fontWeight: 700,
               color: monthlyTotals.total > 0 ? '#10b981' : monthlyTotals.total < 0 ? '#ef4444' : '#9ca3af',
@@ -369,25 +388,42 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
 
               {/* PnL — dominant, centered below day number */}
               {hasTrades && (
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: pnlColor,
-                    fontVariantNumeric: 'tabular-nums',
-                    letterSpacing: '-0.01em',
-                    lineHeight: 1,
-                    marginTop: 14,
-                  }}
-                >
-                  {fmtAmt(pnl ?? 0)}
-                </span>
+                <>
+                  <span
+                    className="hp-pnl-full"
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: pnlColor,
+                      fontVariantNumeric: 'tabular-nums',
+                      letterSpacing: '-0.01em',
+                      lineHeight: 1,
+                      marginTop: 14,
+                    }}
+                  >
+                    {fmtAmt(pnl ?? 0)}
+                  </span>
+                  <span
+                    className="hp-pnl-short"
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      color: pnlColor,
+                      fontVariantNumeric: 'tabular-nums',
+                      lineHeight: 1,
+                      marginTop: 14,
+                    }}
+                  >
+                    {fmtPnlShort(pnl ?? 0)}
+                  </span>
+                </>
               )}
             </button>
           );
         })}
       </div>
     </div>
+    </>
   );
 }
 
