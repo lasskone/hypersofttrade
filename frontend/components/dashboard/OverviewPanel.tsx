@@ -973,6 +973,12 @@ export function OverviewPanel({
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
         }
+        .ov-bot-table { display: block; }
+        .ov-bot-cards { display: none; }
+        @media (max-width: 767px) {
+          .ov-bot-table { display: none !important; }
+          .ov-bot-cards { display: flex !important; }
+        }
       `}</style>
 
       {/* Stat cards */}
@@ -1029,8 +1035,8 @@ export function OverviewPanel({
               </div>
             ))}
           </div>
-          {/* Per-bot table */}
-          <div className="overflow-x-auto">
+          {/* Per-bot table — desktop only */}
+          <div className="ov-bot-table overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b" style={{ borderColor: '#1a1a2e' }}>
@@ -1089,6 +1095,65 @@ export function OverviewPanel({
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Per-bot mobile cards — hidden on desktop via .ov-bot-cards */}
+          <div className="ov-bot-cards" style={{ flexDirection: 'column', gap: 8, padding: 12 }}>
+            {activeBots.map((b: any) => {
+              const allocated = parseFloat(String(b.allocated_usdc ?? 0));
+              const configLev: number | null = b.config?.leverage != null ? parseFloat(String(b.config.leverage)) : null;
+              const matchingPosLev = parseFloat(String(
+                openPositions.find((p: any) => p.symbol === b.symbol)?.leverage ?? 0
+              ));
+              const leverage = configLev != null ? Math.max(configLev, 1) : Math.max(matchingPosLev, 1);
+              const buyingPower = allocated * leverage;
+              const isRunning = b.status === 'running';
+              const isStopping = b.status === 'running' && b.desired_status === 'stopped';
+              const statusColor = isStopping ? '#f59e0b' : isRunning ? '#00d4aa' : '#f59e0b';
+              const statusText  = isStopping ? 'Stopping...' : isRunning ? 'Running' : 'Starting...';
+              const netPnl = parseFloat(String(b.net_pnl ?? 0));
+              const netPnlColor = netPnl > 0 ? '#10b981' : netPnl < 0 ? '#ef4444' : '#6b7280';
+              const netPnlStr = (netPnl >= 0 ? '+' : '') + '$' + Math.abs(netPnl).toLocaleString('en-US', {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+              });
+              return (
+                <div key={b.id}
+                  style={{
+                    background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 10,
+                    padding: '12px 14px', cursor: onSelectBot ? 'pointer' : undefined,
+                  }}
+                  onClick={onSelectBot ? () => onSelectBot(b.id) : undefined}>
+                  {/* Header: name + type on left, symbol + status on right */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: '#ffffff', lineHeight: 1.3 }}>{b.name}</p>
+                      <p style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{b.bot_type}</p>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#9ca3af' }}>{b.symbol ?? '—'}</span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                        backgroundColor: `${statusColor}18`, color: statusColor,
+                      }}>{statusText}</span>
+                    </div>
+                  </div>
+                  {/* 2-col data grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px' }}>
+                    {([
+                      { label: 'Allocated',    value: `$${fmt(allocated)}`,   color: undefined },
+                      { label: 'Leverage',     value: `${fmt(leverage, 0)}x`, color: leverage > 1 ? '#00d4aa' : undefined },
+                      { label: 'Buying Power', value: `$${fmt(buyingPower)}`, color: leverage > 1 ? '#00d4aa' : undefined },
+                      { label: 'Net PnL',      value: netPnlStr,              color: netPnlColor },
+                    ] as { label: string; value: string; color: string | undefined }[]).map(({ label, value, color }) => (
+                      <div key={label}>
+                        <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{label}</p>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: color ?? '#e5e7eb', fontVariantNumeric: 'tabular-nums' }}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}
