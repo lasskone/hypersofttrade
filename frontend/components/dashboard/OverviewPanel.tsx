@@ -978,13 +978,14 @@ export function OverviewPanel({
         @media (max-width: 767px) {
           .ov-bot-table { display: none !important; }
           .ov-bot-cards { display: flex !important; }
+          .ov-stat-card { padding: 12px !important; }
         }
       `}</style>
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         {stats.map(({ label, subtitle, value, color, live, tooltip }) => (
-          <div key={label} className="rounded-xl p-5 border transition-colors"
+          <div key={label} className="ov-stat-card rounded-xl p-5 border transition-colors"
             style={{ backgroundColor: '#0d0d14', borderColor: '#1a1a2e' }}
             onMouseEnter={e => (e.currentTarget.style.borderColor = '#00d4aa44')}
             onMouseLeave={e => (e.currentTarget.style.borderColor = '#1a1a2e')}>
