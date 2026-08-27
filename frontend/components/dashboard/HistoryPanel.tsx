@@ -168,11 +168,15 @@ function Calendar({ fills, selectedDay, onSelectDay }: CalendarProps) {
     <>
     <style>{`
       .hp-pnl-short { display: none; }
+      .hp-hist-table { display: block; }
+      .hp-hist-cards { display: none; }
       @media (max-width: 767px) {
         .hp-pnl-full { display: none !important; }
         .hp-pnl-short { display: inline !important; }
         .hp-monthly-cell { padding-left: 8px !important; padding-right: 8px !important; }
         .hp-monthly-val { font-size: 14px !important; }
+        .hp-hist-table { display: none !important; }
+        .hp-hist-cards { display: flex !important; }
       }
     `}</style>
     <div
@@ -523,7 +527,7 @@ function TradeTable({ fills, selectedDay, onClearDay, sources = {} }: TradeTable
         </div>
       ) : (
         <>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="hp-hist-table" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ backgroundColor: '#0a0a0f' }}>
@@ -609,6 +613,40 @@ function TradeTable({ fills, selectedDay, onClearDay, sources = {} }: TradeTable
                 })}
               </tbody>
             </table>
+          </div>
+
+          <div className="hp-hist-cards" style={{ flexDirection: 'column', gap: 8, padding: 12 }}>
+            {slice.map((f, idx) => {
+              const pnl = fmtPnl(f.closedPnl)
+              const dc  = dirColor(f)
+              const src = f.oid != null ? sources[String(f.oid)] : undefined
+              const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }
+              const val: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 }
+              return (
+                <div key={f.hash ?? `${f.time}-${idx}`} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 8, padding: '10px 12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{f.coin}</span>
+                      <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 600, backgroundColor: `${dc}18`, border: `1px solid ${dc}44`, color: dc }}>{dirLabel(f)}</span>
+                    </div>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>{fmtTime(f.time)}</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
+                    <div><p style={lbl}>Price</p><p style={val}>${fmt2(f.px)}</p></div>
+                    <div><p style={lbl}>Size</p><p style={val}>{f.sz}</p></div>
+                    <div><p style={lbl}>Closed PnL</p><p style={{ ...val, color: pnl.color, fontWeight: 700 }}>{pnl.text}</p></div>
+                    <div><p style={lbl}>Fee</p><p style={{ ...val, color: '#6b7280' }}>-${fmt2(f.fee)}</p></div>
+                    <div><p style={lbl}>Source</p>
+                      {src?.type === 'bot' ? (
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#8b5cf6', backgroundColor: '#8b5cf618', border: '1px solid #8b5cf644', borderRadius: 4, padding: '2px 7px' }}>{src.bot_name ?? 'Bot'}</span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: '#6b7280', backgroundColor: '#1a1a2e', borderRadius: 4, padding: '2px 7px' }}>Manual</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
           {/* Pagination — always visible when there are results */}

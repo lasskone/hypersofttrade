@@ -612,6 +612,15 @@ export function TradePanel({
           .tp-resize-h { display: none !important; }
         }
 
+        .tp-pos-table { display: block; }
+        .tp-pos-cards { display: none; }
+        .tp-ord-table { display: block; }
+        .tp-ord-cards { display: none; }
+        .tp-spot-table { display: block; }
+        .tp-spot-cards { display: none; }
+        .tp-trades-table { display: block; }
+        .tp-trades-cards { display: none; }
+
         /* Mobile: single column — chart first, then OB, then form, then panel */
         @media (max-width: 767px) {
           .tp-wrapper { height: auto !important; overflow-y: auto !important; }
@@ -626,6 +635,14 @@ export function TradePanel({
           .tp-bottom-panel { max-height: none !important; flex: none !important; }
           .tp-topbar { flex-wrap: wrap !important; gap: 12px !important; padding: 8px 12px !important; }
           .tp-topbar-divider { display: none !important; }
+          .tp-pos-table { display: none !important; }
+          .tp-pos-cards { display: flex !important; }
+          .tp-ord-table { display: none !important; }
+          .tp-ord-cards { display: flex !important; }
+          .tp-spot-table { display: none !important; }
+          .tp-spot-cards { display: flex !important; }
+          .tp-trades-table { display: none !important; }
+          .tp-trades-cards { display: flex !important; }
         }
       `}</style>
 
@@ -1072,7 +1089,8 @@ export function TradePanel({
                 openPositions.length === 0 ? (
                   <div style={{ padding: '10px 20px', fontSize: '12px', color: '#4b5563' }}>No open positions</div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <>
+                  <div className="tp-pos-table overflow-x-auto">
                     <table className="w-full">
                       <thead>
                         <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
@@ -1139,6 +1157,48 @@ export function TradePanel({
                       </tbody>
                     </table>
                   </div>
+                  <div className="tp-pos-cards" style={{ flexDirection: 'column', gap: 8, padding: 12 }}>
+                    {openPositions.map((pos: any, i: number) => {
+                      const upnl   = parseFloat(String(pos?.unrealized_pnl ?? 0));
+                      const posPos = upnl >= 0;
+                      const liqPx  = parseFloat(String(pos?.liquidation_price ?? 0));
+                      const roe    = parseFloat(String(pos?.roe_pct ?? 0));
+                      const tpPx   = pos?.tp_price ? parseFloat(String(pos.tp_price)) : null;
+                      const slPx   = pos?.sl_price ? parseFloat(String(pos.sl_price)) : null;
+                      const isLong = parseFloat(pos?.size) > 0;
+                      const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 };
+                      const val: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 };
+                      return (
+                        <div key={i} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 8, padding: '10px 12px', cursor: 'pointer' }}
+                          onClick={() => handlePositionRowClick(pos)}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{pos?.symbol ?? '—'}</span>
+                              <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 700, backgroundColor: isLong ? '#00d4aa18' : '#ef444418', color: isLong ? '#00d4aa' : '#ef4444' }}>{isLong ? 'Long' : 'Short'}</span>
+                              <span style={{ fontSize: 10, color: '#6b7280', background: '#1a1a2e', padding: '1px 5px', borderRadius: 4 }}>{pos?.dex ?? '—'}</span>
+                            </div>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: posPos ? '#10b981' : '#ef4444' }}>{fmtPnl(upnl)}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', marginBottom: 8 }}>
+                            <div><p style={lbl}>Entry</p><p style={val}>${fmtHLPrice(parseFloat(String(pos?.entry_price ?? 0)))}</p></div>
+                            <div><p style={lbl}>Mark</p><p style={val}>${fmtHLPrice(parseFloat(String(pos?.mark_price ?? 0)))}</p></div>
+                            <div><p style={lbl}>ROE</p><p style={{ ...val, color: roe >= 0 ? '#10b981' : '#ef4444' }}>{roe >= 0 ? '+' : ''}{fmt(roe, 2)}%</p></div>
+                            <div><p style={lbl}>Lev / Liq</p><p style={val}>{fmt(pos?.leverage, 0)}x{liqPx > 0 ? ` · $${fmtHLPrice(liqPx)}` : ''}</p></div>
+                            {(tpPx || slPx) && <div>
+                              <p style={lbl}>TP / SL</p>
+                              {tpPx && <p style={{ fontSize: 11, color: '#10b981', margin: 0 }}>TP ${fmtHLPrice(tpPx)}</p>}
+                              {slPx && <p style={{ fontSize: 11, color: '#ef4444', margin: 0 }}>SL ${fmtHLPrice(slPx)}</p>}
+                            </div>}
+                          </div>
+                          <button onClick={e => { e.stopPropagation(); setManagingPos(pos) }}
+                            style={{ fontSize: 11, background: '#00d4aa18', color: '#00d4aa', border: '1px solid #00d4aa44', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>
+                            Manage
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  </>
                 )
               )}
 
@@ -1186,7 +1246,7 @@ export function TradePanel({
                         )
                       )}
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="tp-ord-table overflow-x-auto">
                       <table className="w-full">
                         <thead>
                           <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
@@ -1277,6 +1337,51 @@ export function TradePanel({
                         </tbody>
                       </table>
                     </div>
+                    <div className="tp-ord-cards" style={{ flexDirection: 'column', gap: 8, padding: 12 }}>
+                      {openOrders.map((o: any, i: number) => {
+                        const buy = isBuySide(o?.side);
+                        const orderTypeStr = String(o?.order_type ?? '');
+                        const isTP = orderTypeStr.includes('Take Profit');
+                        const isSL = orderTypeStr.includes('Stop');
+                        const isReduceOnly = o?.is_trigger || isTP || isSL;
+                        const typeBadge = isTP ? { label: 'Take Profit', bg: '#f59e0b18', color: '#f59e0b' }
+                          : isSL ? { label: 'Stop Loss', bg: '#ef535018', color: '#ef5350' }
+                          : orderTypeStr.toLowerCase().includes('trigger') ? { label: 'Trigger', bg: '#37415118', color: '#6b7280' }
+                          : { label: 'Limit', bg: '#00d4aa18', color: '#00d4aa' };
+                        const sideLabel = isReduceOnly ? (buy ? 'Short' : 'Long') : (buy ? 'Buy' : 'Sell');
+                        const sideColor = isReduceOnly ? (buy ? '#ef4444' : '#10b981') : (buy ? '#10b981' : '#ef4444');
+                        const orderTime = o?.time ? new Date(o.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—';
+                        const orderDate = o?.time ? new Date(o.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                        const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 };
+                        const val: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 };
+                        return (
+                          <div key={i} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 8, padding: '10px 12px' }}
+                            onClick={() => handleOrderRowClick(o)}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{o?.coin ?? '—'}</span>
+                                <span style={{ fontSize: 11, fontWeight: 600, color: sideColor }}>{sideLabel}</span>
+                                <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, fontWeight: 600, backgroundColor: typeBadge.bg, color: typeBadge.color }}>{typeBadge.label}</span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', marginBottom: 8 }}>
+                              <div><p style={lbl}>Price</p><p style={val}>${fmtHLPrice(parseFloat(String(o?.price ?? 0)))}</p></div>
+                              <div><p style={lbl}>Size</p><p style={val}>{fmt(o?.size, 4)}</p></div>
+                              <div><p style={lbl}>Time</p><p style={{ ...val, fontSize: 11 }}>{orderTime} {orderDate}</p></div>
+                            </div>
+                            {confirmingOrderIdx === i ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+                                <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>Cancel order?</span>
+                                <button onClick={async () => { setConfirmingOrderIdx(null); await handleCancelOrder(o?.coin, o?.order_id); onRefresh?.() }} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 700, cursor: 'pointer', border: 'none', background: '#ef4444', color: 'white' }}>Yes</button>
+                                <button onClick={() => setConfirmingOrderIdx(null)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 700, cursor: 'pointer', border: '1px solid #1a1a2e', background: '#13131f', color: '#6b7280' }}>No</button>
+                              </div>
+                            ) : (
+                              <button onClick={e => { e.stopPropagation(); setConfirmingOrderIdx(i); setConfirmingBulk(false) }} style={{ fontSize: 11, background: '#ef444418', color: '#ef4444', border: '1px solid #ef444444', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>Cancel</button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </>
                 )
               )}
@@ -1286,7 +1391,8 @@ export function TradePanel({
                 spotBalances.length === 0 ? (
                   <div style={{ padding: '10px 20px', fontSize: '12px', color: '#4b5563' }}>No spot balances</div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <>
+                  <div className="tp-spot-table overflow-x-auto">
                     <table className="w-full">
                       <thead>
                         <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
@@ -1304,6 +1410,24 @@ export function TradePanel({
                       </tbody>
                     </table>
                   </div>
+                  <div className="tp-spot-cards" style={{ flexDirection: 'column', gap: 6, padding: 12 }}>
+                    {spotBalances.map((b: any, i: number) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 8, padding: '8px 12px' }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{b?.coin ?? '—'}</span>
+                        <div style={{ display: 'flex', gap: 16 }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <p style={{ fontSize: 10, color: '#6b7280', margin: 0 }}>Total</p>
+                            <p style={{ fontSize: 13, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 }}>{fmt(b?.total, 6)}</p>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <p style={{ fontSize: 10, color: '#6b7280', margin: 0 }}>Hold</p>
+                            <p style={{ fontSize: 13, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 }}>{parseFloat(String(b?.hold ?? 0)) > 0 ? fmt(b?.hold, 6) : '—'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  </>
                 )
               )}
 
@@ -1315,7 +1439,7 @@ export function TradePanel({
                   <div style={{ padding: '10px 20px', fontSize: '12px', color: '#4b5563' }}>No recent trades</div>
                 ) : (
                   <>
-                    <div className="overflow-x-auto">
+                    <div className="tp-trades-table overflow-x-auto">
                       <table className="w-full">
                         <thead>
                           <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
@@ -1341,6 +1465,31 @@ export function TradePanel({
                           })}
                         </tbody>
                       </table>
+                    </div>
+                    <div className="tp-trades-cards" style={{ flexDirection: 'column', gap: 8, padding: 12 }}>
+                      {pagedTrades.map((f: any, i: number) => {
+                        const buy  = isBuySide(f?.side);
+                        const cpnl = parseFloat(String(f?.closed_pnl ?? 0));
+                        const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 };
+                        const val: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 };
+                        return (
+                          <div key={i} style={{ background: '#0d0d14', border: '1px solid #1a1a2e', borderRadius: 8, padding: '10px 12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{f?.coin ?? '—'}</span>
+                                <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 700, backgroundColor: buy ? '#10b98118' : '#ef444418', color: buy ? '#10b981' : '#ef4444' }}>{buy ? 'Buy' : 'Sell'}</span>
+                              </div>
+                              <span style={{ fontSize: 11, color: '#6b7280' }}>{fmtTime(f?.time)}</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
+                              <div><p style={lbl}>Price</p><p style={val}>${fmt(f?.price)}</p></div>
+                              <div><p style={lbl}>Size</p><p style={val}>{fmt(f?.size, 4)}</p></div>
+                              <div><p style={lbl}>Closed PnL</p><p style={{ ...val, color: cpnl > 0 ? '#10b981' : cpnl < 0 ? '#ef4444' : '#6b7280', fontWeight: 700 }}>{cpnl === 0 ? '—' : fmtPnl(cpnl)}</p></div>
+                              <div><p style={lbl}>Fee</p><p style={{ ...val, color: '#6b7280' }}>${fmt(f?.fee)}</p></div>
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                     {recentTrades.length > 10 && (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>

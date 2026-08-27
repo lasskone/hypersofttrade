@@ -148,7 +148,17 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
   const typeColor = BOT_TYPE_COLORS[bot?.bot_type] ?? '#00d4aa'
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+    <>
+    <style>{`
+      .bdp-fills-table { display: block; }
+      .bdp-fills-cards { display: none; }
+      @media (max-width: 767px) {
+        .bdp-outer { padding: 16px !important; }
+        .bdp-fills-table { display: none !important; }
+        .bdp-fills-cards { display: flex !important; }
+      }
+    `}</style>
+    <div className="bdp-outer" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
 
       {/* ── Back button ─────────────────────────────────────────────────── */}
       <button
@@ -414,7 +424,8 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                   No fills found for this bot since it was created
                 </div>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
+                <>
+                <div className="bdp-fills-table" style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -472,6 +483,37 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                     </tbody>
                   </table>
                 </div>
+                <div className="bdp-fills-cards" style={{ flexDirection: 'column', gap: 8, padding: 12 }}>
+                  {fills.map((f: any, i: number) => {
+                    const isBuy = f.side === 'B'
+                    const pnl   = parseFloat(f.closedPnl ?? '0')
+                    const fee   = parseFloat(f.fee       ?? '0')
+                    const net   = pnl - fee
+                    const lbl: React.CSSProperties = { fontSize: 10, color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }
+                    const val: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: '#e5e7eb', fontVariantNumeric: 'tabular-nums', margin: 0 }
+                    return (
+                      <div key={i} style={{ background: '#13131f', border: '1px solid #1a1a2e', borderRadius: 8, padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: '#e5e7eb' }}>{(f.coin ?? '').split(':').pop()}</span>
+                            <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 700, backgroundColor: isBuy ? '#10b98118' : '#ef444418', color: isBuy ? '#10b981' : '#ef4444' }}>
+                              {isBuy ? 'Buy' : 'Sell'}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>{fmtDate(f.time)}</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
+                          <div><p style={lbl}>Price</p><p style={val}>${parseFloat(f.px ?? '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</p></div>
+                          <div><p style={lbl}>Size</p><p style={val}>{parseFloat(f.sz ?? '0').toFixed(6)}</p></div>
+                          <div><p style={lbl}>Closed PnL</p><p style={{ ...val, color: pnlColor(pnl) }}>{fmtPnl(pnl)}</p></div>
+                          <div><p style={lbl}>Fee</p><p style={{ ...val, color: '#f59e0b' }}>{fee.toFixed(4)}</p></div>
+                          <div><p style={lbl}>Net</p><p style={{ ...val, color: pnlColor(net) }}>{fmtPnl(net)}</p></div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                </>
               )
             )}
 
@@ -517,5 +559,6 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
         </>
       )}
     </div>
+    </>
   )
 }
