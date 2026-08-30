@@ -43,6 +43,7 @@ except ImportError:
 
 from supabase import create_client
 from services.bot_manager import BotManager
+from services.db_utils import _run_db_call
 
 POLL_INTERVAL = 5  # seconds between reconciliation passes
 
@@ -77,8 +78,8 @@ async def cold_start_restore() -> None:
     db = _supabase()
 
     # ── Pass 1: restore desired-running bots ───────────────────────────────────
-    result = (
-        db.table("bots")
+    result = await _run_db_call(
+        lambda: db.table("bots")
         .select("*, users(wallet_address)")
         .eq("desired_status", "running")
         .execute()
@@ -102,12 +103,13 @@ async def cold_start_restore() -> None:
                 print(f"[worker] Cold start: SKIP {bot_id} ({bot_name}) — {reason}", flush=True)
                 failed.append((bot_id, reason))
                 try:
-                    db.table("bots").update({
+                    _bid, _reason = bot_id, reason
+                    await _run_db_call(lambda: db.table("bots").update({
                         "status": "error",
                         "desired_status": "stopped",
-                        "error_message": reason,
+                        "error_message": _reason,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", bot_id).execute()
+                    }).eq("id", _bid).execute())
                     bot_manager._add_log(bot_id, "error",
                         f"[cold-start] Bot could not be restored on worker boot: {reason}")
                 except Exception as db_err:
@@ -129,12 +131,13 @@ async def cold_start_restore() -> None:
                 print(f"[worker] Cold start: FAILED to launch {bot_id} ({bot_name}): {reason}", flush=True)
                 failed.append((bot_id, reason))
                 try:
-                    db.table("bots").update({
+                    _bid, _reason = bot_id, reason
+                    await _run_db_call(lambda: db.table("bots").update({
                         "status": "error",
                         "desired_status": "stopped",
-                        "error_message": reason,
+                        "error_message": _reason,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", bot_id).execute()
+                    }).eq("id", _bid).execute())
                     bot_manager._add_log(bot_id, "error",
                         f"[cold-start] Bot failed to restore on worker boot: {reason}")
                 except Exception as db_err:
@@ -161,8 +164,8 @@ async def cold_start_restore() -> None:
     # Pass 1) have a stale status left over from a previous Worker process.
     # Correct them to 'stopped' now so the UI does not get stuck on "Stopping…".
     try:
-        stale_result = (
-            db.table("bots")
+        stale_result = await _run_db_call(
+            lambda: db.table("bots")
             .select("id, name, status, desired_status")
             .eq("status", "running")
             .execute()
@@ -186,10 +189,11 @@ async def cold_start_restore() -> None:
                     flush=True,
                 )
                 try:
-                    db.table("bots").update({
+                    _bid = bot_id
+                    await _run_db_call(lambda: db.table("bots").update({
                         "status": "stopped",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", bot_id).execute()
+                    }).eq("id", _bid).execute())
                 except Exception as db_err:
                     print(f"[worker] Cold start: failed to correct stale status for {bot_id}: {db_err}", flush=True)
         else:
@@ -209,7 +213,7 @@ async def _check_trailing_stops() -> None:
     db = _supabase()
     now = datetime.now(timezone.utc).isoformat()
 
-    res = db.table("trailing_stops").select("*").in_("status", ["waiting", "active"]).execute()
+    res = await _run_db_call(lambda: db.table("trailing_stops").select("*").in_("status", ["waiting", "active"]).execute())
     records = res.data or []
     if not records:
         return
@@ -266,10 +270,11 @@ async def _check_trailing_stops() -> None:
         # Decrypt private key (cached per wallet)
         if wallet not in key_cache:
             try:
-                ur = (
-                    db.table("users")
+                _wallet = wallet
+                ur = await _run_db_call(
+                    lambda: db.table("users")
                     .select("hyperliquid_api_key_encrypted")
-                    .ilike("wallet_address", wallet)
+                    .ilike("wallet_address", _wallet)
                     .limit(1)
                     .execute()
                 )
@@ -309,10 +314,11 @@ async def _check_trailing_stops() -> None:
                 positions = await _get_positions(wallet, dex)
                 sz = positions.get(coin) or positions.get(coin.split(":")[-1] if ":" in coin else coin)
                 if not sz:
-                    db.table("trailing_stops").update({
+                    _ts_id, _now = ts_id, now
+                    await _run_db_call(lambda: db.table("trailing_stops").update({
                         "status": "cancelled",
-                        "updated_at": now,
-                    }).eq("id", ts_id).execute()
+                        "updated_at": _now,
+                    }).eq("id", _ts_id).execute())
                     print(f"[trailing_stops] ts_id={ts_id} WAITING row cancelled — no open position found for {coin}", flush=True)
                     continue
 
@@ -344,13 +350,14 @@ async def _check_trailing_stops() -> None:
                 if oid is None:
                     print(f"[trailing_stops] ts_id={ts_id} WARNING: could not extract sl_oid from place_tp_sl response — this trailing stop will not auto-update its SL. Raw response: {sl_result}", flush=True)
 
-                db.table("trailing_stops").update({
+                _ts_id, _cur_price, _oid, _be_sl, _now = ts_id, cur_price, oid, be_sl, now
+                await _run_db_call(lambda: db.table("trailing_stops").update({
                     "status":          "active",
-                    "peak_price":      cur_price,
-                    "sl_oid":          oid,
-                    "current_sl_price": be_sl,
-                    "updated_at":      now,
-                }).eq("id", ts_id).execute()
+                    "peak_price":      _cur_price,
+                    "sl_oid":          _oid,
+                    "current_sl_price": _be_sl,
+                    "updated_at":      _now,
+                }).eq("id", _ts_id).execute())
                 print(f"[trailing_stops] ts_id={ts_id} ACTIVATED — SL@{be_sl:.4f} oid={oid}", flush=True)
 
             elif status == "active":
@@ -403,7 +410,8 @@ async def _check_trailing_stops() -> None:
                         print(f"[trailing_stops] ts_id={ts_id} position closed → marking triggered", flush=True)
 
                 if updates:
-                    db.table("trailing_stops").update(updates).eq("id", ts_id).execute()
+                    _ts_id, _updates = ts_id, updates
+                    await _run_db_call(lambda: db.table("trailing_stops").update(_updates).eq("id", _ts_id).execute())
 
         except Exception as e:
             print(f"[trailing_stops] unexpected error ts_id={ts_id}: {e}", flush=True)
@@ -436,7 +444,7 @@ async def _run_technical_scanner_cycle() -> None:
 
     # ── Fetch active watchlist ────────────────────────────────────────────────
     try:
-        wl_result = db.table("scanner_watchlist").select("*").eq("active", True).execute()
+        wl_result = await _run_db_call(lambda: db.table("scanner_watchlist").select("*").eq("active", True).execute())
         watchlist = wl_result.data or []
     except Exception as e:
         print(f"[scanner] watchlist fetch failed: {e}", flush=True)
@@ -451,8 +459,8 @@ async def _run_technical_scanner_cycle() -> None:
     # cycle and to suppress re-alerting on a signal that fired recently.
     cutoff = (now - timedelta(hours=4)).isoformat()
     try:
-        seen_result = (
-            db.table("technical_signals")
+        seen_result = await _run_db_call(
+            lambda: db.table("technical_signals")
             .select("wallet_address,coin,timeframe,signal_type")
             .gte("detected_at", cutoff)
             .execute()
@@ -484,7 +492,7 @@ async def _run_technical_scanner_cycle() -> None:
                 continue
             try:
                 bar_ts = datetime.fromtimestamp(sig["bar_time"], tz=timezone.utc).isoformat()
-                db.table("technical_signals").insert({
+                _row = {
                     "wallet_address": wallet,
                     "coin":           coin,
                     "timeframe":      sig["timeframe"],
@@ -492,7 +500,8 @@ async def _run_technical_scanner_cycle() -> None:
                     "price":          sig["price"],
                     "detected_at":    now.isoformat(),
                     "bar_time":       bar_ts,
-                }).execute()
+                }
+                await _run_db_call(lambda: db.table("technical_signals").insert(_row).execute())
                 seen.add(key)
                 print(
                     f"[scanner] {wallet[:8]}... {coin} {sig['timeframe']} "
@@ -526,7 +535,7 @@ async def reconcile_loop():
 
             # Join bots → users to get the master wallet_address in one query.
             # The bots table has no direct wallet_address column — only user_id.
-            result = db.table("bots").select("*, users(wallet_address)").execute()
+            result = await _run_db_call(lambda: db.table("bots").select("*, users(wallet_address)").execute())
             bots = result.data or []
 
             for bot in bots:
@@ -543,12 +552,13 @@ async def reconcile_loop():
                     if not wallet_address:
                         reason = f"wallet_address missing from user row (user_row={user_row})"
                         print(f"[worker] Cannot start bot {bot_id} — {reason}", flush=True)
-                        db.table("bots").update({
+                        _bid, _reason = bot_id, reason
+                        await _run_db_call(lambda: db.table("bots").update({
                             "status": "error",
                             "desired_status": "stopped",
-                            "error_message": reason,
+                            "error_message": _reason,
                             "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", bot_id).execute()
+                        }).eq("id", _bid).execute())
                         bot_manager._add_log(bot_id, "error", f"[reconcile] {reason}")
                         continue
                     print(f"[worker] Starting bot {bot_id} ({bot.get('name')}) for wallet {wallet_address[:8]}...", flush=True)
@@ -559,7 +569,8 @@ async def reconcile_loop():
                         # The user may have clicked Delete while the start() coroutine was
                         # awaited — if the row is gone, cancel the task immediately rather
                         # than leaving it orphaned until the next reconcile cycle.
-                        still_exists = db.table("bots").select("id").eq("id", bot_id).limit(1).execute()
+                        _bid = bot_id
+                        still_exists = await _run_db_call(lambda: db.table("bots").select("id").eq("id", _bid).limit(1).execute())
                         if not still_exists.data:
                             print(
                                 f"[worker] Bot {bot_id} was deleted mid-start — "
@@ -568,33 +579,37 @@ async def reconcile_loop():
                             )
                             await bot_manager.stop(bot_id)
                         else:
-                            db.table("bots").update({
+                            _bid = bot_id
+                            await _run_db_call(lambda: db.table("bots").update({
                                 "status": "running",
                                 "last_heartbeat": datetime.now(timezone.utc).isoformat(),
-                            }).eq("id", bot_id).execute()
+                            }).eq("id", _bid).execute())
                     except Exception as e:
                         print(f"[worker] Failed to start bot {bot_id}: {e}", flush=True)
-                        db.table("bots").update({
+                        _bid, _err = bot_id, str(e)
+                        await _run_db_call(lambda: db.table("bots").update({
                             "status": "error",
-                            "error_message": str(e),
+                            "error_message": _err,
                             "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", bot_id).execute()
+                        }).eq("id", _bid).execute())
 
                 elif desired != "running" and is_running_locally:
                     # ── Case 2: should NOT be running, task exists → stop it ───
                     print(f"[worker] Stopping bot {bot_id} ({bot.get('name')})", flush=True)
                     await bot_manager.stop(bot_id)
-                    db.table("bots").update({
+                    _bid = bot_id
+                    await _run_db_call(lambda: db.table("bots").update({
                         "status": "stopped",
                         "last_heartbeat": datetime.now(timezone.utc).isoformat(),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", bot_id).execute()
+                    }).eq("id", _bid).execute())
 
                 elif desired == "running" and is_running_locally:
                     # ── Case 3: running as expected → just update heartbeat ────
-                    db.table("bots").update({
+                    _bid = bot_id
+                    await _run_db_call(lambda: db.table("bots").update({
                         "last_heartbeat": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", bot_id).execute()
+                    }).eq("id", _bid).execute())
 
                 else:
                     # ── Case 4 (was missing): desired != running, no local task ─
@@ -608,10 +623,11 @@ async def reconcile_loop():
                             f"status was stale ('{current_status}'), corrected to 'stopped' (no active task)",
                             flush=True,
                         )
-                        db.table("bots").update({
+                        _bid = bot_id
+                        await _run_db_call(lambda: db.table("bots").update({
                             "status": "stopped",
                             "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", bot_id).execute()
+                        }).eq("id", _bid).execute())
 
         except Exception as e:
             print(f"[worker] Reconciliation error: {e}", flush=True)
