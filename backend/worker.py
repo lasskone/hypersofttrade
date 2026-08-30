@@ -19,9 +19,18 @@ NOTE on wallet_address:
 """
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
+
+logging.Formatter.converter = time.gmtime  # force UTC for all %(asctime)s timestamps
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s UTC %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 sys.path.insert(0, os.path.dirname(__file__))
 

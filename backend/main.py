@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +14,11 @@ from routers.orders import router as market_router, orders_router
 from routers.saved_backtests import router as saved_backtests_router
 from routers.scanner import router as scanner_router
 
+logging.Formatter.converter = time.gmtime  # force UTC for all %(asctime)s timestamps
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    format="%(asctime)s UTC %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("hypersofttrade")
 
