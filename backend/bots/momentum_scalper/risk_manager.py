@@ -89,6 +89,7 @@ class RiskManager:
         min_profit_to_fee_ratio: float = 1.5,
         estimated_fee_pct: float = 0.07,
         daily_loss_limit_enabled: bool = True,
+        consecutive_loss_cooldown_enabled: bool = True,
     ) -> None:
         self._bot_id    = bot_id
         self._db        = db_client
@@ -102,7 +103,8 @@ class RiskManager:
         self._max_leverage                 = int(max_leverage)
         self._min_profit_to_fee_ratio      = float(min_profit_to_fee_ratio)
         self._estimated_fee_pct            = float(estimated_fee_pct)
-        self._daily_loss_limit_enabled     = bool(daily_loss_limit_enabled)
+        self._daily_loss_limit_enabled            = bool(daily_loss_limit_enabled)
+        self._consecutive_loss_cooldown_enabled   = bool(consecutive_loss_cooldown_enabled)
 
         # In-memory state — loaded from DB by load_or_init(), or initialised
         # to defaults if this is the first run for this bot_id.
@@ -341,7 +343,7 @@ class RiskManager:
                 return False, self.halt_reason
 
         # 4. Consecutive-loss cooldown still active.
-        if (
+        if self._consecutive_loss_cooldown_enabled and (
             self.consecutive_losses >= self._max_consecutive_losses
             and self.cooldown_until is not None
             and datetime.now(timezone.utc) < self.cooldown_until
@@ -353,7 +355,7 @@ class RiskManager:
             )
 
         # 5. Consecutive-loss cooldown expired — reset and continue.
-        if (
+        if self._consecutive_loss_cooldown_enabled and (
             self.consecutive_losses >= self._max_consecutive_losses
             and self.cooldown_until is not None
             and datetime.now(timezone.utc) >= self.cooldown_until
@@ -520,7 +522,7 @@ class RiskManager:
 
         # Consecutive-loss cooldown: set if we just crossed the threshold and
         # no cooldown is already active.
-        if (
+        if self._consecutive_loss_cooldown_enabled and (
             self.consecutive_losses >= self._max_consecutive_losses
             and self.cooldown_until is None
         ):

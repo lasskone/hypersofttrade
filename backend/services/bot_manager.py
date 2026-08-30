@@ -345,7 +345,7 @@ class BotManager:
             "max_consecutive_losses", "consecutive_loss_cooldown_minutes",
             "window_start_utc_hour", "window_end_utc_hour",
         ]
-        _bool_keys = ["use_time_window", "daily_loss_limit_enabled"]
+        _bool_keys = ["use_time_window", "daily_loss_limit_enabled", "consecutive_loss_cooldown_enabled"]
 
         for k in _float_keys:
             if config.get(k) is not None:
