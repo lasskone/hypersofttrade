@@ -66,13 +66,12 @@ class RiskManager:
     any trades are evaluated.
     """
 
-    # Drawdown tiers (fraction of HWM drawdown → risk multiplier).
-    # Ordered from most severe to least — evaluated top-down.
+    # Sizing tiers for drawdown-based risk scaling (ordered most-to-least severe).
+    # The halt threshold itself is controlled by self._max_drawdown_pct (configurable).
     _DRAWDOWN_TIERS: list[tuple[float, float]] = [
-        (0.10, 0.00),   # > 10%  drawdown → trading halted (multiplier unused)
-        (0.08, 0.25),   # 8–10%  drawdown → 25% of base risk
-        (0.05, 0.50),   # 5–8%   drawdown → 50% of base risk
-        (0.00, 1.00),   # < 5%   drawdown → 100% of base risk
+        (0.08, 0.25),   # 8%+  drawdown → 25% of base risk
+        (0.05, 0.50),   # 5–8% drawdown → 50% of base risk
+        (0.00, 1.00),   # < 5% drawdown → 100% of base risk
     ]
 
     def __init__(
@@ -90,6 +89,8 @@ class RiskManager:
         estimated_fee_pct: float = 0.07,
         daily_loss_limit_enabled: bool = True,
         consecutive_loss_cooldown_enabled: bool = True,
+        max_drawdown_pct: float = 0.10,
+        max_drawdown_halt_enabled: bool = True,
     ) -> None:
         self._bot_id    = bot_id
         self._db        = db_client
@@ -105,6 +106,8 @@ class RiskManager:
         self._estimated_fee_pct            = float(estimated_fee_pct)
         self._daily_loss_limit_enabled            = bool(daily_loss_limit_enabled)
         self._consecutive_loss_cooldown_enabled   = bool(consecutive_loss_cooldown_enabled)
+        self._max_drawdown_pct                    = float(max_drawdown_pct)
+        self._max_drawdown_halt_enabled           = bool(max_drawdown_halt_enabled)
 
         # In-memory state — loaded from DB by load_or_init(), or initialised
         # to defaults if this is the first run for this bot_id.
@@ -315,11 +318,8 @@ class RiskManager:
            was not set correctly by a prior record_trade_result call).
         7. All clear → (True, "ok").
         """
-        # 1. Hard halt (requires manual DB intervention to clear).
-        if self.trading_halted:
-            return False, f"trading_halted: {self.halt_reason or 'unknown reason'}"
-
-        # 2. Daily loss date rollover.
+        # 1. Daily loss date rollover — MUST run before the trading_halted check
+        #    so a daily-loss halt from a prior UTC day auto-clears at midnight.
         today_utc = datetime.now(timezone.utc).date()
         if self.daily_loss_date != today_utc:
             logger.info(
@@ -328,7 +328,22 @@ class RiskManager:
             )
             self.daily_loss_usd  = 0.0
             self.daily_loss_date = today_utc
+            # Auto-clear a daily-loss halt when the new day begins — the
+            # protection was time-limited to a single UTC day, and the counter
+            # has just reset.  Drawdown halts (halt_reason starts with
+            # 'max_drawdown_exceeded') are NOT auto-cleared; they are more
+            # severe and require explicit human review (or the Clear Halt UI).
+            if self.trading_halted and (self.halt_reason or "").startswith("daily_loss_limit"):
+                logger.info(
+                    "[RiskManager] Auto-clearing daily_loss_limit halt for new UTC day"
+                )
+                self.trading_halted = False
+                self.halt_reason    = None
             await self._persist()
+
+        # 2. Hard halt — drawdown halts are sticky and survive midnight.
+        if self.trading_halted:
+            return False, f"trading_halted: {self.halt_reason or 'unknown reason'}"
 
         # 3. Daily loss limit (skipped when daily_loss_limit_enabled=False).
         if self._daily_loss_limit_enabled:
@@ -368,17 +383,18 @@ class RiskManager:
             self.cooldown_until     = None
             await self._persist()
 
-        # 6. Drawdown > 10% redundant safety guard.
-        drawdown_pct = self._drawdown_pct()
-        if drawdown_pct > 0.10:
-            # Should have been caught by record_trade_result, but guard here too.
-            self.trading_halted = True
-            self.halt_reason    = (
-                f"max_drawdown_exceeded: {drawdown_pct*100:.1f}% drawdown "
-                f"(equity={self.equity:.2f} hwm={self.high_water_mark:.2f})"
-            )
-            await self._persist()
-            return False, self.halt_reason
+        # 6. Drawdown safety guard (skipped when max_drawdown_halt_enabled=False).
+        if self._max_drawdown_halt_enabled:
+            drawdown_pct = self._drawdown_pct()
+            if drawdown_pct > self._max_drawdown_pct:
+                # Should have been caught by record_trade_result, but guard here too.
+                self.trading_halted = True
+                self.halt_reason    = (
+                    f"max_drawdown_exceeded: {drawdown_pct*100:.1f}% drawdown "
+                    f"(equity={self.equity:.2f} hwm={self.high_water_mark:.2f})"
+                )
+                await self._persist()
+                return False, self.halt_reason
 
         return True, "ok"
 
@@ -545,15 +561,16 @@ class RiskManager:
                 )
                 logger.warning("[RiskManager] HALT — %s", self.halt_reason)
 
-        # Drawdown halt check.
-        drawdown_pct = self._drawdown_pct()
-        if not self.trading_halted and drawdown_pct > 0.10:
-            self.trading_halted = True
-            self.halt_reason    = (
-                f"max_drawdown_exceeded: {drawdown_pct*100:.1f}% drawdown "
-                f"(equity={self.equity:.2f} hwm={self.high_water_mark:.2f})"
-            )
-            logger.warning("[RiskManager] HALT — %s", self.halt_reason)
+        # Drawdown halt check (skipped when max_drawdown_halt_enabled=False).
+        if self._max_drawdown_halt_enabled:
+            drawdown_pct = self._drawdown_pct()
+            if not self.trading_halted and drawdown_pct > self._max_drawdown_pct:
+                self.trading_halted = True
+                self.halt_reason    = (
+                    f"max_drawdown_exceeded: {drawdown_pct*100:.1f}% drawdown "
+                    f"(equity={self.equity:.2f} hwm={self.high_water_mark:.2f})"
+                )
+                logger.warning("[RiskManager] HALT — %s", self.halt_reason)
 
         logger.info(
             "[RiskManager] Trade result: pnl=%.2f | equity=%.2f hwm=%.2f "
@@ -592,12 +609,14 @@ class RiskManager:
         """Return the risk multiplier for the given drawdown fraction.
 
         Tiers (applied top-down, first match wins):
-            > 10%  drawdown → 0.00  (trading halted — this path is a safety
-                                      backstop; normally caught by can_trade())
-            8–10%  drawdown → 0.25
+            > max_drawdown_pct → 0.00  (beyond halt threshold — no sizing;
+                                         skipped if max_drawdown_halt_enabled=False)
+            8%+    drawdown → 0.25
             5–8%   drawdown → 0.50
             < 5%   drawdown → 1.00
         """
+        if self._max_drawdown_halt_enabled and drawdown_pct > self._max_drawdown_pct:
+            return 0.00  # beyond configurable halt threshold — no sizing
         for threshold, multiplier in self._DRAWDOWN_TIERS:
             if drawdown_pct > threshold:
                 return multiplier

@@ -68,6 +68,8 @@ export const MOMENTUM_SCALPER_FIELDS: BotField[] = [
   { key: 'consecutive_loss_cooldown_enabled', label: 'Consecutive-Loss Cooldown (1=on, 0=off)', default: 1, hint: 'Set to 0 to disable the consecutive-loss cooldown entirely. When disabled, the bot continues scanning immediately after any number of back-to-back losses. When enabled, it pauses for the cooldown duration below after hitting the loss limit.' },
   { key: 'max_consecutive_losses',            label: 'Max Consecutive Losses',          default: 3,    hint: 'After this many back-to-back losing trades, the bot pauses for the cooldown period below. A single win resets the counter. Only evaluated when Consecutive-Loss Cooldown is enabled (1).' },
   { key: 'consecutive_loss_cooldown_minutes', label: 'Consecutive-Loss Cooldown (min)', default: 30,   hint: 'Minutes to pause after hitting the consecutive-loss limit. Gives markets time to settle before the bot resumes scanning. Only evaluated when Consecutive-Loss Cooldown is enabled (1).' },
+  { key: 'max_drawdown_halt_enabled',        label: 'Drawdown Halt (1=on, 0=off)',    default: 1,    hint: 'Set to 0 to disable the drawdown halt entirely. When disabled, the bot trades regardless of how far equity has fallen from the high-water mark. The max drawdown fraction below is only evaluated when this is 1.' },
+  { key: 'max_drawdown_pct',                 label: 'Max Drawdown (fraction)',         default: 0.10, hint: 'Trading halts permanently if equity falls more than this fraction below the high-water mark (e.g. 0.10 = 10%). Requires manual "Resume Bot" action to clear. Only evaluated when Drawdown Halt is enabled (1).' },
 ]
 
 export const MOMENTUM_SCALPER_META = {

@@ -252,6 +252,36 @@ async def update_bot(bot_id: str, body: dict):
     return result.data[0] if result.data else {"success": True}
 
 
+@router.post("/{bot_id}/clear-halt")
+async def clear_halt(bot_id: str, body: BotActionRequest):
+    """Clear a trading_halted flag so the bot resumes scanning on its next tick.
+
+    Ownership-gated: only the wallet that owns the bot may clear the halt.
+    Does NOT restart the bot task — the running strategy loop detects the
+    cleared flag on its next can_trade() call (within scan_interval_seconds).
+    """
+    logger.info(f"POST /bots/{bot_id}/clear-halt wallet={body.wallet_address}")
+    db = _supabase()
+
+    # Verify ownership.
+    user_res = db.table("users").select("id").ilike("wallet_address", body.wallet_address).limit(1).execute()
+    if not user_res.data:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_id = user_res.data[0]["id"]
+
+    bot_res = db.table("bots").select("id").eq("id", bot_id).eq("user_id", user_id).limit(1).execute()
+    if not bot_res.data:
+        raise HTTPException(status_code=404, detail="Bot not found or not owned by this wallet")
+
+    db.table("bot_risk_state").update({
+        "trading_halted": False,
+        "halt_reason":    None,
+        "updated_at":     datetime.now(timezone.utc).isoformat(),
+    }).eq("bot_id", bot_id).execute()
+
+    return {"success": True, "message": "Halt cleared — bot will resume scanning on its next tick"}
+
+
 @router.get("/{bot_id}/logs")
 async def get_bot_logs(bot_id: str, limit: int = 50):
     logger.info(f"GET /bots/{bot_id}/logs limit={limit}")

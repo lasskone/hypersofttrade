@@ -109,10 +109,11 @@ interface Props {
 }
 
 export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) {
-  const [data,      setData]      = useState<any>(null)
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState('')
-  const [activeTab, setActiveTab] = useState<'fills' | 'logs'>('fills')
+  const [data,         setData]         = useState<any>(null)
+  const [loading,      setLoading]      = useState(true)
+  const [error,        setError]        = useState('')
+  const [activeTab,    setActiveTab]    = useState<'fills' | 'logs'>('fills')
+  const [clearingHalt, setClearingHalt] = useState(false)
 
   const fetchDetails = useCallback(async () => {
     try {
@@ -131,6 +132,24 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
   }, [botId, walletAddress])
 
   useEffect(() => { fetchDetails() }, [fetchDetails])
+
+  const handleClearHalt = async () => {
+    if (clearingHalt) return
+    setClearingHalt(true)
+    try {
+      const res = await fetch(`${API_URL}/bots/${botId}/clear-halt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: walletAddress }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await fetchDetails()
+    } catch (e: any) {
+      console.error('clear-halt failed:', e)
+    } finally {
+      setClearingHalt(false)
+    }
+  }
 
   // Auto-refresh every 30 s while the bot is running
   useEffect(() => {
@@ -355,6 +374,38 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                     value={`$${Number(allocated).toFixed(2)}`}
                   />
                 </div>
+                {halted && (
+                  <div style={{
+                    marginTop: 14, padding: '12px 16px',
+                    backgroundColor: '#ef444412', border: '1px solid #ef444440',
+                    borderRadius: 8, display: 'flex', alignItems: 'flex-start',
+                    justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: '#ef4444', margin: '0 0 3px' }}>
+                        Trading Halted
+                      </p>
+                      <p style={{ fontSize: 11, color: '#9ca3af', margin: 0, wordBreak: 'break-word' }}>
+                        {riskState.halt_reason ?? 'Unknown reason'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleClearHalt}
+                      disabled={clearingHalt}
+                      style={{
+                        flexShrink: 0, padding: '7px 16px', borderRadius: 6,
+                        fontSize: 12, fontWeight: 700,
+                        cursor: clearingHalt ? 'default' : 'pointer',
+                        backgroundColor: clearingHalt ? '#374151' : '#10b981',
+                        color: '#fff', border: 'none',
+                        opacity: clearingHalt ? 0.6 : 1,
+                        transition: 'opacity 0.15s',
+                      }}
+                    >
+                      {clearingHalt ? 'Resuming…' : 'Resume Bot'}
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })()}

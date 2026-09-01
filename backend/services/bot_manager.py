@@ -333,7 +333,7 @@ class BotManager:
             "min_score",
             "tp_atr_multiplier", "sl_atr_multiplier", "breakeven_atr_trigger",
             "martingale_multiplier",
-            "risk_per_trade", "max_daily_loss_pct",
+            "risk_per_trade", "max_daily_loss_pct", "max_drawdown_pct",
             "min_profit_to_fee_ratio", "estimated_fee_pct",
             "l0_entry_notional_usd",
         ]
@@ -345,7 +345,7 @@ class BotManager:
             "max_consecutive_losses", "consecutive_loss_cooldown_minutes",
             "window_start_utc_hour", "window_end_utc_hour",
         ]
-        _bool_keys = ["use_time_window", "daily_loss_limit_enabled", "consecutive_loss_cooldown_enabled"]
+        _bool_keys = ["use_time_window", "daily_loss_limit_enabled", "consecutive_loss_cooldown_enabled", "max_drawdown_halt_enabled"]
 
         for k in _float_keys:
             if config.get(k) is not None:

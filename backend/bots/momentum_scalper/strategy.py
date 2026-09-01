@@ -197,6 +197,10 @@ class MomentumScalperBot:
         # pause. When False the consecutive_losses counter still increments but the
         # cooldown gate in can_trade() is never applied.
         consecutive_loss_cooldown_enabled: bool = True,
+        # Drawdown halt — fraction of HWM at which trading is halted (e.g. 0.10 = 10%).
+        # Set max_drawdown_halt_enabled=False to disable entirely.
+        max_drawdown_pct: float = 0.10,
+        max_drawdown_halt_enabled: bool = True,
         # Time window — restrict entries to a UTC hour range (London/NY overlap
         # default: 12–16 UTC, the highest-volatility window for momentum setups).
         # Set use_time_window=False to trade around the clock.
@@ -276,6 +280,8 @@ class MomentumScalperBot:
             estimated_fee_pct                   = estimated_fee_pct,
             daily_loss_limit_enabled            = daily_loss_limit_enabled,
             consecutive_loss_cooldown_enabled   = consecutive_loss_cooldown_enabled,
+            max_drawdown_pct                    = max_drawdown_pct,
+            max_drawdown_halt_enabled           = max_drawdown_halt_enabled,
         )
 
         # ── State ──────────────────────────────────────────────────────────────
