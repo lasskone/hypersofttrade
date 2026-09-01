@@ -193,6 +193,10 @@ class MomentumScalperBot:
         # When False the max_daily_loss_pct check is skipped in can_trade()
         # and record_trade_result(); trading continues regardless of intraday P&L.
         daily_loss_limit_enabled: bool = True,
+        # Consecutive-loss cooldown — set to False to disable the consecutive-loss
+        # pause. When False the consecutive_losses counter still increments but the
+        # cooldown gate in can_trade() is never applied.
+        consecutive_loss_cooldown_enabled: bool = True,
         # Time window — restrict entries to a UTC hour range (London/NY overlap
         # default: 12–16 UTC, the highest-volatility window for momentum setups).
         # Set use_time_window=False to trade around the clock.
@@ -260,17 +264,18 @@ class MomentumScalperBot:
 
         # ── Risk manager ────────────────────────────────────────────────────────
         self._risk_manager = RiskManager(
-            bot_id                          = bot_id,
-            db_client                       = db_client,
-            allocated_usdc                  = allocated_usdc,
-            risk_per_trade                  = risk_per_trade,
-            max_daily_loss_pct              = max_daily_loss_pct,
-            max_consecutive_losses          = max_consecutive_losses,
-            consecutive_loss_cooldown_minutes = consecutive_loss_cooldown_minutes,
-            max_leverage                    = leverage,
-            min_profit_to_fee_ratio         = min_profit_to_fee_ratio,
-            estimated_fee_pct               = estimated_fee_pct,
-            daily_loss_limit_enabled        = daily_loss_limit_enabled,
+            bot_id                              = bot_id,
+            db_client                           = db_client,
+            allocated_usdc                      = allocated_usdc,
+            risk_per_trade                      = risk_per_trade,
+            max_daily_loss_pct                  = max_daily_loss_pct,
+            max_consecutive_losses              = max_consecutive_losses,
+            consecutive_loss_cooldown_minutes   = consecutive_loss_cooldown_minutes,
+            max_leverage                        = leverage,
+            min_profit_to_fee_ratio             = min_profit_to_fee_ratio,
+            estimated_fee_pct                   = estimated_fee_pct,
+            daily_loss_limit_enabled            = daily_loss_limit_enabled,
+            consecutive_loss_cooldown_enabled   = consecutive_loss_cooldown_enabled,
         )
 
         # ── State ──────────────────────────────────────────────────────────────

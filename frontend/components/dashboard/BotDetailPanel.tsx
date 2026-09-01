@@ -534,8 +534,9 @@ export default function BotDetailPanel({ botId, walletAddress, onBack }: Props) 
                       padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)',
                     }}>
                       <span style={{ fontSize: 10, color: '#4b5563', whiteSpace: 'nowrap', paddingTop: 1 }}>
-                        {new Date(log.created_at).toLocaleTimeString('en-US', {
-                          hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        {new Date(log.created_at).toLocaleString('en-US', {
+                          year: 'numeric', month: '2-digit', day: '2-digit',
+                          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
                         })}
                       </span>
                       <span style={{
