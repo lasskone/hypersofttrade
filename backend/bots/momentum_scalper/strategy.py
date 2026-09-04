@@ -553,14 +553,34 @@ class MomentumScalperBot:
             )
 
             # ── 2. Verify the position is still live on the exchange ──────────
-            szi, vwap_entry = await self._get_position(coin, short_coin)
-            if abs(szi) < 1e-9:
+            pos_result = await self._get_position(coin, short_coin)
+            if pos_result is None:
+                # Clearinghouse call failed — cannot confirm position state.
+                # Leave DB row open and start idle; next tick will re-verify.
                 self._log(
                     "warning",
-                    f"cold_start_restore: position_group {pg_id} is open in DB but "
-                    f"clearinghouse shows no position for {short_coin} — leaving idle "
-                    f"(closed externally; will be reconciled on next tick)",
+                    f"cold_start_restore: clearinghouse response invalid for {coin} "
+                    f"— cannot confirm position state, starting idle (DB row left open)",
                 )
+                return
+            szi, vwap_entry = pos_result
+            if abs(szi) < 1e-9:
+                # Position already closed on the exchange — the DB row is an orphan.
+                # This happens when close_position_group() timed out during a prior
+                # _on_close() call, or when the Worker restarted before _on_close()
+                # could write the status update.  Close the orphan now so it doesn't
+                # accumulate across restarts and doesn't trigger a false in_position
+                # restore on the next boot.
+                self._log(
+                    "warning",
+                    f"cold_start_restore: position_group {pg_id} ({coin}) is open in DB "
+                    f"but no live position on exchange — closing orphan row and starting idle",
+                )
+                try:
+                    await close_position_group(self._db, pg_id)
+                    self._log("info", f"cold_start_restore: orphan position_group {pg_id} closed in DB")
+                except Exception as exc:
+                    self._log("warning", f"cold_start_restore: failed to close orphan position_group {pg_id}: {exc}")
                 return
 
             # ── 3. Load persisted entry constants from bot_risk_state ─────────
@@ -723,16 +743,20 @@ class MomentumScalperBot:
             return None
         return atr(candles, _ATR_PERIOD)
 
-    async def _get_position(self, coin: str, short_coin: str) -> tuple[float, float]:
+    async def _get_position(self, coin: str, short_coin: str) -> tuple[float, float] | None:
         """Fetch live signed position size and entryPx from clearinghouse.
 
         Returns ``(szi, entry_px)`` — positive szi = long.
-        Returns ``(0.0, 0.0)`` on error or if no position found.
+        Returns ``(0.0, 0.0)`` if no position found for this coin (genuinely flat).
+        Returns ``None`` on API error — caller must skip close-detection this tick.
         """
         try:
             state = await hyperliquid_service.get_clearinghouse_state(
                 self._master_address, self._dex
             )
+            if not isinstance(state, dict) or not state:
+                self._log("warning", "_get_position() got empty/invalid clearinghouse response")
+                return None
             for ap in (state.get("assetPositions") or []):
                 pos = ap.get("position", {})
                 if pos.get("coin") == short_coin:
@@ -741,6 +765,7 @@ class MomentumScalperBot:
                     return szi, entry_px
         except Exception as exc:
             self._log("error", f"_get_position() failed: {exc}")
+            return None
         return 0.0, 0.0
 
     async def _get_open_order_oids(self, short_coin: str) -> set[int]:
@@ -1299,7 +1324,15 @@ class MomentumScalperBot:
         sz_dec     = self._current_sz_decimals
 
         # ── 1. Flat-position detection ─────────────────────────────────────────
-        szi, _ = await self._get_position(coin, short_coin)
+        pos_result = await self._get_position(coin, short_coin)
+
+        if pos_result is None:
+            # API error — clearinghouse response invalid or request failed.
+            # Skip close detection this tick to avoid a false _on_close() on a live position.
+            self._log("warning", "clearinghouse response invalid — skipping close detection this tick")
+            return
+
+        szi, _ = pos_result
 
         if abs(szi) < 10 ** (-sz_dec):
             # Position is flat — determine outcome from which order is still live.
@@ -1392,125 +1425,137 @@ class MomentumScalperBot:
 
         tp_alive = self._tp_oid is not None and self._tp_oid in live_oids
 
-        # oid-liveness heuristic (martingale mode — no SL order is ever placed).
-        # TP consumed → TP hit.  TP still live → closed before TP (liquidation / manual).
-        if not tp_alive:
-            oid_outcome  = "TP_HIT"
-            oid_cooldown = self._cooldown_after_trade_s
-        else:
-            oid_outcome  = "CLOSED_UNKNOWN"
-            oid_cooldown = self._cooldown_after_loss_s
-
-        self._log(
-            "info",
-            f"Position closed — oid_heuristic={oid_outcome} "
-            f"(tp_alive={tp_alive}) | "
-            f"entry={snap_entry_price:.4f} size={snap_position_size:.4f}",
-        )
-
-        # ── Primary: authoritative PnL from fills ─────────────────────────────
+        # FIX 1: try/finally guarantees close_position_group() always runs even if
+        # an earlier step (fills fetch, risk_manager, cancel orders) raises an
+        # exception.  snap_position_group_id is used in finally because _reset_state()
+        # clears self._position_group_id before finally would otherwise see it.
         try:
-            raw_fills = await hyperliquid_service.get_user_fills(self._master_address)
-        except Exception as exc:
-            raw_fills = []
-            self._log("warning", f"get_user_fills() failed, falling back to mark-price PnL estimate: {exc}")
-
-        # Filter: same coin, placed AFTER entry order (exit fills only).
-        matching_fills = [
-            f for f in (raw_fills or [])
-            if (
-                f.get("coin", "") in (short_coin, snap_current_coin)
-                and f.get("time", 0) > snap_entry_time
-            )
-        ]
-        fills_pnl = sum(float(f.get("closedPnl", "0") or "0") for f in matching_fills)
-
-        if matching_fills:
-            pnl_usd = fills_pnl
-            # Outcome from fills sign — overrides oid heuristic.
-            if fills_pnl > 0:
-                outcome  = "TP_HIT"
-                cooldown = self._cooldown_after_trade_s
-            elif fills_pnl < 0:
-                outcome  = "SL_HIT"
-                cooldown = self._cooldown_after_loss_s
+            # oid-liveness heuristic (martingale mode — no SL order is ever placed).
+            # TP consumed → TP hit.  TP still live → closed before TP (liquidation / manual).
+            if not tp_alive:
+                oid_outcome  = "TP_HIT"
+                oid_cooldown = self._cooldown_after_trade_s
             else:
-                # Exactly zero closed PnL (breakeven close) — rare; keep oid outcome.
-                outcome  = oid_outcome
-                cooldown = oid_cooldown
+                oid_outcome  = "CLOSED_UNKNOWN"
+                oid_cooldown = self._cooldown_after_loss_s
+
             self._log(
                 "info",
-                f"PnL from fills (authoritative): {len(matching_fills)} fill(s) "
-                f"matched coin={short_coin} after t={snap_entry_time}ms "
-                f"→ pnl=${pnl_usd:.4f} | outcome={outcome} cooldown={cooldown}s",
-            )
-        else:
-            # ── Fallback: mark-price estimate ──────────────────────────────────
-            outcome  = oid_outcome
-            cooldown = oid_cooldown
-            exit_price = snap_entry_price   # last resort if mids also fail
-            if short_coin:
-                try:
-                    mids = await hyperliquid_service.get_all_mids()
-                    fetched = float(mids.get(short_coin, 0))
-                    if fetched > 0:
-                        exit_price = fetched
-                except Exception as exc:
-                    self._log("warning", f"get_all_mids() for PnL fallback failed: {exc}")
-            direction_sign = 1.0 if snap_is_long else -1.0
-            pnl_usd = (exit_price - snap_entry_price) * snap_position_size * direction_sign
-            self._log(
-                "warning",
-                f"PnL from mark-price (fallback, low confidence): no fills matched "
-                f"coin={short_coin} after t={snap_entry_time}ms | "
-                f"entry={snap_entry_price:.4f} exit≈{exit_price:.4f} "
-                f"size={snap_position_size:.4f} direction={'long' if snap_is_long else 'short'} "
-                f"→ pnl≈${pnl_usd:.2f} (excludes fees/funding) | "
-                f"outcome={outcome} cooldown={cooldown}s",
+                f"Position closed — oid_heuristic={oid_outcome} "
+                f"(tp_alive={tp_alive}) | "
+                f"entry={snap_entry_price:.4f} size={snap_position_size:.4f}",
             )
 
-        await self._risk_manager.record_trade_result(pnl_usd)
-
-        self._log(
-            "info",
-            f"Risk state after trade: equity={self._risk_manager.equity:.2f} "
-            f"hwm={self._risk_manager.high_water_mark:.2f} "
-            f"drawdown={self._risk_manager._drawdown_pct()*100:.1f}% "
-            f"consecutive_losses={self._risk_manager.consecutive_losses} "
-            f"halted={self._risk_manager.trading_halted}",
-        )
-
-        # Cancel all resting orders.
-        await self._cancel_all_resting()
-
-        # Close position_group in Supabase.
-        if self._position_group_id and self._db:
+            # ── Primary: authoritative PnL from fills ─────────────────────────────
             try:
-                await close_position_group(self._db, self._position_group_id)
-                self._log("info", f"position_group {self._position_group_id} closed in DB")
+                raw_fills = await hyperliquid_service.get_user_fills(self._master_address)
             except Exception as exc:
-                self._log("error", f"close_position_group() failed: {exc}")
+                raw_fills = []
+                self._log("warning", f"get_user_fills() failed, falling back to mark-price PnL estimate: {exc}")
 
-        # Update trade_signal row with outcome and PnL — fire-and-forget.
-        if snap_position_group_id and self._db:
-            try:
-                await update_trade_signal_outcome(
-                    db                = self._db,
-                    position_group_id = snap_position_group_id,
-                    outcome           = outcome,
-                    pnl_usd           = pnl_usd,
+            # Filter: same coin, placed AFTER entry order (exit fills only).
+            matching_fills = [
+                f for f in (raw_fills or [])
+                if (
+                    f.get("coin", "") in (short_coin, snap_current_coin)
+                    and f.get("time", 0) > snap_entry_time
                 )
-            except Exception as sig_exc:
-                self._log("warning", f"update_trade_signal_outcome failed (non-fatal): {sig_exc}")
+            ]
+            fills_pnl = sum(float(f.get("closedPnl", "0") or "0") for f in matching_fills)
 
-        # Clear martingale chart state now that the position is closed.
-        await self._persist_martingale_state(active_coin=None, level=0, trigger_px=None)
+            if matching_fills:
+                pnl_usd = fills_pnl
+                # Outcome from fills sign — overrides oid heuristic.
+                if fills_pnl > 0:
+                    outcome  = "TP_HIT"
+                    cooldown = self._cooldown_after_trade_s
+                elif fills_pnl < 0:
+                    outcome  = "SL_HIT"
+                    cooldown = self._cooldown_after_loss_s
+                else:
+                    # Exactly zero closed PnL (breakeven close) — rare; keep oid outcome.
+                    outcome  = oid_outcome
+                    cooldown = oid_cooldown
+                self._log(
+                    "info",
+                    f"PnL from fills (authoritative): {len(matching_fills)} fill(s) "
+                    f"matched coin={short_coin} after t={snap_entry_time}ms "
+                    f"→ pnl=${pnl_usd:.4f} | outcome={outcome} cooldown={cooldown}s",
+                )
+            else:
+                # ── Fallback: mark-price estimate ──────────────────────────────────
+                outcome  = oid_outcome
+                cooldown = oid_cooldown
+                exit_price = snap_entry_price   # last resort if mids also fail
+                if short_coin:
+                    try:
+                        mids = await hyperliquid_service.get_all_mids()
+                        fetched = float(mids.get(short_coin, 0))
+                        if fetched > 0:
+                            exit_price = fetched
+                    except Exception as exc:
+                        self._log("warning", f"get_all_mids() for PnL fallback failed: {exc}")
+                direction_sign = 1.0 if snap_is_long else -1.0
+                pnl_usd = (exit_price - snap_entry_price) * snap_position_size * direction_sign
+                self._log(
+                    "warning",
+                    f"PnL from mark-price (fallback, low confidence): no fills matched "
+                    f"coin={short_coin} after t={snap_entry_time}ms | "
+                    f"entry={snap_entry_price:.4f} exit≈{exit_price:.4f} "
+                    f"size={snap_position_size:.4f} direction={'long' if snap_is_long else 'short'} "
+                    f"→ pnl≈${pnl_usd:.2f} (excludes fees/funding) | "
+                    f"outcome={outcome} cooldown={cooldown}s",
+                )
 
-        # Enter cooldown.
-        self._reset_state()
-        self._state          = "cooldown"
-        self._cooldown_until = time.monotonic() + cooldown
-        self._log("info", f"Entering cooldown — expires in {cooldown}s")
+            await self._risk_manager.record_trade_result(pnl_usd)
+
+            self._log(
+                "info",
+                f"Risk state after trade: equity={self._risk_manager.equity:.2f} "
+                f"hwm={self._risk_manager.high_water_mark:.2f} "
+                f"drawdown={self._risk_manager._drawdown_pct()*100:.1f}% "
+                f"consecutive_losses={self._risk_manager.consecutive_losses} "
+                f"halted={self._risk_manager.trading_halted}",
+            )
+
+            # Cancel all resting orders.
+            await self._cancel_all_resting()
+
+            # Update trade_signal row with outcome and PnL — fire-and-forget.
+            if snap_position_group_id and self._db:
+                try:
+                    await update_trade_signal_outcome(
+                        db                = self._db,
+                        position_group_id = snap_position_group_id,
+                        outcome           = outcome,
+                        pnl_usd           = pnl_usd,
+                    )
+                except Exception as sig_exc:
+                    self._log("warning", f"update_trade_signal_outcome failed (non-fatal): {sig_exc}")
+
+            # Clear martingale chart state now that the position is closed.
+            await self._persist_martingale_state(active_coin=None, level=0, trigger_px=None)
+
+            # Enter cooldown.
+            self._reset_state()
+            self._state          = "cooldown"
+            self._cooldown_until = time.monotonic() + cooldown
+            self._log("info", f"Entering cooldown — expires in {cooldown}s")
+
+        finally:
+            # Guarantee close_position_group always runs, even if an earlier step raises.
+            # Uses snap_position_group_id — self._position_group_id is cleared by _reset_state().
+            if snap_position_group_id and self._db:
+                try:
+                    await close_position_group(self._db, snap_position_group_id)
+                    self._log("info", f"position_group {snap_position_group_id} closed in DB")
+                except Exception as exc:
+                    self._log(
+                        "warning",
+                        f"close_position_group() failed in finally — orphan may remain open "
+                        f"(position_group_id={snap_position_group_id}): {exc}",
+                    )
+                    raise
 
     # ── Idle tick ─────────────────────────────────────────────────────────────
 
